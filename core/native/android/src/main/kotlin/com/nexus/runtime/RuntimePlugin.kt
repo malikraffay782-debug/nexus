@@ -23,7 +23,12 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     private lateinit var runtime: NexusRuntime
 
     // Allow multiple concurrent commands (install can be long)
-    private val executor = Executors.newFixedThreadPool(4)
+    private val executor = java.util.concurrent.ThreadPoolExecutor(
+        2, 4,
+        30L, java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.ArrayBlockingQueue(8),
+        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+    )
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var progressSink: EventChannel.EventSink? = null

@@ -53,6 +53,14 @@ class EmbeddedRuntime {
     String? workingDir,
     int timeoutSec = 60,
   }) async {
+    if (timeoutSec <= 0) {
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: 'timeoutSec must be > 0',
+        timedOut: false,
+      );
+    }
     try {
       final result = await _channel
           .invokeMethod<Map>('runCommand', {

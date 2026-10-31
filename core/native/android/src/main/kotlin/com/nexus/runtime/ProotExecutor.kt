@@ -2,16 +2,13 @@ package com.nexus.runtime
 
 import android.content.Context
 import android.os.Build
-import java.io.BufferedReader
 import java.io.File
-import java.io.InputStreamReader
+import java.nio.file.Paths
 import java.util.concurrent.TimeUnit
 
 /**
  * Executes commands inside the embedded Linux environment using proot.
- *
- * Note: command strings are treated as trusted (Studio power tool).
- * Full allowlisting is a later phase.
+ * Command strings are treated as trusted (Studio power tool).
  */
 class ProotExecutor(
     private val context: Context,
@@ -21,6 +18,7 @@ class ProotExecutor(
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
         private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB
+        private const val MAX_TIMEOUT_SEC = 3600L
     }
 
     data class CommandResult(
@@ -30,31 +28,37 @@ class ProotExecutor(
         val timedOut: Boolean = false
     )
 
-    /**
-     * Ensure workingDir stays under runtime root (guest path for proot -w).
-     * Accepts absolute guest paths under prefix, or relative under /home.
-     */
-    private fun safeWorkingDir(raw: String?, prefix: File, runtimeRoot: File): String {
-        // proot -w expects a path inside the guest rootfs (prefix)
+    private fun safeWorkingDir(raw: String?): String {
         val defaultGuest = "/home"
         if (raw.isNullOrBlank()) return defaultGuest
 
-        // Only allow simple relative or absolute-within-prefix style paths
-        // Reject obvious host escapes
-        if (raw.contains("..")) {
+        val sanitized = raw.replace('\\', '/')
+            .replace(Regex("/+"), "/")
+            .trim()
+
+        if (sanitized.contains("..")) {
             RuntimeLogger.w("workingDir rejected (contains ..): $raw")
             return defaultGuest
         }
-        // Guest path: must start with / and not point at host-only locations
-        val guest = if (raw.startsWith("/")) raw else "/home/$raw"
-        val blocked = listOf("/data", "/system", "/vendor", "/proc", "/dev", "/sys", "/acct", "/mnt", "/storage")
+
+        val guest = if (sanitized.startsWith("/")) sanitized else "/home/$sanitized"
+        val normalized = try {
+            Paths.get(guest).normalize().toString()
+        } catch (_: Exception) {
+            return defaultGuest
+        }
+
+        val blocked = listOf(
+            "/data", "/system", "/vendor", "/proc", "/dev", "/sys",
+            "/acct", "/mnt", "/storage", "/sdcard", "/self"
+        )
         for (b in blocked) {
-            if (guest == b || guest.startsWith("$b/")) {
-                RuntimeLogger.w("workingDir rejected (blocked prefix): $raw")
+            if (normalized == b || normalized.startsWith("$b/")) {
+                RuntimeLogger.w("workingDir rejected (blocked): $raw -> $normalized")
                 return defaultGuest
             }
         }
-        return guest
+        return normalized
     }
 
     fun run(
@@ -62,19 +66,20 @@ class ProotExecutor(
         workingDir: String? = null,
         timeoutSec: Long = DEFAULT_TIMEOUT_SEC
     ): CommandResult {
+        val effectiveTimeout = when {
+            timeoutSec <= 0L -> DEFAULT_TIMEOUT_SEC
+            timeoutSec > MAX_TIMEOUT_SEC -> MAX_TIMEOUT_SEC
+            else -> timeoutSec
+        }
+
         if (!bootstrapManager.isReady) {
-            return CommandResult(
-                exitCode = -1,
-                stdout = "",
-                stderr = "Runtime not ready. Call initialize() first.",
-                timedOut = false
-            )
+            return CommandResult(-1, "", "Runtime not ready. Call initialize() first.", false)
         }
 
         val prefix = bootstrapManager.prefixDir.canonicalFile
         val runtimeRoot = File(bootstrapManager.getRuntimeRootPath()).canonicalFile
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        val guestWorkDir = safeWorkingDir(workingDir, prefix, runtimeRoot)
+        val guestWorkDir = safeWorkingDir(workingDir)
 
         val prootCandidates = listOf(
             File(nativeLibDir, "libproot.so"),
@@ -83,14 +88,8 @@ class ProotExecutor(
             File(prefix, "usr/bin/proot")
         )
         val actualProotFile = prootCandidates.firstOrNull { it.exists() && it.canExecute() }
-        if (actualProotFile == null) {
-            return CommandResult(
-                exitCode = -1,
-                stdout = "",
-                stderr = "proot binary not found or not executable in nativeLibraryDir / prefix",
-                timedOut = false
-            )
-        }
+            ?: return CommandResult(-1, "", "proot binary not found or not executable", false)
+
         val actualProot = actualProotFile.absolutePath
         val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
 
@@ -105,62 +104,56 @@ class ProotExecutor(
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
 
-        val prootArgs = mutableListOf<String>().apply {
-            add(actualProot)
-            add("-0")
-            add("-r")
-            add(prefix.absolutePath)
-            add("-b")
-            add("/dev")
-            add("-b")
-            add("/proc")
-            add("-b")
-            add("/sys")
-            add("-b")
-            add("${runtimeRoot.absolutePath}/tmp:/tmp")
-            add("-b")
-            add("${runtimeRoot.absolutePath}/home:/home")
-            add("-w")
-            add(guestWorkDir)
-            add("/bin/sh")
-            add("-c")
-            add(command)
-        }
+        val prootArgs = listOf(
+            actualProot, "-0",
+            "-r", prefix.absolutePath,
+            "-b", "/dev", "-b", "/proc", "-b", "/sys",
+            "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
+            "-b", "${runtimeRoot.absolutePath}/home:/home",
+            "-w", guestWorkDir,
+            "/bin/sh", "-c", command
+        )
 
-        RuntimeLogger.d("Executing proot (cmd length=${command.length}, cwd=$guestWorkDir)")
+        RuntimeLogger.d("Executing proot (cmdLen=${command.length}, cwd=$guestWorkDir)")
 
-        return try {
-            val processBuilder = ProcessBuilder(prootArgs)
-            processBuilder.environment().clear()
-            processBuilder.environment().putAll(env)
-            processBuilder.redirectErrorStream(false)
+        var process: Process? = null
+        val stdoutStream: java.io.InputStream
+        val stderrStream: java.io.InputStream
 
-            val process = processBuilder.start()
+        try {
+            val pb = ProcessBuilder(prootArgs)
+            pb.environment().clear()
+            pb.environment().putAll(env)
+            pb.redirectErrorStream(false)
+            process = pb.start()
+            stdoutStream = process.inputStream
+            stderrStream = process.errorStream
 
             val stdout = StringBuilder()
             val stderr = StringBuilder()
 
+            // Drain fully always (discard after cap) so child never blocks on full pipe
             val stdoutThread = Thread {
-                readCapped(process.inputStream, stdout)
+                drainCapped(stdoutStream, stdout)
             }.apply { name = "nexus-proot-stdout"; isDaemon = true }
 
             val stderrThread = Thread {
-                readCapped(process.errorStream, stderr)
+                drainCapped(stderrStream, stderr)
             }.apply { name = "nexus-proot-stderr"; isDaemon = true }
 
             stdoutThread.start()
             stderrThread.start()
 
-            val finished = process.waitFor(timeoutSec, TimeUnit.SECONDS)
+            val finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS)
 
             if (!finished) {
                 killProcessTree(process)
                 stdoutThread.join(800)
                 stderrThread.join(800)
                 return CommandResult(
-                    exitCode = -1,
-                    stdout = stdout.toString().trim(),
-                    stderr = (stderr.toString().trim() + "\n[Timeout after ${timeoutSec}s]").trim(),
+                    -1,
+                    stdout.toString().trim(),
+                    (stderr.toString().trim() + "\n[Timeout after ${effectiveTimeout}s]").trim(),
                     timedOut = true
                 )
             }
@@ -168,72 +161,70 @@ class ProotExecutor(
             stdoutThread.join(2000)
             stderrThread.join(2000)
 
-            CommandResult(
-                exitCode = process.exitValue(),
-                stdout = stdout.toString().trim(),
-                stderr = stderr.toString().trim(),
+            return CommandResult(
+                process.exitValue(),
+                stdout.toString().trim(),
+                stderr.toString().trim(),
                 timedOut = false
             )
         } catch (e: Exception) {
             RuntimeLogger.e("Execution failed", e)
-            CommandResult(
-                exitCode = -1,
-                stdout = "",
-                stderr = "Execution error: ${e.message}",
-                timedOut = false
-            )
-        }
-    }
-
-    /** Cap by UTF-8 byte size, not UTF-16 char count. */
-    private fun readCapped(stream: java.io.InputStream, out: StringBuilder) {
-        try {
-            stream.bufferedReader(Charsets.UTF_8).use { reader ->
-                val buf = CharArray(8192)
-                var totalBytes = 0
-                while (true) {
-                    val n = reader.read(buf)
-                    if (n == -1) break
-                    val chunk = String(buf, 0, n)
-                    val bytes = chunk.toByteArray(Charsets.UTF_8).size
-                    if (totalBytes + bytes > MAX_OUTPUT_BYTES) {
-                        out.append("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
-                        return
-                    }
-                    totalBytes += bytes
-                    out.append(chunk)
-                }
-            }
-        } catch (_: Exception) {
-            // process closed / stream ended
+            process?.let { killProcessTree(it) }
+            return CommandResult(-1, "", "Execution error: ${e.message}", false)
+        } finally {
+            try { process?.inputStream?.close() } catch (_: Exception) {}
+            try { process?.errorStream?.close() } catch (_: Exception) {}
+            try { process?.outputStream?.close() } catch (_: Exception) {}
         }
     }
 
     /**
-     * Best-effort kill of process + children.
-     * Uses ProcessHandle on API 26+, and a process-group kill fallback.
+     * Always drain the stream to EOF so the child never blocks on a full pipe.
+     * Only the first MAX_OUTPUT_BYTES are kept in [out].
      */
-    private fun killProcessTree(process: Process) {
-        // Primary: ProcessHandle descendants (API 26+)
+    private fun drainCapped(stream: java.io.InputStream, out: StringBuilder) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                process.toHandle().descendants().forEach { handle ->
-                    try { handle.destroyForcibly() } catch (_: Exception) {}
+            val buf = ByteArray(8192)
+            var total = 0
+            var truncated = false
+            while (true) {
+                val n = stream.read(buf)
+                if (n == -1) break
+                if (!truncated) {
+                    if (total + n <= MAX_OUTPUT_BYTES) {
+                        out.append(String(buf, 0, n, Charsets.UTF_8))
+                        total += n
+                    } else {
+                        val remain = MAX_OUTPUT_BYTES - total
+                        if (remain > 0) {
+                            out.append(String(buf, 0, remain, Charsets.UTF_8))
+                        }
+                        out.append("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
+                        truncated = true
+                        // keep reading & discarding
+                    }
                 }
+                // when truncated, continue loop to drain
             }
-        } catch (_: Exception) {}
+        } catch (_: Exception) {
+            // stream closed
+        }
+    }
 
-        // Fallback: try killing process group via pid (helps on older API / proot children)
+    private fun killProcessTree(process: Process) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val pid = process.toHandle().pid()
-                // Negative PID = process group (when started as session leader; best-effort)
-                Runtime.getRuntime().exec(arrayOf("sh", "-c", "kill -TERM -$pid 2>/dev/null; sleep 0.3; kill -KILL -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null"))
+                process.toHandle().descendants().forEach { h ->
+                    try { h.destroyForcibly() } catch (_: Exception) {}
+                }
+                try {
+                    val pid = process.toHandle().pid()
+                    Runtime.getRuntime().exec(
+                        arrayOf("sh", "-c", "kill -TERM -$pid 2>/dev/null; sleep 0.2; kill -KILL -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null")
+                    )
+                } catch (_: Exception) {}
             }
         } catch (_: Exception) {}
-
-        try {
-            process.destroyForcibly()
-        } catch (_: Exception) {}
+        try { process.destroyForcibly() } catch (_: Exception) {}
     }
 }
