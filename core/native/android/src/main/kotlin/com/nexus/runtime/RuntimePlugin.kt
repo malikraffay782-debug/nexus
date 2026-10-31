@@ -43,6 +43,15 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
         eventChannel.setStreamHandler(null)
         progressSink = null
         executor.shutdown()
+        try {
+            // Give in-flight work a short chance to finish, then force
+            if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
+                executor.shutdownNow()
+            }
+        } catch (_: InterruptedException) {
+            executor.shutdownNow()
+            Thread.currentThread().interrupt()
+        }
     }
 
     override fun onListen(arguments: Any?, events: EventChannel.EventSink?) {

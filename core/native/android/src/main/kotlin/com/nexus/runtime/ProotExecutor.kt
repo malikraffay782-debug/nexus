@@ -1,17 +1,17 @@
 package com.nexus.runtime
 
 import android.content.Context
+import android.os.Build
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Executes commands inside the embedded Linux environment using proot.
  *
- * Critical: proot-loader must be loaded from nativeLibraryDir to satisfy
- * Android's W^X restrictions.
+ * Note: This is a powerful execution surface. Callers must treat the
+ * command string as trusted. Full command allowlisting is a later phase.
  */
 class ProotExecutor(
     private val context: Context,
@@ -20,7 +20,8 @@ class ProotExecutor(
 
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
-        private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB cap
+        private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB
+        private const val MAX_LINE_BYTES = 256 * 1024         // 256 KB per line hard stop
     }
 
     data class CommandResult(
@@ -30,9 +31,6 @@ class ProotExecutor(
         val timedOut: Boolean = false
     )
 
-    /**
-     * Run a command inside the proot environment.
-     */
     fun run(
         command: String,
         workingDir: String? = null,
@@ -57,28 +55,35 @@ class ProotExecutor(
             File(prefix, "bin/proot"),
             File(prefix, "usr/bin/proot")
         )
-        val actualProot = prootCandidates.firstOrNull { it.exists() }?.absolutePath
-            ?: File(nativeLibDir, "libproot.so").absolutePath
-
+        val actualProotFile = prootCandidates.firstOrNull { it.exists() && it.canExecute() }
+        if (actualProotFile == null) {
+            return CommandResult(
+                exitCode = -1,
+                stdout = "",
+                stderr = "proot binary not found or not executable in nativeLibraryDir / prefix",
+                timedOut = false
+            )
+        }
+        val actualProot = actualProotFile.absolutePath
         val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
 
+        // Keep PATH mostly inside the prefix. Only fall back to /system/bin for a few
+        // essential Android tools if needed; prefer prefix binaries.
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
         env["PREFIX"] = prefix.absolutePath
         env["HOME"] = File(runtimeRoot, "home").absolutePath
         env["TMPDIR"] = File(runtimeRoot, "tmp").absolutePath
-        env["PATH"] = "${prefix.absolutePath}/bin:${prefix.absolutePath}/usr/bin:/system/bin"
+        env["PATH"] = "${prefix.absolutePath}/bin:${prefix.absolutePath}/usr/bin"
+        // Prefer prefix libs; include nativeLibDir only for proot loader itself
         env["LD_LIBRARY_PATH"] = "${prefix.absolutePath}/lib:${nativeLibDir}"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
-        // Helpful Android-related vars some tools expect
-        env["ANDROID_DATA"] = "/data"
-        env["ANDROID_ROOT"] = "/system"
 
         val prootArgs = mutableListOf<String>().apply {
             add(actualProot)
-            add("-0")                          // fake root
+            add("-0")
             add("-r")
             add(prefix.absolutePath)
             add("-b")
@@ -98,7 +103,7 @@ class ProotExecutor(
             add(command)
         }
 
-        RuntimeLogger.d("Executing: ${prootArgs.joinToString(" ")}")
+        RuntimeLogger.d("Executing proot (cmd length=${command.length})")
 
         return try {
             val processBuilder = ProcessBuilder(prootArgs)
@@ -107,58 +112,27 @@ class ProotExecutor(
             processBuilder.redirectErrorStream(false)
 
             val process = processBuilder.start()
-            val finishedFlag = AtomicBoolean(false)
 
             val stdout = StringBuilder()
             val stderr = StringBuilder()
 
             val stdoutThread = Thread {
-                try {
-                    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                        var total = 0
-                        while (true) {
-                            val line = reader.readLine() ?: break
-                            total += line.length + 1
-                            if (total > MAX_OUTPUT_BYTES) {
-                                stdout.appendLine("\n[output truncated at ${MAX_OUTPUT_BYTES} bytes]")
-                                break  // stop reading – does not consume unbounded memory in the builder
-                            }
-                            stdout.appendLine(line)
-                        }
-                    }
-                } catch (_: Exception) { /* process closed */ }
+                readCapped(process.inputStream, stdout)
             }.apply { name = "nexus-proot-stdout"; isDaemon = true }
 
             val stderrThread = Thread {
-                try {
-                    BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-                        var total = 0
-                        while (true) {
-                            val line = reader.readLine() ?: break
-                            total += line.length + 1
-                            if (total > MAX_OUTPUT_BYTES) {
-                                stderr.appendLine("\n[output truncated at ${MAX_OUTPUT_BYTES} bytes]")
-                                break
-                            }
-                            stderr.appendLine(line)
-                        }
-                    }
-                } catch (_: Exception) { /* process closed */ }
+                readCapped(process.errorStream, stderr)
             }.apply { name = "nexus-proot-stderr"; isDaemon = true }
 
             stdoutThread.start()
             stderrThread.start()
 
             val finished = process.waitFor(timeoutSec, TimeUnit.SECONDS)
-            finishedFlag.set(true)
 
             if (!finished) {
-                // Best effort kill
-                process.destroyForcibly()
-                // Give reader threads a short chance to finish
+                killProcessTree(process)
                 stdoutThread.join(800)
                 stderrThread.join(800)
-
                 return CommandResult(
                     exitCode = -1,
                     stdout = stdout.toString().trim(),
@@ -185,5 +159,68 @@ class ProotExecutor(
                 timedOut = false
             )
         }
+    }
+
+    /**
+     * Read stream with hard byte and per-line limits.
+     * Stops reading once the cap is hit (does not keep buffering forever).
+     */
+    private fun readCapped(stream: java.io.InputStream, out: StringBuilder) {
+        try {
+            val reader = BufferedReader(InputStreamReader(stream))
+            var total = 0
+            val lineBuf = StringBuilder()
+            while (true) {
+                val ch = reader.read()
+                if (ch == -1) break
+
+                if (ch == '\n'.code) {
+                    val line = lineBuf.toString()
+                    lineBuf.setLength(0)
+                    total += line.length + 1
+                    if (total > MAX_OUTPUT_BYTES) {
+                        out.appendLine("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
+                        break
+                    }
+                    out.appendLine(line)
+                } else {
+                    lineBuf.append(ch.toChar())
+                    // Hard stop on giant lines without newline
+                    if (lineBuf.length > MAX_LINE_BYTES) {
+                        out.appendLine("\n[line truncated at $MAX_LINE_BYTES bytes]")
+                        total += lineBuf.length
+                        lineBuf.setLength(0)
+                        if (total > MAX_OUTPUT_BYTES) break
+                        // skip rest of this line
+                        while (true) {
+                            val c2 = reader.read()
+                            if (c2 == -1 || c2 == '\n'.code) break
+                        }
+                    }
+                }
+            }
+            // leftover without trailing newline
+            if (lineBuf.isNotEmpty() && total <= MAX_OUTPUT_BYTES) {
+                out.append(lineBuf)
+            }
+        } catch (_: Exception) {
+            // process closed / stream ended
+        }
+    }
+
+    /**
+     * Best-effort kill of the process and its descendants (API 24+).
+     */
+    private fun killProcessTree(process: Process) {
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                process.toHandle().descendants().forEach { handle ->
+                    try { handle.destroyForcibly() } catch (_: Exception) {}
+                }
+            }
+        } catch (_: Exception) {}
+        try {
+            process.destroyForcibly()
+        } catch (_: Exception) {}
     }
 }
