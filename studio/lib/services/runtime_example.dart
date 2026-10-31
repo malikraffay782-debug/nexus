@@ -1,8 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'embedded_runtime.dart';
 
-/// Simple example screen to test the Embedded Runtime.
-/// Add this route temporarily for debugging.
+/// Debug / test screen for the Embedded Runtime.
 class RuntimeTestScreen extends StatefulWidget {
   const RuntimeTestScreen({super.key});
 
@@ -11,17 +11,39 @@ class RuntimeTestScreen extends StatefulWidget {
 }
 
 class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
-  String _log = 'Press Initialize to start...\n';
+  String _log = 'Ready.\n';
   bool _busy = false;
+  int _progress = 0;
+  String _progressMsg = '';
+  StreamSubscription? _progressSub;
 
-  void _append(String msg) {
-    setState(() {
-      _log += '$msg\n';
+  @override
+  void initState() {
+    super.initState();
+    _progressSub = EmbeddedRuntime.progressStream.listen((p) {
+      setState(() {
+        _progress = p.percent;
+        _progressMsg = p.message;
+      });
     });
   }
 
+  @override
+  void dispose() {
+    _progressSub?.cancel();
+    super.dispose();
+  }
+
+  void _append(String msg) {
+    setState(() => _log += '$msg\n');
+  }
+
   Future<void> _initialize() async {
-    setState(() => _busy = true);
+    setState(() {
+      _busy = true;
+      _progress = 0;
+      _progressMsg = 'Starting...';
+    });
     _append('→ Initializing runtime...');
     final result = await EmbeddedRuntime.initialize();
     if (result.success) {
@@ -35,14 +57,15 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
 
   Future<void> _runSmokeTests() async {
     setState(() => _busy = true);
-    _append('\n→ Running smoke tests...');
+    _append('\n→ Smoke tests...');
 
     final tests = [
       'uname -a',
       'python3 --version',
-      'ls /bin | head -n 10',
+      'ls /bin | head -n 8',
       'echo \$PREFIX',
       'whoami',
+      'id',
     ];
 
     for (final cmd in tests) {
@@ -54,7 +77,6 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
         _append('FAILED (${res.exitCode}): ${res.stderr}');
       }
     }
-
     setState(() => _busy = false);
   }
 
@@ -64,15 +86,27 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
       appBar: AppBar(title: const Text('Nexus Runtime Test')),
       body: Column(
         children: [
+          if (_busy || (_progress > 0 && _progress < 100))
+            Padding(
+              padding: const EdgeInsets.all(12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  LinearProgressIndicator(value: _progress / 100),
+                  const SizedBox(height: 6),
+                  Text('$_progress%  $_progressMsg', style: const TextStyle(fontSize: 13)),
+                ],
+              ),
+            ),
           Padding(
-            padding: const EdgeInsets.all(12),
-            child: Row(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+            child: Wrap(
+              spacing: 10,
               children: [
                 ElevatedButton(
                   onPressed: _busy ? null : _initialize,
                   child: const Text('Initialize'),
                 ),
-                const SizedBox(width: 12),
                 ElevatedButton(
                   onPressed: _busy ? null : _runSmokeTests,
                   child: const Text('Smoke Tests'),
@@ -80,7 +114,7 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
               ],
             ),
           ),
-          const Divider(),
+          const Divider(height: 1),
           Expanded(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(12),

@@ -1,20 +1,18 @@
 package com.nexus.runtime
 
 import android.content.Context
-import android.util.Log
 
 /**
  * Main entry point for the Embedded Linux Runtime.
- * Use this class from Flutter via MethodChannel or from other native code.
  */
 class NexusRuntime private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val bootstrapManager = BootstrapManager(appContext)
     private val executor = ProotExecutor(appContext, bootstrapManager)
+    val packages = PackageManager(executor)
 
     companion object {
-        private const val TAG = "NexusRuntime"
         @Volatile
         private var instance: NexusRuntime? = null
 
@@ -26,23 +24,20 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     /**
-     * Must be called once (preferably on background thread) before using the runtime.
+     * Initialize the runtime. Safe to call multiple times.
+     * @param onProgress optional callback (percent, message)
      */
-    fun initialize(): Result<Unit> {
-        Log.i(TAG, "Initializing Nexus Embedded Runtime...")
-        return bootstrapManager.ensureBootstrap()
+    fun initialize(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
+        RuntimeLogger.i("Initializing Nexus Embedded Runtime...")
+        return bootstrapManager.ensureBootstrap(onProgress)
     }
 
     val isReady: Boolean
         get() = bootstrapManager.isReady
 
     fun getPrefixPath(): String = bootstrapManager.getPrefixPath()
-
     fun getRuntimeRoot(): String = bootstrapManager.getRuntimeRootPath()
 
-    /**
-     * Run a shell command inside the embedded environment.
-     */
     fun runCommand(
         command: String,
         workingDir: String? = null,
@@ -51,30 +46,20 @@ class NexusRuntime private constructor(context: Context) {
         return executor.run(command, workingDir, timeoutSec)
     }
 
-    /**
-     * Quick helper for simple commands.
-     */
     fun exec(command: String): String {
         val result = runCommand(command)
-        return if (result.exitCode == 0) {
-            result.stdout
-        } else {
-            "ERROR(${result.exitCode}): ${result.stderr}"
-        }
+        return if (result.exitCode == 0) result.stdout
+        else "ERROR(${result.exitCode}): ${result.stderr}"
     }
 
-    /**
-     * Check if a binary exists inside the prefix.
-     */
     fun hasBinary(name: String): Boolean {
-        val result = runCommand("command -v $name")
-        return result.exitCode == 0 && result.stdout.isNotBlank()
+        val result = runCommand("command -v $name >/dev/null 2>&1 && echo yes || echo no")
+        return result.stdout.trim() == "yes"
     }
 
-    /**
-     * Get Python version (useful smoke test).
-     */
     fun pythonVersion(): String {
-        return exec("python3 --version 2>&1 || python --version 2>&1")
+        return exec("python3 --version 2>&1 || python --version 2>&1 || echo 'Python not found'")
     }
+
+    fun uname(): String = exec("uname -a")
 }

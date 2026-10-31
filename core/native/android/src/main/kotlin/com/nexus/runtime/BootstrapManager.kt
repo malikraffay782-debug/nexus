@@ -2,7 +2,6 @@ package com.nexus.runtime
 
 import android.content.Context
 import android.os.Build
-import android.util.Log
 import java.io.File
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
@@ -11,17 +10,16 @@ import java.util.zip.ZipInputStream
  * Handles first-run extraction of the Termux-style bootstrap
  * into the app's private storage.
  *
- * Bootstrap zips should be placed in assets/bootstrap/ or as raw resources.
- * Naming convention: bootstrap-aarch64.zip, bootstrap-arm.zip, etc.
+ * Bootstrap zips should be placed in assets/bootstrap/
+ * Naming: bootstrap-aarch64.zip, bootstrap-arm.zip, etc.
  */
 class BootstrapManager(private val context: Context) {
 
     companion object {
-        private const val TAG = "NexusBootstrap"
         private const val RUNTIME_DIR = "nexus-runtime"
         private const val PREFIX_DIR = "prefix"
         private const val VERSION_FILE = "version"
-        private const val CURRENT_BOOTSTRAP_VERSION = "2026.10.1" // bump when bootstrap changes
+        const val CURRENT_BOOTSTRAP_VERSION = "2026.10.1"
     }
 
     private val runtimeRoot: File
@@ -39,34 +37,38 @@ class BootstrapManager(private val context: Context) {
         }
 
     /**
-     * Call this on app start. Returns true if runtime is ready after this call.
+     * Progress callback: (percent 0-100, message)
      */
-    fun ensureBootstrap(): Result<Unit> {
+    fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         return try {
             if (isReady) {
-                Log.i(TAG, "Bootstrap already ready (version $CURRENT_BOOTSTRAP_VERSION)")
+                RuntimeLogger.i("Bootstrap already ready (v$CURRENT_BOOTSTRAP_VERSION)")
+                onProgress?.invoke(100, "Already ready")
                 return Result.success(Unit)
             }
 
-            Log.i(TAG, "Starting bootstrap extraction...")
+            RuntimeLogger.i("Starting bootstrap extraction...")
+            onProgress?.invoke(5, "Preparing...")
+
             runtimeRoot.mkdirs()
-
             val arch = detectArch()
-            Log.i(TAG, "Detected architecture: $arch")
+            RuntimeLogger.i("Architecture: $arch")
+            onProgress?.invoke(10, "Detected $arch")
 
-            // Clean previous broken install
             if (prefixDir.exists()) {
+                onProgress?.invoke(15, "Cleaning old install...")
                 prefixDir.deleteRecursively()
             }
 
-            extractBootstrap(arch)
+            extractBootstrap(arch, onProgress)
             createRequiredDirs()
             writeVersion()
 
-            Log.i(TAG, "Bootstrap extraction completed successfully")
+            onProgress?.invoke(100, "Done")
+            RuntimeLogger.i("Bootstrap extraction completed")
             Result.success(Unit)
         } catch (e: Exception) {
-            Log.e(TAG, "Bootstrap failed", e)
+            RuntimeLogger.e("Bootstrap failed", e)
             Result.failure(e)
         }
     }
@@ -78,17 +80,22 @@ class BootstrapManager(private val context: Context) {
             abi.startsWith("armeabi") || abi.startsWith("arm") -> "arm"
             abi.startsWith("x86_64") -> "x86_64"
             abi.startsWith("x86") -> "x86"
-            else -> "aarch64" // safe default for modern devices
+            else -> "aarch64"
         }
     }
 
-    private fun extractBootstrap(arch: String) {
+    private fun extractBootstrap(arch: String, onProgress: ((Int, String) -> Unit)?) {
         val assetName = "bootstrap/bootstrap-$arch.zip"
+        onProgress?.invoke(20, "Opening bootstrap...")
 
         context.assets.open(assetName).use { input ->
+            // We don't know total size easily from assets, so we approximate by entry count later if needed.
+            // For now simple progressive feel.
             ZipInputStream(input).use { zis ->
                 var entry = zis.nextEntry
+                var count = 0
                 while (entry != null) {
+                    count++
                     val outFile = File(prefixDir, entry.name)
 
                     if (entry.isDirectory) {
@@ -98,7 +105,6 @@ class BootstrapManager(private val context: Context) {
                         FileOutputStream(outFile).use { fos ->
                             zis.copyTo(fos)
                         }
-                        // Make binaries executable
                         if (entry.name.startsWith("bin/") ||
                             entry.name.startsWith("libexec/") ||
                             entry.name.contains("/bin/")
@@ -106,18 +112,25 @@ class BootstrapManager(private val context: Context) {
                             outFile.setExecutable(true, false)
                         }
                     }
+
+                    // Rough progress 20% → 90%
+                    if (count % 25 == 0) {
+                        val fakePercent = (20 + (count.coerceAtMost(400) * 70 / 400)).coerceAtMost(90)
+                        onProgress?.invoke(fakePercent, "Extracting... ($count files)")
+                    }
+
                     zis.closeEntry()
                     entry = zis.nextEntry
                 }
             }
         }
+        onProgress?.invoke(92, "Finishing...")
     }
 
     private fun createRequiredDirs() {
         listOf("tmp", "home", "var/cache", "var/log").forEach { rel ->
             File(runtimeRoot, rel).mkdirs()
         }
-        // Also inside prefix
         listOf("tmp", "var/cache", "var/log", "home").forEach { rel ->
             File(prefixDir, rel).mkdirs()
         }
@@ -128,6 +141,5 @@ class BootstrapManager(private val context: Context) {
     }
 
     fun getPrefixPath(): String = prefixDir.absolutePath
-
     fun getRuntimeRootPath(): String = runtimeRoot.absolutePath
 }

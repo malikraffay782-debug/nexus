@@ -1,13 +1,28 @@
+import 'dart:async';
 import 'package:flutter/services.dart';
 
 /// Flutter-side API for the Nexus Embedded Linux Runtime.
-///
-/// This is the only class Studio code should talk to for running
-/// commands inside the embedded environment.
 class EmbeddedRuntime {
   static const MethodChannel _channel = MethodChannel('com.nexus/runtime');
+  static const EventChannel _progressChannel = EventChannel('com.nexus/runtime/progress');
 
-  /// Initialize / extract bootstrap. Call once at app start (preferably with loading UI).
+  static Stream<RuntimeProgress>? _progressStream;
+
+  /// Listen to bootstrap progress (percent + message)
+  static Stream<RuntimeProgress> get progressStream {
+    _progressStream ??= _progressChannel
+        .receiveBroadcastStream()
+        .map((event) {
+          final map = Map<String, dynamic>.from(event as Map);
+          return RuntimeProgress(
+            percent: map['percent'] as int? ?? 0,
+            message: map['message'] as String? ?? '',
+          );
+        });
+    return _progressStream!;
+  }
+
+  /// Initialize / extract bootstrap.
   static Future<RuntimeInitResult> initialize() async {
     final result = await _channel.invokeMethod<Map>('initialize');
     if (result == null) {
@@ -23,7 +38,6 @@ class EmbeddedRuntime {
     return await _channel.invokeMethod<bool>('isReady') ?? false;
   }
 
-  /// Run a command inside the embedded Linux environment.
   static Future<CommandResult> runCommand(
     String command, {
     String? workingDir,
@@ -68,7 +82,33 @@ class EmbeddedRuntime {
     return await _channel.invokeMethod<bool>('hasBinary', {'name': name}) ?? false;
   }
 
-  /// Convenience helper
+  /// Install one or more packages
+  static Future<PackageResult> installPackages(List<String> packages) async {
+    final result = await _channel.invokeMethod<Map>('installPackage', {
+      'packages': packages,
+    });
+    if (result == null) {
+      return PackageResult(success: false, output: '', error: 'Null response');
+    }
+    return PackageResult(
+      success: result['success'] == true,
+      output: result['output'] as String? ?? '',
+      error: result['error'] as String? ?? '',
+    );
+  }
+
+  static Future<PackageResult> updatePackages() async {
+    final result = await _channel.invokeMethod<Map>('updatePackages');
+    if (result == null) {
+      return PackageResult(success: false, output: '', error: 'Null response');
+    }
+    return PackageResult(
+      success: result['success'] == true,
+      output: result['output'] as String? ?? '',
+      error: result['error'] as String? ?? '',
+    );
+  }
+
   static Future<String> exec(String command) async {
     final result = await runCommand(command);
     if (result.exitCode == 0) return result.stdout;
@@ -76,10 +116,15 @@ class EmbeddedRuntime {
   }
 }
 
+class RuntimeProgress {
+  final int percent;
+  final String message;
+  RuntimeProgress({required this.percent, required this.message});
+}
+
 class RuntimeInitResult {
   final bool success;
   final String? error;
-
   RuntimeInitResult({required this.success, this.error});
 }
 
@@ -100,8 +145,13 @@ class CommandResult {
 
   @override
   String toString() {
-    return 'CommandResult(exitCode: $exitCode, timedOut: $timedOut)\n'
-        'stdout:\n$stdout\n'
-        'stderr:\n$stderr';
+    return 'CommandResult(exitCode: $exitCode, timedOut: $timedOut)\nstdout:\n$stdout\nstderr:\n$stderr';
   }
+}
+
+class PackageResult {
+  final bool success;
+  final String output;
+  final String error;
+  PackageResult({required this.success, required this.output, required this.error});
 }
