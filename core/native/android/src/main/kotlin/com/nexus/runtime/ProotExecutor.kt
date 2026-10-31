@@ -116,9 +116,14 @@ class ProotExecutor(
                 try {
                     BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
                         var total = 0
-                        reader.forEachLine { line ->
+                        while (true) {
+                            val line = reader.readLine() ?: break
                             total += line.length + 1
-                            if (total <= MAX_OUTPUT_BYTES) stdout.appendLine(line)
+                            if (total > MAX_OUTPUT_BYTES) {
+                                stdout.appendLine("\n[output truncated at ${MAX_OUTPUT_BYTES} bytes]")
+                                break  // stop reading – does not consume unbounded memory in the builder
+                            }
+                            stdout.appendLine(line)
                         }
                     }
                 } catch (_: Exception) { /* process closed */ }
@@ -128,9 +133,14 @@ class ProotExecutor(
                 try {
                     BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
                         var total = 0
-                        reader.forEachLine { line ->
+                        while (true) {
+                            val line = reader.readLine() ?: break
                             total += line.length + 1
-                            if (total <= MAX_OUTPUT_BYTES) stderr.appendLine(line)
+                            if (total > MAX_OUTPUT_BYTES) {
+                                stderr.appendLine("\n[output truncated at ${MAX_OUTPUT_BYTES} bytes]")
+                                break
+                            }
+                            stderr.appendLine(line)
                         }
                     }
                 } catch (_: Exception) { /* process closed */ }

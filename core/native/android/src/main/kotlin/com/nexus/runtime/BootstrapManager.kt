@@ -8,6 +8,7 @@ import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.InputStreamReader
+import java.nio.file.Paths
 import java.util.concurrent.locks.ReentrantLock
 import java.util.zip.ZipInputStream
 import kotlin.concurrent.withLock
@@ -17,6 +18,9 @@ import kotlin.concurrent.withLock
  *
  * Official Termux bootstraps store symlink info in SYMLINKS.txt
  * (format: target←relativeLinkPath). We recreate them after extract.
+ *
+ * Symlink safety: both the link path AND the resolved target must stay
+ * inside the prefix directory.
  */
 class BootstrapManager(private val context: Context) {
 
@@ -26,7 +30,6 @@ class BootstrapManager(private val context: Context) {
         private const val VERSION_FILE = "version"
         const val CURRENT_BOOTSTRAP_VERSION = "2026.10.1"
 
-        // Single lock for the whole ensureBootstrap sequence
         private val bootstrapLock = ReentrantLock()
     }
 
@@ -36,10 +39,6 @@ class BootstrapManager(private val context: Context) {
     val prefixDir: File
         get() = File(runtimeRoot, PREFIX_DIR)
 
-    /**
-     * Stronger readiness check.
-     * Still not perfect (doesn't run proot), but much better than before.
-     */
     val isReady: Boolean
         get() = try {
             val versionFile = File(runtimeRoot, VERSION_FILE)
@@ -49,7 +48,6 @@ class BootstrapManager(private val context: Context) {
             val binDir = File(prefixDir, "bin")
             if (!binDir.isDirectory) return false
 
-            // Critical files that must exist after a good extract
             val mustExist = listOf(
                 File(prefixDir, "bin"),
                 File(prefixDir, "etc"),
@@ -57,7 +55,6 @@ class BootstrapManager(private val context: Context) {
             )
             if (mustExist.any { !it.exists() }) return false
 
-            // At least one of the common shells should be present (symlink or file)
             val sh = File(prefixDir, "bin/sh")
             if (!sh.exists()) return false
 
@@ -67,9 +64,6 @@ class BootstrapManager(private val context: Context) {
             false
         }
 
-    /**
-     * Thread-safe bootstrap. Concurrent callers will wait / re-check.
-     */
     fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         return bootstrapLock.withLock {
             try {
@@ -97,7 +91,6 @@ class BootstrapManager(private val context: Context) {
                     return@withLock Result.failure(FileNotFoundException(msg))
                 }
 
-                // Clean previous install
                 if (prefixDir.exists()) {
                     onProgress?.invoke(15, "Cleaning old install...")
                     prefixDir.deleteRecursively()
@@ -106,8 +99,6 @@ class BootstrapManager(private val context: Context) {
 
                 extractBootstrap(arch, onProgress)
                 createRequiredDirs()
-
-                // Atomic-ish version write: write temp then rename
                 writeVersionAtomic()
 
                 onProgress?.invoke(100, "Done")
@@ -115,7 +106,6 @@ class BootstrapManager(private val context: Context) {
                 Result.success(Unit)
             } catch (e: Exception) {
                 RuntimeLogger.e("Bootstrap failed", e)
-                // Best effort: remove partial version so isReady stays false
                 try { File(runtimeRoot, VERSION_FILE).delete() } catch (_: Exception) {}
                 Result.failure(e)
             }
@@ -141,7 +131,8 @@ class BootstrapManager(private val context: Context) {
         onProgress?.invoke(20, "Opening bootstrap...")
 
         val targetDir = prefixDir.canonicalFile
-        val symlinks = mutableListOf<Pair<String, String>>() // target to linkAbs
+        // Store: (rawTarget, linkAbsPath, linkParentAbs)
+        val symlinks = mutableListOf<Triple<String, String, File>>()
 
         context.assets.open(assetName).use { input ->
             ZipInputStream(input).use { zis ->
@@ -159,14 +150,17 @@ class BootstrapManager(private val context: Context) {
                                     val target = parts[0].trim()
                                     val linkRel = parts[1].trim().removePrefix("./")
 
-                                    // Validate link destination
                                     val linkAbsFile = File(targetDir, linkRel).canonicalFile
                                     if (!linkAbsFile.toPath().startsWith(targetDir.toPath())) {
                                         RuntimeLogger.w("Skipping unsafe symlink destination: $linkRel")
-                                    } else if (!isSafeSymlinkTarget(target)) {
-                                        RuntimeLogger.w("Skipping unsafe symlink target: $target")
                                     } else {
-                                        symlinks.add(target to linkAbsFile.absolutePath)
+                                        val parent = linkAbsFile.parentFile ?: targetDir
+                                        // Resolve the final target path and ensure it stays inside prefix
+                                        if (isResolvedTargetSafe(target, parent, targetDir)) {
+                                            symlinks.add(Triple(target, linkAbsFile.absolutePath, parent))
+                                        } else {
+                                            RuntimeLogger.w("Skipping symlink whose resolved target escapes prefix: $target (from $linkRel)")
+                                        }
                                     }
                                 } else {
                                     RuntimeLogger.w("Malformed SYMLINKS line: $line")
@@ -211,12 +205,11 @@ class BootstrapManager(private val context: Context) {
         RuntimeLogger.i("Creating ${symlinks.size} symlinks")
 
         var created = 0
-        for ((target, linkAbs) in symlinks) {
+        for ((target, linkAbs, _) in symlinks) {
             try {
                 val linkFile = File(linkAbs)
                 linkFile.parentFile?.mkdirs()
                 if (linkFile.exists()) {
-                    // Only delete if it's a regular file (not a directory)
                     if (linkFile.isFile) linkFile.delete()
                     else {
                         RuntimeLogger.w("Refusing to replace non-file at $linkAbs")
@@ -235,25 +228,30 @@ class BootstrapManager(private val context: Context) {
     }
 
     /**
-     * Reject clearly dangerous symlink targets.
-     * Allows relative targets and targets that stay under the prefix idea.
-     * Blocks absolute paths outside a reasonable set and obvious host paths.
+     * Resolve [target] relative to [linkParent] and ensure the final
+     * canonical path stays inside [prefixDir].
+     *
+     * This blocks both absolute host paths and relative escapes like
+     * ../../../../system/bin/sh.
      */
-    private fun isSafeSymlinkTarget(target: String): Boolean {
+    private fun isResolvedTargetSafe(target: String, linkParent: File, prefixDir: File): Boolean {
         if (target.isBlank()) return false
-        // Relative targets are generally OK (../../bin/bash etc.)
-        if (!target.startsWith("/")) return true
 
-        // Absolute targets: only allow a very small safe set or reject
-        val dangerous = listOf(
-            "/system", "/vendor", "/data", "/proc", "/dev", "/sys",
-            "/acct", "/mnt", "/storage", "/sdcard", "/self"
-        )
-        for (d in dangerous) {
-            if (target == d || target.startsWith("$d/")) return false
+        return try {
+            val resolved = if (target.startsWith("/")) {
+                // Absolute target – almost never legitimate for Termux bootstrap
+                File(target).canonicalFile
+            } else {
+                // Relative target resolved against the directory that will contain the symlink
+                File(linkParent, target).canonicalFile
+            }
+
+            val prefixCanon = prefixDir.canonicalFile
+            resolved.toPath().startsWith(prefixCanon.toPath())
+        } catch (t: Throwable) {
+            RuntimeLogger.w("Failed to resolve symlink target '$target': ${t.message}")
+            false
         }
-        // Anything else absolute is suspicious for bootstrap → reject
-        return false
     }
 
     private fun createRequiredDirs() {
@@ -265,15 +263,23 @@ class BootstrapManager(private val context: Context) {
         }
     }
 
-    /** Write version via temp file + rename for better atomicity */
+    /**
+     * Prefer atomic replace. If rename fails we still try, but we no longer
+     * claim perfect atomicity in the fallback.
+     */
     private fun writeVersionAtomic() {
         val versionFile = File(runtimeRoot, VERSION_FILE)
-        val tmp = File(runtimeRoot, "$VERSION_FILE.tmp")
-        tmp.writeText(CURRENT_BOOTSTRAP_VERSION)
-        if (!tmp.renameTo(versionFile)) {
-            // Fallback
-            versionFile.writeText(CURRENT_BOOTSTRAP_VERSION)
-            tmp.delete()
+        val tmp = File(runtimeRoot, "$VERSION_FILE.tmp.${System.nanoTime()}")
+        try {
+            tmp.writeText(CURRENT_BOOTSTRAP_VERSION)
+            // On modern Android / Linux rename over existing is atomic within same filesystem
+            if (versionFile.exists()) versionFile.delete()
+            if (!tmp.renameTo(versionFile)) {
+                // Last resort
+                versionFile.writeText(CURRENT_BOOTSTRAP_VERSION)
+            }
+        } finally {
+            if (tmp.exists()) tmp.delete()
         }
     }
 
