@@ -21,16 +21,18 @@ Users can work with Blocks **or** write real code (Python, C, C++, Rust).
 ## Current Status (Phase 0)
 
 ### Done
-- Project structure
-- `BootstrapManager` – extracts Termux-style bootstrap on first run
-- `ProotExecutor` – runs commands inside the isolated environment
-- `NexusRuntime` – clean native entry point
-- Flutter MethodChannel bridge (`com.nexus/runtime`)
+- Project structure (pubspec, Gradle, MainActivity, plugin registration)
+- `BootstrapManager` – official Termux SYMLINKS.txt handling (real symlinks)
+- Zip Slip protection + safe isReady
+- `ProotExecutor` – command execution inside isolated env
+- `NexusRuntime` + PackageManager (injection-safe)
+- Flutter MethodChannel + EventChannel progress bridge
+- Robust Dart error/timeout handling
 - Basic test UI (`RuntimeTestScreen`)
 
 ### Still Required (Manual)
-- Actual `proot` + `proot-loader` binaries in `jniLibs`
-- Bootstrap zip(s) in `assets/bootstrap/`
+- Actual `proot` + `proot-loader` binaries in `jniLibs/arm64-v8a/`
+- Bootstrap zip(s) in `android/app/src/main/assets/bootstrap/`
 - See `embedded-runtime/scripts/setup_notes.md`
 
 ## Quick Start (after binaries are added)

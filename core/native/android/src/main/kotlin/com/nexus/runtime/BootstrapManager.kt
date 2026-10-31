@@ -2,17 +2,22 @@ package com.nexus.runtime
 
 import android.content.Context
 import android.os.Build
+import android.system.Os
+import java.io.BufferedReader
 import java.io.File
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
+import java.io.InputStreamReader
 import java.util.zip.ZipInputStream
 
 /**
  * Handles first-run extraction of the Termux-style bootstrap
  * into the app's private storage.
  *
- * Bootstrap zips should be placed in assets/bootstrap/
- * Naming: bootstrap-aarch64.zip, bootstrap-arm.zip, etc.
+ * Official Termux bootstraps do NOT store real symlinks inside the zip.
+ * Instead they ship a SYMLINKS.txt file (format: target←relativeLinkPath).
+ * After extracting regular files we recreate every symlink from that list.
+ * This is exactly how termux-app itself installs the bootstrap.
  */
 class BootstrapManager(private val context: Context) {
 
@@ -59,7 +64,6 @@ class BootstrapManager(private val context: Context) {
             RuntimeLogger.i("Architecture: $arch")
             onProgress?.invoke(10, "Detected $arch")
 
-            // Clear error if asset is missing
             val assetName = "bootstrap/bootstrap-$arch.zip"
             try {
                 context.assets.open(assetName).close()
@@ -73,8 +77,10 @@ class BootstrapManager(private val context: Context) {
 
             if (prefixDir.exists()) {
                 onProgress?.invoke(15, "Cleaning old install...")
+                // Best-effort clean. If it partially fails we still try a fresh extract.
                 prefixDir.deleteRecursively()
             }
+            prefixDir.mkdirs()
 
             extractBootstrap(arch, onProgress)
             createRequiredDirs()
@@ -108,18 +114,47 @@ class BootstrapManager(private val context: Context) {
         onProgress?.invoke(20, "Opening bootstrap...")
 
         val targetDir = prefixDir.canonicalFile
+        // Collect symlink definitions: Pair(target, linkAbsolutePath)
+        val symlinks = mutableListOf<Pair<String, String>>()
 
         context.assets.open(assetName).use { input ->
             ZipInputStream(input).use { zis ->
                 var entry = zis.nextEntry
                 var count = 0
                 while (entry != null) {
-                    count++
+                    val name = entry.name
 
-                    // --- Zip Slip protection ---
-                    val outFile = File(targetDir, entry.name).canonicalFile
+                    // --- Official Termux approach: collect SYMLINKS.txt ---
+                    if (name == "SYMLINKS.txt" || name.endsWith("/SYMLINKS.txt")) {
+                        BufferedReader(InputStreamReader(zis)).use { reader ->
+                            var line = reader.readLine()
+                            while (line != null) {
+                                val parts = line.split("←")
+                                if (parts.size == 2) {
+                                    val target = parts[0]
+                                    val linkRel = parts[1].removePrefix("./")
+                                    val linkAbs = File(targetDir, linkRel).canonicalPath
+                                    // Zip-slip guard on the link destination
+                                    if (linkAbs.startsWith(targetDir.path)) {
+                                        symlinks.add(target to linkAbs)
+                                    } else {
+                                        RuntimeLogger.w("Skipping unsafe symlink destination: $linkRel")
+                                    }
+                                } else {
+                                    RuntimeLogger.w("Malformed SYMLINKS line: $line")
+                                }
+                                line = reader.readLine()
+                            }
+                        }
+                        zis.closeEntry()
+                        entry = zis.nextEntry
+                        continue
+                    }
+
+                    // --- Zip Slip protection for regular entries ---
+                    val outFile = File(targetDir, name).canonicalFile
                     if (!outFile.toPath().startsWith(targetDir.toPath())) {
-                        throw SecurityException("Zip Slip blocked: entry '${entry.name}' resolves outside target directory")
+                        throw SecurityException("Zip Slip blocked: entry '$name' resolves outside target directory")
                     }
 
                     if (entry.isDirectory) {
@@ -130,18 +165,18 @@ class BootstrapManager(private val context: Context) {
                             zis.copyTo(fos)
                         }
                         // Best-effort executable bit for common binary locations
-                        if (entry.name.startsWith("bin/") ||
-                            entry.name.startsWith("libexec/") ||
-                            entry.name.contains("/bin/")
+                        if (name.startsWith("bin/") ||
+                            name.startsWith("libexec/") ||
+                            name.contains("/bin/")
                         ) {
                             outFile.setExecutable(true, false)
                         }
                     }
 
-                    // Approximate progress
+                    count++
                     if (count % 25 == 0) {
-                        val fakePercent = (20 + (count.coerceAtMost(400) * 70 / 400)).coerceAtMost(90)
-                        onProgress?.invoke(fakePercent, "Extracting... ($count files)")
+                        val pct = (20 + (count.coerceAtMost(800) * 60 / 800)).coerceAtMost(85)
+                        onProgress?.invoke(pct, "Extracting... ($count files)")
                     }
 
                     zis.closeEntry()
@@ -149,7 +184,32 @@ class BootstrapManager(private val context: Context) {
                 }
             }
         }
-        onProgress?.invoke(92, "Finishing...")
+
+        // --- Recreate all symlinks (the critical part that was missing) ---
+        onProgress?.invoke(88, "Creating ${symlinks.size} symlinks...")
+        RuntimeLogger.i("Creating ${symlinks.size} symlinks from SYMLINKS.txt")
+
+        var created = 0
+        for ((target, linkAbs) in symlinks) {
+            try {
+                val linkFile = File(linkAbs)
+                linkFile.parentFile?.mkdirs()
+                // Remove any regular file that was incorrectly extracted in place of the link
+                if (linkFile.exists()) {
+                    linkFile.delete()
+                }
+                // Use Android's Os.symlink (same as official TermuxInstaller)
+                Os.symlink(target, linkAbs)
+                created++
+            } catch (t: Throwable) {
+                RuntimeLogger.w("Failed to create symlink $linkAbs -> $target : ${t.message}")
+            }
+        }
+        RuntimeLogger.i("Created $created / ${symlinks.size} symlinks")
+
+        // Ensure critical bin directory is executable
+        File(targetDir, "bin").setExecutable(true, false)
+        onProgress?.invoke(95, "Symlinks ready")
     }
 
     private fun createRequiredDirs() {
