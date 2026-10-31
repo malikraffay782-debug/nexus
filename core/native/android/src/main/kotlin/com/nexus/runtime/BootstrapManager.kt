@@ -30,11 +30,14 @@ class BootstrapManager(private val context: Context) {
         get() = File(runtimeRoot, PREFIX_DIR)
 
     val isReady: Boolean
-        get() {
+        get() = try {
             val versionFile = File(runtimeRoot, VERSION_FILE)
-            return versionFile.exists() &&
-                    versionFile.readText().trim() == CURRENT_BOOTSTRAP_VERSION &&
-                    File(prefixDir, "bin").exists()
+            versionFile.exists() &&
+                versionFile.readText().trim() == CURRENT_BOOTSTRAP_VERSION &&
+                File(prefixDir, "bin").exists()
+        } catch (t: Throwable) {
+            RuntimeLogger.e("isReady check failed", t)
+            false
         }
 
     /**

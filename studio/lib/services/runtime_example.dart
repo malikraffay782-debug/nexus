@@ -21,6 +21,7 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
   void initState() {
     super.initState();
     _progressSub = EmbeddedRuntime.progressStream.listen((p) {
+      if (!mounted) return;
       setState(() {
         _progress = p.percent;
         _progressMsg = p.message;
@@ -35,27 +36,39 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
   }
 
   void _append(String msg) {
+    if (!mounted) return;
     setState(() => _log += '$msg\n');
   }
 
   Future<void> _initialize() async {
+    if (!mounted) return;
     setState(() {
       _busy = true;
       _progress = 0;
       _progressMsg = 'Starting...';
     });
     _append('→ Initializing runtime...');
-    final result = await EmbeddedRuntime.initialize();
-    if (result.success) {
-      _append('✓ Runtime ready');
-      _append('Prefix: ${await EmbeddedRuntime.getPrefixPath()}');
-    } else {
-      _append('✗ Failed: ${result.error}');
+
+    try {
+      final result = await EmbeddedRuntime.initialize();
+      if (!mounted) return;
+
+      if (result.success) {
+        _append('✓ Runtime ready');
+        final prefix = await EmbeddedRuntime.getPrefixPath();
+        if (mounted) _append('Prefix: $prefix');
+      } else {
+        _append('✗ Failed: ${result.error}');
+      }
+    } catch (e) {
+      _append('✗ Exception: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    setState(() => _busy = false);
   }
 
   Future<void> _runSmokeTests() async {
+    if (!mounted) return;
     setState(() => _busy = true);
     _append('\n→ Smoke tests...');
 
@@ -68,16 +81,23 @@ class _RuntimeTestScreenState extends State<RuntimeTestScreen> {
       'id',
     ];
 
-    for (final cmd in tests) {
-      _append('\n\$ $cmd');
-      final res = await EmbeddedRuntime.runCommand(cmd);
-      if (res.isSuccess) {
-        _append(res.stdout);
-      } else {
-        _append('FAILED (${res.exitCode}): ${res.stderr}');
+    try {
+      for (final cmd in tests) {
+        if (!mounted) return;
+        _append('\n\$ $cmd');
+        final res = await EmbeddedRuntime.runCommand(cmd);
+        if (!mounted) return;
+        if (res.isSuccess) {
+          _append(res.stdout);
+        } else {
+          _append('FAILED (${res.exitCode}): ${res.stderr}');
+        }
       }
+    } catch (e) {
+      _append('✗ Exception: $e');
+    } finally {
+      if (mounted) setState(() => _busy = false);
     }
-    setState(() => _busy = false);
   }
 
   @override

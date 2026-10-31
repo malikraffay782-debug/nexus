@@ -14,14 +14,16 @@ import java.util.concurrent.Executors
  * Flutter bridge for Nexus Embedded Runtime.
  *
  * MethodChannel : com.nexus/runtime
- * EventChannel  : com.nexus/runtime/progress   (for bootstrap progress)
+ * EventChannel  : com.nexus/runtime/progress
  */
 class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandler {
 
     private lateinit var methodChannel: MethodChannel
     private lateinit var eventChannel: EventChannel
     private lateinit var runtime: NexusRuntime
-    private val executor = Executors.newSingleThreadExecutor()
+
+    // Allow multiple concurrent commands (install can be long)
+    private val executor = Executors.newFixedThreadPool(4)
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var progressSink: EventChannel.EventSink? = null
@@ -39,6 +41,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
+        progressSink = null
         executor.shutdown()
     }
 
@@ -56,29 +59,61 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
         }
     }
 
+    /**
+     * Run work on background thread and always complete the Flutter Result
+     * (success or error). Prevents Dart Futures from hanging forever.
+     */
+    private fun <T> onWorker(result: Result, tag: String, block: () -> T) {
+        executor.execute {
+            try {
+                val value = block()
+                mainHandler.post {
+                    try {
+                        result.success(value)
+                    } catch (t: Throwable) {
+                        RuntimeLogger.e("Failed to send success for $tag", t)
+                    }
+                }
+            } catch (t: Throwable) {
+                RuntimeLogger.e("Worker error in $tag", t)
+                mainHandler.post {
+                    try {
+                        result.error("NATIVE_ERROR", "$tag: ${t.message}", null)
+                    } catch (_: Throwable) {
+                        // Result already used or channel gone
+                    }
+                }
+            }
+        }
+    }
+
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "initialize" -> {
-                executor.execute {
+                onWorker(result, "initialize") {
                     val initResult = runtime.initialize { percent, message ->
                         sendProgress(percent, message)
                     }
-                    mainHandler.post {
-                        if (initResult.isSuccess) {
-                            result.success(mapOf("success" to true))
-                        } else {
-                            result.success(
-                                mapOf(
-                                    "success" to false,
-                                    "error" to (initResult.exceptionOrNull()?.message ?: "Unknown error")
-                                )
-                            )
-                        }
+                    if (initResult.isSuccess) {
+                        mapOf("success" to true)
+                    } else {
+                        mapOf(
+                            "success" to false,
+                            "error" to (initResult.exceptionOrNull()?.message ?: "Unknown error")
+                        )
                     }
                 }
             }
 
-            "isReady" -> result.success(runtime.isReady)
+            "isReady" -> {
+                val ready = try {
+                    runtime.isReady
+                } catch (t: Throwable) {
+                    RuntimeLogger.e("isReady check failed", t)
+                    false
+                }
+                result.success(ready)
+            }
 
             "runCommand" -> {
                 val command = call.argument<String>("command")
@@ -89,18 +124,14 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 val workingDir = call.argument<String>("workingDir")
                 val timeoutSec = call.argument<Int>("timeoutSec")?.toLong() ?: 60L
 
-                executor.execute {
+                onWorker(result, "runCommand") {
                     val cmdResult = runtime.runCommand(command, workingDir, timeoutSec)
-                    mainHandler.post {
-                        result.success(
-                            mapOf(
-                                "exitCode" to cmdResult.exitCode,
-                                "stdout" to cmdResult.stdout,
-                                "stderr" to cmdResult.stderr,
-                                "timedOut" to cmdResult.timedOut
-                            )
-                        )
-                    }
+                    mapOf(
+                        "exitCode" to cmdResult.exitCode,
+                        "stdout" to cmdResult.stdout,
+                        "stderr" to cmdResult.stderr,
+                        "timedOut" to cmdResult.timedOut
+                    )
                 }
             }
 
@@ -108,9 +139,8 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             "getRuntimeRoot" -> result.success(runtime.getRuntimeRoot())
 
             "pythonVersion" -> {
-                executor.execute {
-                    val v = runtime.pythonVersion()
-                    mainHandler.post { result.success(v) }
+                onWorker(result, "pythonVersion") {
+                    runtime.pythonVersion()
                 }
             }
 
@@ -120,44 +150,36 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     result.error("INVALID_ARGS", "name is required", null)
                     return
                 }
-                executor.execute {
-                    val exists = runtime.hasBinary(name)
-                    mainHandler.post { result.success(exists) }
+                onWorker(result, "hasBinary") {
+                    runtime.hasBinary(name)
                 }
             }
 
             "installPackage" -> {
-                val packages = call.argument<List<String>>("packages")
-                if (packages.isNullOrEmpty()) {
+                val raw = call.argument<List<*>>("packages")
+                val packages = raw?.filterIsInstance<String>() ?: emptyList()
+                if (packages.isEmpty()) {
                     result.error("INVALID_ARGS", "packages list required", null)
                     return
                 }
-                executor.execute {
+                onWorker(result, "installPackage") {
                     val installResult = runtime.packages.install(packages)
-                    mainHandler.post {
-                        result.success(
-                            mapOf(
-                                "success" to installResult.success,
-                                "output" to installResult.output,
-                                "error" to installResult.error
-                            )
-                        )
-                    }
+                    mapOf(
+                        "success" to installResult.success,
+                        "output" to installResult.output,
+                        "error" to installResult.error
+                    )
                 }
             }
 
             "updatePackages" -> {
-                executor.execute {
+                onWorker(result, "updatePackages") {
                     val updateResult = runtime.packages.update()
-                    mainHandler.post {
-                        result.success(
-                            mapOf(
-                                "success" to updateResult.success,
-                                "output" to updateResult.output,
-                                "error" to updateResult.error
-                            )
-                        )
-                    }
+                    mapOf(
+                        "success" to updateResult.success,
+                        "output" to updateResult.output,
+                        "error" to updateResult.error
+                    )
                 }
             }
 

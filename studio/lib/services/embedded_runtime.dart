@@ -10,32 +10,43 @@ class EmbeddedRuntime {
 
   /// Listen to bootstrap progress (percent + message)
   static Stream<RuntimeProgress> get progressStream {
-    _progressStream ??= _progressChannel
-        .receiveBroadcastStream()
-        .map((event) {
-          final map = Map<String, dynamic>.from(event as Map);
-          return RuntimeProgress(
-            percent: map['percent'] as int? ?? 0,
-            message: map['message'] as String? ?? '',
-          );
-        });
+    _progressStream ??= _progressChannel.receiveBroadcastStream().map((event) {
+      final map = Map<String, dynamic>.from(event as Map);
+      return RuntimeProgress(
+        percent: map['percent'] as int? ?? 0,
+        message: map['message'] as String? ?? '',
+      );
+    });
     return _progressStream!;
   }
 
-  /// Initialize / extract bootstrap.
   static Future<RuntimeInitResult> initialize() async {
-    final result = await _channel.invokeMethod<Map>('initialize');
-    if (result == null) {
-      return RuntimeInitResult(success: false, error: 'Null response from native');
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('initialize')
+          .timeout(const Duration(seconds: 180));
+      if (result == null) {
+        return RuntimeInitResult(success: false, error: 'Null response from native');
+      }
+      return RuntimeInitResult(
+        success: result['success'] == true,
+        error: result['error'] as String?,
+      );
+    } on PlatformException catch (e) {
+      return RuntimeInitResult(success: false, error: '${e.code}: ${e.message}');
+    } on TimeoutException {
+      return RuntimeInitResult(success: false, error: 'Initialize timed out');
+    } catch (e) {
+      return RuntimeInitResult(success: false, error: e.toString());
     }
-    return RuntimeInitResult(
-      success: result['success'] == true,
-      error: result['error'] as String?,
-    );
   }
 
   static Future<bool> isReady() async {
-    return await _channel.invokeMethod<bool>('isReady') ?? false;
+    try {
+      return await _channel.invokeMethod<bool>('isReady').timeout(const Duration(seconds: 5)) ?? false;
+    } catch (_) {
+      return false;
+    }
   }
 
   static Future<CommandResult> runCommand(
@@ -43,70 +54,134 @@ class EmbeddedRuntime {
     String? workingDir,
     int timeoutSec = 60,
   }) async {
-    final result = await _channel.invokeMethod<Map>('runCommand', {
-      'command': command,
-      'workingDir': workingDir,
-      'timeoutSec': timeoutSec,
-    });
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('runCommand', {
+            'command': command,
+            'workingDir': workingDir,
+            'timeoutSec': timeoutSec,
+          })
+          .timeout(Duration(seconds: timeoutSec + 15));
 
-    if (result == null) {
+      if (result == null) {
+        return CommandResult(
+          exitCode: -1,
+          stdout: '',
+          stderr: 'Null response from native',
+          timedOut: false,
+        );
+      }
+
+      return CommandResult(
+        exitCode: result['exitCode'] as int? ?? -1,
+        stdout: result['stdout'] as String? ?? '',
+        stderr: result['stderr'] as String? ?? '',
+        timedOut: result['timedOut'] as bool? ?? false,
+      );
+    } on PlatformException catch (e) {
       return CommandResult(
         exitCode: -1,
         stdout: '',
-        stderr: 'Null response from native',
+        stderr: '${e.code}: ${e.message}',
+        timedOut: false,
+      );
+    } on TimeoutException {
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: 'Native call timed out',
+        timedOut: true,
+      );
+    } catch (e) {
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: e.toString(),
         timedOut: false,
       );
     }
-
-    return CommandResult(
-      exitCode: result['exitCode'] as int? ?? -1,
-      stdout: result['stdout'] as String? ?? '',
-      stderr: result['stderr'] as String? ?? '',
-      timedOut: result['timedOut'] as bool? ?? false,
-    );
   }
 
   static Future<String> getPrefixPath() async {
-    return await _channel.invokeMethod<String>('getPrefixPath') ?? '';
+    try {
+      return await _channel.invokeMethod<String>('getPrefixPath') ?? '';
+    } catch (_) {
+      return '';
+    }
   }
 
   static Future<String> getRuntimeRoot() async {
-    return await _channel.invokeMethod<String>('getRuntimeRoot') ?? '';
+    try {
+      return await _channel.invokeMethod<String>('getRuntimeRoot') ?? '';
+    } catch (_) {
+      return '';
+    }
   }
 
   static Future<String> pythonVersion() async {
-    return await _channel.invokeMethod<String>('pythonVersion') ?? 'unknown';
+    try {
+      return await _channel
+              .invokeMethod<String>('pythonVersion')
+              .timeout(const Duration(seconds: 30)) ??
+          'unknown';
+    } catch (e) {
+      return 'error: $e';
+    }
   }
 
   static Future<bool> hasBinary(String name) async {
-    return await _channel.invokeMethod<bool>('hasBinary', {'name': name}) ?? false;
+    try {
+      return await _channel
+              .invokeMethod<bool>('hasBinary', {'name': name})
+              .timeout(const Duration(seconds: 15)) ??
+          false;
+    } catch (_) {
+      return false;
+    }
   }
 
-  /// Install one or more packages
   static Future<PackageResult> installPackages(List<String> packages) async {
-    final result = await _channel.invokeMethod<Map>('installPackage', {
-      'packages': packages,
-    });
-    if (result == null) {
-      return PackageResult(success: false, output: '', error: 'Null response');
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('installPackage', {'packages': packages})
+          .timeout(const Duration(minutes: 12));
+      if (result == null) {
+        return PackageResult(success: false, output: '', error: 'Null response');
+      }
+      return PackageResult(
+        success: result['success'] == true,
+        output: result['output'] as String? ?? '',
+        error: result['error'] as String? ?? '',
+      );
+    } on PlatformException catch (e) {
+      return PackageResult(success: false, output: '', error: '${e.code}: ${e.message}');
+    } on TimeoutException {
+      return PackageResult(success: false, output: '', error: 'Install timed out');
+    } catch (e) {
+      return PackageResult(success: false, output: '', error: e.toString());
     }
-    return PackageResult(
-      success: result['success'] == true,
-      output: result['output'] as String? ?? '',
-      error: result['error'] as String? ?? '',
-    );
   }
 
   static Future<PackageResult> updatePackages() async {
-    final result = await _channel.invokeMethod<Map>('updatePackages');
-    if (result == null) {
-      return PackageResult(success: false, output: '', error: 'Null response');
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('updatePackages')
+          .timeout(const Duration(minutes: 3));
+      if (result == null) {
+        return PackageResult(success: false, output: '', error: 'Null response');
+      }
+      return PackageResult(
+        success: result['success'] == true,
+        output: result['output'] as String? ?? '',
+        error: result['error'] as String? ?? '',
+      );
+    } on PlatformException catch (e) {
+      return PackageResult(success: false, output: '', error: '${e.code}: ${e.message}');
+    } on TimeoutException {
+      return PackageResult(success: false, output: '', error: 'Update timed out');
+    } catch (e) {
+      return PackageResult(success: false, output: '', error: e.toString());
     }
-    return PackageResult(
-      success: result['success'] == true,
-      output: result['output'] as String? ?? '',
-      error: result['error'] as String? ?? '',
-    );
   }
 
   static Future<String> exec(String command) async {

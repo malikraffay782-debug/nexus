@@ -76,3 +76,24 @@ print(await EmbeddedRuntime.exec("ls -la /bin | head"));
 ---
 
 This is the heavy foundation. Once `python3 --version` works from Flutter, Phase 0 is basically done.
+---
+
+## CRITICAL: Symlink problem with Java ZipInputStream (B3)
+
+Java's built-in `ZipInputStream` **does not restore Unix symlinks**.
+
+Termux bootstrap contains many symlinks, for example:
+- `bin/sh` → `dash`
+- `usr/bin/*` → relative links
+- many `.so` links
+
+After a normal Java zip extract, `bin/sh` becomes a **regular text file** containing the word "dash".  
+Result: `/bin/sh -c ...` fails with "Exec format error" and almost nothing works (including python3).
+
+### Proper fixes (pick one later)
+
+1. **Best**: Switch bootstrap format to `.tar.gz` and use Apache Commons Compress (`TarArchiveInputStream`) which supports symlinks + modes.
+2. Or use a library that can read zip external attributes / symlink flag and recreate links with `Files.createSymbolicLink`.
+3. Temporary workaround some projects use: after extract, run a small native helper or a pre-built script that recreates the known critical links.
+
+Until this is fixed, even with correct binaries the runtime will not be usable for real commands.
