@@ -2,7 +2,7 @@
 set -euo pipefail
 
 # Nexus Phase 0 – Fetch Termux bootstrap (and show proot instructions)
-# Run from repo root:  bash scripts/fetch-runtime.sh
+# Run from repo root:  bash scripts/fetch-runtime.sh [arch]
 
 ARCH="${1:-aarch64}"
 ASSETS_DIR="studio/android/app/src/main/assets/bootstrap"
@@ -12,8 +12,9 @@ mkdir -p "$ASSETS_DIR" "$JNI_DIR"
 
 echo "==> Fetching latest Termux bootstrap for $ARCH ..."
 
-# Get latest release tag
-TAG=$(curl -sL https://api.github.com/repos/termux/termux-packages/releases/latest | grep -oP '"tag_name": "\K[^"]+' | head -1)
+# Portable tag fetch (works on macOS/BSD/Linux – no GNU grep -P)
+TAG=$(curl -fsSL "https://api.github.com/repos/termux/termux-packages/releases/latest" \
+  | python3 -c 'import json,sys; data=json.load(sys.stdin); print(data.get("tag_name",""))' 2>/dev/null || true)
 
 if [ -z "$TAG" ]; then
   echo "Failed to get latest release tag"
@@ -40,7 +41,7 @@ echo "  pkg install proot"
 echo "  # then copy these files into:"
 echo "  #   $JNI_DIR/"
 echo ""
-echo "  - \$PREFIX/bin/proot          →  libproot.so   (or keep name proot)"
+echo "  - \$PREFIX/bin/proot           →  libproot.so   (or keep name proot)"
 echo "  - \$PREFIX/libexec/proot/loader → libproot-loader.so"
 echo "  - any required .so (talloc, android-shmem) if the loader needs them"
 echo ""

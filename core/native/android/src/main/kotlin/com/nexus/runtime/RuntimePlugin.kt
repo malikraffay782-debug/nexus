@@ -73,25 +73,34 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
      * (success or error). Prevents Dart Futures from hanging forever.
      */
     private fun <T> onWorker(result: Result, tag: String, block: () -> T) {
-        executor.execute {
+        try {
+            executor.execute {
+                try {
+                    val value = block()
+                    mainHandler.post {
+                        try {
+                            result.success(value)
+                        } catch (t: Throwable) {
+                            RuntimeLogger.e("Failed to send success for $tag", t)
+                        }
+                    }
+                } catch (t: Throwable) {
+                    RuntimeLogger.e("Worker error in $tag", t)
+                    mainHandler.post {
+                        try {
+                            result.error("NATIVE_ERROR", "$tag: ${t.message}", null)
+                        } catch (_: Throwable) {
+                            // Result already used or channel gone
+                        }
+                    }
+                }
+            }
+        } catch (e: java.util.concurrent.RejectedExecutionException) {
+            RuntimeLogger.e("Worker rejected for $tag", e)
             try {
-                val value = block()
-                mainHandler.post {
-                    try {
-                        result.success(value)
-                    } catch (t: Throwable) {
-                        RuntimeLogger.e("Failed to send success for $tag", t)
-                    }
-                }
-            } catch (t: Throwable) {
-                RuntimeLogger.e("Worker error in $tag", t)
-                mainHandler.post {
-                    try {
-                        result.error("NATIVE_ERROR", "$tag: ${t.message}", null)
-                    } catch (_: Throwable) {
-                        // Result already used or channel gone
-                    }
-                }
+                result.error("NATIVE_SHUTDOWN", "$tag: executor shut down", null)
+            } catch (_: Throwable) {
+                // ignored
             }
         }
     }

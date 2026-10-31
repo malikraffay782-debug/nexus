@@ -167,41 +167,39 @@ class ProotExecutor(
      */
     private fun readCapped(stream: java.io.InputStream, out: StringBuilder) {
         try {
-            val reader = BufferedReader(InputStreamReader(stream))
-            var total = 0
-            val lineBuf = StringBuilder()
-            while (true) {
-                val ch = reader.read()
-                if (ch == -1) break
+            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
+                var total = 0
+                val lineBuf = StringBuilder()
+                while (true) {
+                    val ch = reader.read()
+                    if (ch == -1) break
 
-                if (ch == '\n'.code) {
-                    val line = lineBuf.toString()
-                    lineBuf.setLength(0)
-                    total += line.length + 1
-                    if (total > MAX_OUTPUT_BYTES) {
-                        out.appendLine("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
-                        break
-                    }
-                    out.appendLine(line)
-                } else {
-                    lineBuf.append(ch.toChar())
-                    // Hard stop on giant lines without newline
-                    if (lineBuf.length > MAX_LINE_BYTES) {
-                        out.appendLine("\n[line truncated at $MAX_LINE_BYTES bytes]")
-                        total += lineBuf.length
+                    if (ch == '\n'.code) {
+                        val line = lineBuf.toString()
                         lineBuf.setLength(0)
-                        if (total > MAX_OUTPUT_BYTES) break
-                        // skip rest of this line
-                        while (true) {
-                            val c2 = reader.read()
-                            if (c2 == -1 || c2 == '\n'.code) break
+                        total += line.length + 1
+                        if (total > MAX_OUTPUT_BYTES) {
+                            out.appendLine("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
+                            break
+                        }
+                        out.appendLine(line)
+                    } else {
+                        lineBuf.append(ch.toChar())
+                        if (lineBuf.length > MAX_LINE_BYTES) {
+                            out.appendLine("\n[line truncated at $MAX_LINE_BYTES bytes]")
+                            total += lineBuf.length
+                            lineBuf.setLength(0)
+                            if (total > MAX_OUTPUT_BYTES) break
+                            while (true) {
+                                val c2 = reader.read()
+                                if (c2 == -1 || c2 == '\n'.code) break
+                            }
                         }
                     }
                 }
-            }
-            // leftover without trailing newline
-            if (lineBuf.isNotEmpty() && total <= MAX_OUTPUT_BYTES) {
-                out.append(lineBuf)
+                if (lineBuf.isNotEmpty() && total <= MAX_OUTPUT_BYTES) {
+                    out.append(lineBuf)
+                }
             }
         } catch (_: Exception) {
             // process closed / stream ended
@@ -213,7 +211,7 @@ class ProotExecutor(
      */
     private fun killProcessTree(process: Process) {
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {  // ProcessHandle from API 26
                 process.toHandle().descendants().forEach { handle ->
                     try { handle.destroyForcibly() } catch (_: Exception) {}
                 }

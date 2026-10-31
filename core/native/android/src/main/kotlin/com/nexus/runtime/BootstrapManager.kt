@@ -10,6 +10,9 @@ import java.io.FileOutputStream
 import java.io.InputStreamReader
 import java.nio.file.Paths
 import java.util.concurrent.locks.ReentrantLock
+import java.nio.file.AtomicMoveNotSupportedException
+import java.nio.file.Files
+import java.nio.file.StandardCopyOption
 import java.util.zip.ZipInputStream
 import kotlin.concurrent.withLock
 
@@ -272,11 +275,19 @@ class BootstrapManager(private val context: Context) {
         val tmp = File(runtimeRoot, "$VERSION_FILE.tmp.${System.nanoTime()}")
         try {
             tmp.writeText(CURRENT_BOOTSTRAP_VERSION)
-            // On modern Android / Linux rename over existing is atomic within same filesystem
-            if (versionFile.exists()) versionFile.delete()
-            if (!tmp.renameTo(versionFile)) {
-                // Last resort
-                versionFile.writeText(CURRENT_BOOTSTRAP_VERSION)
+            try {
+                Files.move(
+                    tmp.toPath(),
+                    versionFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING,
+                    StandardCopyOption.ATOMIC_MOVE
+                )
+            } catch (_: AtomicMoveNotSupportedException) {
+                Files.move(
+                    tmp.toPath(),
+                    versionFile.toPath(),
+                    StandardCopyOption.REPLACE_EXISTING
+                )
             }
         } finally {
             if (tmp.exists()) tmp.delete()
