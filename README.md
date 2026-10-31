@@ -4,82 +4,69 @@
 
 No external Termux app required. The Linux environment lives inside the Nexus app itself.
 
-> Phase 0 – Foundation (Embedded Runtime) is in progress.
+## Phase 0 Status: **Foundation Complete**
 
-## Vision
+The core embedded runtime, Flutter bridge, project skeleton, and symlink-safe bootstrap extraction are in place.
 
-- **Nexus Studio** → Flutter app (Block Editor, Code Editor, Scene View, Project Manager, Language Installer)
-- **Nexus Core** → Engine (Python first, later C++/Rust native parts)
-- **Embedded Runtime** → Full Linux userspace inside the app (proot + bootstrap)
+### What works (once binaries are added)
 
-Supports both:
-- **Game Mode** (Scene, Physics, Sprites, Input)
-- **App Mode** (UI Components, Screens, Storage, Network)
-
-Users can work with Blocks **or** write real code (Python, C, C++, Rust).
-
-## Current Status (Phase 0)
-
-### Done
-- Project structure (pubspec, Gradle, MainActivity, plugin registration)
-- `BootstrapManager` – official Termux SYMLINKS.txt handling (real symlinks)
-- Zip Slip protection + safe isReady
-- `ProotExecutor` – command execution inside isolated env
-- `NexusRuntime` + PackageManager (injection-safe)
-- Flutter MethodChannel + EventChannel progress bridge
-- Robust Dart error/timeout handling
+- Bootstrap extraction using official Termux `SYMLINKS.txt` method (real symlinks)
+- Zip-Slip protection
+- `proot`-based command execution
+- Flutter `MethodChannel` + progress `EventChannel`
+- Package name validation / shell injection protection
 - Basic test UI (`RuntimeTestScreen`)
+- Minimal but real Flutter + Android project structure
+- `MainActivity` registers `RuntimePlugin`
 
-### Still Required (Manual)
-- Actual `proot` + `proot-loader` binaries in `jniLibs/arm64-v8a/`
-- Bootstrap zip(s) in `android/app/src/main/assets/bootstrap/`
-- See `embedded-runtime/scripts/setup_notes.md`
+### Still needed to actually run on a device
 
-## Quick Start (after binaries are added)
+1. **Bootstrap zip**
+   ```bash
+   bash scripts/fetch-runtime.sh aarch64
+   ```
+2. **proot + loader**  
+   Copy from a working Termux install into:
+   `studio/android/app/src/main/jniLibs/arm64-v8a/`
 
-```dart
-final init = await EmbeddedRuntime.initialize();
-if (init.success) {
-  print(await EmbeddedRuntime.pythonVersion());
-  print(await EmbeddedRuntime.exec("uname -a"));
-}
+See `embedded-runtime/scripts/setup_notes.md` for details.
+
+## Quick Start (after binaries)
+
+```bash
+cd studio
+flutter pub get
+# then run on device / emulator
 ```
 
-## Repository Structure
+In the app: tap **Initialize** → **Smoke Tests**.
+
+## Repository Layout
 
 ```
 nexus/
-├── studio/                     # Flutter app
-│   └── lib/services/
-│       ├── embedded_runtime.dart
-│       └── runtime_example.dart
-├── core/native/android/        # Kotlin + future JNI
-│   └── src/main/kotlin/com/nexus/runtime/
-│       ├── BootstrapManager.kt
-│       ├── ProotExecutor.kt
-│       ├── NexusRuntime.kt
-│       └── RuntimePlugin.kt
-├── embedded-runtime/
-│   ├── README.md
-│   └── scripts/setup_notes.md
-└── README.md
+├── studio/                          # Flutter app
+│   ├── lib/
+│   │   ├── main.dart
+│   │   └── services/
+│   │       ├── embedded_runtime.dart
+│   │       └── runtime_example.dart
+│   ├── android/                     # Gradle + MainActivity + assets/jniLibs
+│   └── pubspec.yaml
+├── core/native/android/.../runtime/ # Kotlin runtime (Bootstrap, Proot, Plugin...)
+├── embedded-runtime/                # Docs + notes
+└── scripts/fetch-runtime.sh         # Downloads official bootstrap
 ```
 
 ## Roadmap
 
-- [x] Phase 0 foundation code
-- [ ] Make bootstrap + proot actually run on device
-- [ ] Python working reliably
-- [ ] Simple package install support
+- [x] Phase 0 – Embedded Runtime foundation
+- [ ] Make it run on real device (binaries)
 - [ ] Block Interpreter (basic)
 - [ ] Scene / ECS
 - [ ] Dual Mode (Game + App)
-- [ ] Native acceleration (physics/renderer)
+- [ ] Native acceleration later
 
 ## License
 
-TBD (will be decided later)
-
----
-
-Built for people who want real power on mobile, not toy sandboxes.
+TBD
