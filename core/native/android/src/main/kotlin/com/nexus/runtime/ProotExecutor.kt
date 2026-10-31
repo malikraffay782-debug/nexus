@@ -10,8 +10,8 @@ import java.util.concurrent.TimeUnit
 /**
  * Executes commands inside the embedded Linux environment using proot.
  *
- * Note: This is a powerful execution surface. Callers must treat the
- * command string as trusted. Full command allowlisting is a later phase.
+ * Note: command strings are treated as trusted (Studio power tool).
+ * Full allowlisting is a later phase.
  */
 class ProotExecutor(
     private val context: Context,
@@ -21,7 +21,6 @@ class ProotExecutor(
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
         private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB
-        private const val MAX_LINE_BYTES = 256 * 1024         // 256 KB per line hard stop
     }
 
     data class CommandResult(
@@ -30,6 +29,33 @@ class ProotExecutor(
         val stderr: String,
         val timedOut: Boolean = false
     )
+
+    /**
+     * Ensure workingDir stays under runtime root (guest path for proot -w).
+     * Accepts absolute guest paths under prefix, or relative under /home.
+     */
+    private fun safeWorkingDir(raw: String?, prefix: File, runtimeRoot: File): String {
+        // proot -w expects a path inside the guest rootfs (prefix)
+        val defaultGuest = "/home"
+        if (raw.isNullOrBlank()) return defaultGuest
+
+        // Only allow simple relative or absolute-within-prefix style paths
+        // Reject obvious host escapes
+        if (raw.contains("..")) {
+            RuntimeLogger.w("workingDir rejected (contains ..): $raw")
+            return defaultGuest
+        }
+        // Guest path: must start with / and not point at host-only locations
+        val guest = if (raw.startsWith("/")) raw else "/home/$raw"
+        val blocked = listOf("/data", "/system", "/vendor", "/proc", "/dev", "/sys", "/acct", "/mnt", "/storage")
+        for (b in blocked) {
+            if (guest == b || guest.startsWith("$b/")) {
+                RuntimeLogger.w("workingDir rejected (blocked prefix): $raw")
+                return defaultGuest
+            }
+        }
+        return guest
+    }
 
     fun run(
         command: String,
@@ -45,9 +71,10 @@ class ProotExecutor(
             )
         }
 
-        val prefix = bootstrapManager.prefixDir
-        val runtimeRoot = File(bootstrapManager.getRuntimeRootPath())
+        val prefix = bootstrapManager.prefixDir.canonicalFile
+        val runtimeRoot = File(bootstrapManager.getRuntimeRootPath()).canonicalFile
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
+        val guestWorkDir = safeWorkingDir(workingDir, prefix, runtimeRoot)
 
         val prootCandidates = listOf(
             File(nativeLibDir, "libproot.so"),
@@ -67,8 +94,6 @@ class ProotExecutor(
         val actualProot = actualProotFile.absolutePath
         val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
 
-        // Keep PATH mostly inside the prefix. Only fall back to /system/bin for a few
-        // essential Android tools if needed; prefer prefix binaries.
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
@@ -76,7 +101,6 @@ class ProotExecutor(
         env["HOME"] = File(runtimeRoot, "home").absolutePath
         env["TMPDIR"] = File(runtimeRoot, "tmp").absolutePath
         env["PATH"] = "${prefix.absolutePath}/bin:${prefix.absolutePath}/usr/bin"
-        // Prefer prefix libs; include nativeLibDir only for proot loader itself
         env["LD_LIBRARY_PATH"] = "${prefix.absolutePath}/lib:${nativeLibDir}"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
@@ -97,13 +121,13 @@ class ProotExecutor(
             add("-b")
             add("${runtimeRoot.absolutePath}/home:/home")
             add("-w")
-            add(workingDir ?: "/home")
+            add(guestWorkDir)
             add("/bin/sh")
             add("-c")
             add(command)
         }
 
-        RuntimeLogger.d("Executing proot (cmd length=${command.length})")
+        RuntimeLogger.d("Executing proot (cmd length=${command.length}, cwd=$guestWorkDir)")
 
         return try {
             val processBuilder = ProcessBuilder(prootArgs)
@@ -161,44 +185,23 @@ class ProotExecutor(
         }
     }
 
-    /**
-     * Read stream with hard byte and per-line limits.
-     * Stops reading once the cap is hit (does not keep buffering forever).
-     */
+    /** Cap by UTF-8 byte size, not UTF-16 char count. */
     private fun readCapped(stream: java.io.InputStream, out: StringBuilder) {
         try {
-            BufferedReader(InputStreamReader(stream, Charsets.UTF_8)).use { reader ->
-                var total = 0
-                val lineBuf = StringBuilder()
+            stream.bufferedReader(Charsets.UTF_8).use { reader ->
+                val buf = CharArray(8192)
+                var totalBytes = 0
                 while (true) {
-                    val ch = reader.read()
-                    if (ch == -1) break
-
-                    if (ch == '\n'.code) {
-                        val line = lineBuf.toString()
-                        lineBuf.setLength(0)
-                        total += line.length + 1
-                        if (total > MAX_OUTPUT_BYTES) {
-                            out.appendLine("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
-                            break
-                        }
-                        out.appendLine(line)
-                    } else {
-                        lineBuf.append(ch.toChar())
-                        if (lineBuf.length > MAX_LINE_BYTES) {
-                            out.appendLine("\n[line truncated at $MAX_LINE_BYTES bytes]")
-                            total += lineBuf.length
-                            lineBuf.setLength(0)
-                            if (total > MAX_OUTPUT_BYTES) break
-                            while (true) {
-                                val c2 = reader.read()
-                                if (c2 == -1 || c2 == '\n'.code) break
-                            }
-                        }
+                    val n = reader.read(buf)
+                    if (n == -1) break
+                    val chunk = String(buf, 0, n)
+                    val bytes = chunk.toByteArray(Charsets.UTF_8).size
+                    if (totalBytes + bytes > MAX_OUTPUT_BYTES) {
+                        out.append("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
+                        return
                     }
-                }
-                if (lineBuf.isNotEmpty() && total <= MAX_OUTPUT_BYTES) {
-                    out.append(lineBuf)
+                    totalBytes += bytes
+                    out.append(chunk)
                 }
             }
         } catch (_: Exception) {
@@ -207,16 +210,28 @@ class ProotExecutor(
     }
 
     /**
-     * Best-effort kill of the process and its descendants (API 24+).
+     * Best-effort kill of process + children.
+     * Uses ProcessHandle on API 26+, and a process-group kill fallback.
      */
     private fun killProcessTree(process: Process) {
+        // Primary: ProcessHandle descendants (API 26+)
         try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {  // ProcessHandle from API 26
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 process.toHandle().descendants().forEach { handle ->
                     try { handle.destroyForcibly() } catch (_: Exception) {}
                 }
             }
         } catch (_: Exception) {}
+
+        // Fallback: try killing process group via pid (helps on older API / proot children)
+        try {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                val pid = process.toHandle().pid()
+                // Negative PID = process group (when started as session leader; best-effort)
+                Runtime.getRuntime().exec(arrayOf("sh", "-c", "kill -TERM -$pid 2>/dev/null; sleep 0.3; kill -KILL -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null"))
+            }
+        } catch (_: Exception) {}
+
         try {
             process.destroyForcibly()
         } catch (_: Exception) {}

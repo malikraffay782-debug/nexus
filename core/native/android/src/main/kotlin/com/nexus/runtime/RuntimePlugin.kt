@@ -88,7 +88,11 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     RuntimeLogger.e("Worker error in $tag", t)
                     mainHandler.post {
                         try {
-                            result.error("NATIVE_ERROR", "$tag: ${t.message}", null)
+                            result.error(
+                            "NATIVE_ERROR",
+                            "$tag: ${t.javaClass.simpleName}: ${t.message}",
+                            t.stackTraceToString()
+                        )
                         } catch (_: Throwable) {
                             // Result already used or channel gone
                         }

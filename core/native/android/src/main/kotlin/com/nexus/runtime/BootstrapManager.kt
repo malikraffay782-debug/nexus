@@ -109,7 +109,11 @@ class BootstrapManager(private val context: Context) {
                 Result.success(Unit)
             } catch (e: Exception) {
                 RuntimeLogger.e("Bootstrap failed", e)
-                try { File(runtimeRoot, VERSION_FILE).delete() } catch (_: Exception) {}
+                // Remove partial extract so next attempt starts clean
+                try {
+                    if (prefixDir.exists()) prefixDir.deleteRecursively()
+                    File(runtimeRoot, VERSION_FILE).delete()
+                } catch (_: Exception) {}
                 Result.failure(e)
             }
         }

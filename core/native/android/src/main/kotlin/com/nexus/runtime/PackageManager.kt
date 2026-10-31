@@ -13,7 +13,6 @@ class PackageManager(private val executor: ProotExecutor) {
     )
 
     companion object {
-        // Only allow safe package name characters
         private val SAFE_NAME = Regex("^[a-zA-Z0-9][a-zA-Z0-9+._-]*$")
     }
 
@@ -25,7 +24,6 @@ class PackageManager(private val executor: ProotExecutor) {
     }
 
     private fun shellQuote(s: String): String {
-        // POSIX single-quote escaping
         return "'" + s.replace("'", "'\\''") + "'"
     }
 
@@ -43,13 +41,17 @@ class PackageManager(private val executor: ProotExecutor) {
             return InstallResult(false, "", "No packages specified")
         }
 
-        for (pkg in packages) {
+        // Deduplicate while preserving order
+        val seen = linkedSetOf<String>()
+        val deduped = packages.filter { seen.add(it) }
+
+        for (pkg in deduped) {
             validateName(pkg)?.let {
                 return InstallResult(false, "", it)
             }
         }
 
-        val quoted = packages.joinToString(" ") { shellQuote(it) }
+        val quoted = deduped.joinToString(" ") { shellQuote(it) }
         val cmd = """
             if command -v pkg >/dev/null 2>&1; then
                 pkg install -y $quoted
@@ -72,12 +74,15 @@ class PackageManager(private val executor: ProotExecutor) {
         if (validateName(packageName) != null) return false
 
         val quoted = shellQuote(packageName)
+        // Prefer exact match via dpkg-query; fallback to pkg with whole-line match
         val result = executor.run(
             """
-            if command -v dpkg >/dev/null 2>&1; then
+            if command -v dpkg-query >/dev/null 2>&1; then
+                dpkg-query -W -f='\${'$'}{Status}' $quoted 2>/dev/null | grep -Fx 'install ok installed'
+            elif command -v dpkg >/dev/null 2>&1; then
                 dpkg -s $quoted 2>/dev/null | grep -q '^Status:.*installed'
             else
-                pkg list-installed 2>/dev/null | grep -F $quoted >/dev/null
+                pkg list-installed 2>/dev/null | awk '{print \$1}' | grep -Fx $quoted
             fi
             """.trimIndent()
         )

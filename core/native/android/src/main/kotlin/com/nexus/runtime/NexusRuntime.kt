@@ -60,8 +60,13 @@ class NexusRuntime private constructor(context: Context) {
      */
     fun execToString(command: String): String {
         val result = runCommand(command)
-        return if (result.exitCode == 0) result.stdout
-        else "ERROR(${result.exitCode}): ${result.stderr}"
+        return when {
+            result.exitCode == 0 -> result.stdout.ifBlank { result.stderr }
+            result.stdout.isNotBlank() && result.stderr.isNotBlank() ->
+                "ERROR(${result.exitCode}): ${result.stderr}\n${result.stdout}"
+            result.stdout.isNotBlank() -> "ERROR(${result.exitCode}): ${result.stdout}"
+            else -> "ERROR(${result.exitCode}): ${result.stderr.ifBlank { "no output" }}"
+        }
     }
 
     fun hasBinary(name: String): Boolean {
