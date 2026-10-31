@@ -46,7 +46,19 @@ class NexusRuntime private constructor(context: Context) {
         return executor.run(command, workingDir, timeoutSec)
     }
 
-    fun exec(command: String): String {
+    /**
+     * Convenience wrapper that returns only stdout on success.
+     * On failure it still returns a structured result so callers stay consistent.
+     */
+    fun exec(command: String): ProotExecutor.CommandResult {
+        return runCommand(command)
+    }
+
+    /**
+     * Legacy-style helper that returns a plain string (kept for simple logging / quick checks).
+     * Prefer [runCommand] or [exec] when you need proper error handling.
+     */
+    fun execToString(command: String): String {
         val result = runCommand(command)
         return if (result.exitCode == 0) result.stdout
         else "ERROR(${result.exitCode}): ${result.stderr}"
@@ -58,8 +70,12 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     fun pythonVersion(): String {
-        return exec("python3 --version 2>&1 || python --version 2>&1 || echo 'Python not found'")
+        val result = runCommand("python3 --version 2>&1 || python --version 2>&1 || echo 'Python not found'")
+        return if (result.exitCode == 0) result.stdout else result.stderr.ifBlank { "Python not found" }
     }
 
-    fun uname(): String = exec("uname -a")
+    fun uname(): String {
+        val result = runCommand("uname -a")
+        return if (result.exitCode == 0) result.stdout else "unknown"
+    }
 }

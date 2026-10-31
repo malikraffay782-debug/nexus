@@ -1,11 +1,11 @@
 package com.nexus.runtime
 
 import android.content.Context
-import android.util.Log
 import java.io.BufferedReader
 import java.io.File
 import java.io.InputStreamReader
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Executes commands inside the embedded Linux environment using proot.
@@ -19,7 +19,6 @@ class ProotExecutor(
 ) {
 
     companion object {
-        private const val TAG = "NexusProot"
         private const val DEFAULT_TIMEOUT_SEC = 60L
     }
 
@@ -32,10 +31,6 @@ class ProotExecutor(
 
     /**
      * Run a command inside the proot environment.
-     *
-     * @param command  The command to run (e.g. "python3 --version" or "ls -la")
-     * @param workingDir  Optional working directory inside the guest
-     * @param timeoutSec  Timeout in seconds
      */
     fun run(
         command: String,
@@ -46,7 +41,7 @@ class ProotExecutor(
             return CommandResult(
                 exitCode = -1,
                 stdout = "",
-                stderr = "Runtime not ready. Call ensureBootstrap() first.",
+                stderr = "Runtime not ready. Call initialize() first.",
                 timedOut = false
             )
         }
@@ -55,15 +50,16 @@ class ProotExecutor(
         val runtimeRoot = File(bootstrapManager.getRuntimeRootPath())
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
 
-        val prootPath = File(nativeLibDir, "libproot.so").absolutePath
-        val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
+        val prootCandidates = listOf(
+            File(nativeLibDir, "libproot.so"),
+            File(nativeLibDir, "proot"),
+            File(prefix, "bin/proot"),
+            File(prefix, "usr/bin/proot")
+        )
+        val actualProot = prootCandidates.firstOrNull { it.exists() }?.absolutePath
+            ?: File(nativeLibDir, "libproot.so").absolutePath
 
-        // Fallback if renamed
-        val actualProot = when {
-            File(prootPath).exists() -> prootPath
-            File(nativeLibDir, "proot").exists() -> File(nativeLibDir, "proot").absolutePath
-            else -> prootPath
-        }
+        val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
 
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
@@ -75,12 +71,15 @@ class ProotExecutor(
         env["LD_LIBRARY_PATH"] = "${prefix.absolutePath}/lib:${nativeLibDir}"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
+        // Helpful Android-related vars some tools expect
+        env["ANDROID_DATA"] = "/data"
+        env["ANDROID_ROOT"] = "/system"
 
         val prootArgs = mutableListOf<String>().apply {
             add(actualProot)
             add("-0")                          // fake root
             add("-r")
-            add(prefix.absolutePath)           // rootfs
+            add(prefix.absolutePath)
             add("-b")
             add("/dev")
             add("-b")
@@ -98,7 +97,7 @@ class ProotExecutor(
             add(command)
         }
 
-        Log.d(TAG, "Executing: ${prootArgs.joinToString(" ")}")
+        RuntimeLogger.d("Executing: ${prootArgs.joinToString(" ")}")
 
         return try {
             val processBuilder = ProcessBuilder(prootArgs)
@@ -107,40 +106,50 @@ class ProotExecutor(
             processBuilder.redirectErrorStream(false)
 
             val process = processBuilder.start()
+            val finishedFlag = AtomicBoolean(false)
 
             val stdout = StringBuilder()
             val stderr = StringBuilder()
 
             val stdoutThread = Thread {
-                BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                    reader.forEachLine { stdout.appendLine(it) }
-                }
-            }
+                try {
+                    BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
+                        reader.forEachLine { stdout.appendLine(it) }
+                    }
+                } catch (_: Exception) { /* process closed */ }
+            }.apply { name = "nexus-proot-stdout"; isDaemon = true }
+
             val stderrThread = Thread {
-                BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-                    reader.forEachLine { stderr.appendLine(it) }
-                }
-            }
+                try {
+                    BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
+                        reader.forEachLine { stderr.appendLine(it) }
+                    }
+                } catch (_: Exception) { /* process closed */ }
+            }.apply { name = "nexus-proot-stderr"; isDaemon = true }
 
             stdoutThread.start()
             stderrThread.start()
 
             val finished = process.waitFor(timeoutSec, TimeUnit.SECONDS)
+            finishedFlag.set(true)
 
             if (!finished) {
+                // Best effort kill
                 process.destroyForcibly()
-                stdoutThread.join(1000)
-                stderrThread.join(1000)
+                // Give reader threads a short chance to finish
+                stdoutThread.join(800)
+                stderrThread.join(800)
+
                 return CommandResult(
                     exitCode = -1,
-                    stdout = stdout.toString(),
-                    stderr = stderr.toString() + "\n[Timeout after ${timeoutSec}s]",
+                    stdout = stdout.toString().trim(),
+                    stderr = (stderr.toString().trim() + "\n[Timeout after ${timeoutSec}s]").trim(),
                     timedOut = true
                 )
             }
 
-            stdoutThread.join()
-            stderrThread.join()
+            stdoutThread.join(2000)
+            stderrThread.join(2000)
 
             CommandResult(
                 exitCode = process.exitValue(),
@@ -149,7 +158,7 @@ class ProotExecutor(
                 timedOut = false
             )
         } catch (e: Exception) {
-            Log.e(TAG, "Execution failed", e)
+            RuntimeLogger.e("Execution failed", e)
             CommandResult(
                 exitCode = -1,
                 stdout = "",
@@ -157,16 +166,5 @@ class ProotExecutor(
                 timedOut = false
             )
         }
-    }
-
-    /**
-     * Convenience: run and return only stdout (throws on non-zero exit)
-     */
-    fun runChecked(command: String): String {
-        val result = run(command)
-        if (result.exitCode != 0) {
-            throw RuntimeException("Command failed (${result.exitCode}): ${result.stderr}")
-        }
-        return result.stdout
     }
 }

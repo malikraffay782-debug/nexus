@@ -3,6 +3,7 @@ package com.nexus.runtime
 import android.content.Context
 import android.os.Build
 import java.io.File
+import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.util.zip.ZipInputStream
 
@@ -55,6 +56,18 @@ class BootstrapManager(private val context: Context) {
             RuntimeLogger.i("Architecture: $arch")
             onProgress?.invoke(10, "Detected $arch")
 
+            // Clear error if asset is missing
+            val assetName = "bootstrap/bootstrap-$arch.zip"
+            try {
+                context.assets.open(assetName).close()
+            } catch (e: FileNotFoundException) {
+                val msg = "Bootstrap asset not found: $assetName. " +
+                        "Place the correct bootstrap zip in assets/bootstrap/"
+                RuntimeLogger.e(msg)
+                onProgress?.invoke(0, msg)
+                return Result.failure(FileNotFoundException(msg))
+            }
+
             if (prefixDir.exists()) {
                 onProgress?.invoke(15, "Cleaning old install...")
                 prefixDir.deleteRecursively()
@@ -80,7 +93,10 @@ class BootstrapManager(private val context: Context) {
             abi.startsWith("armeabi") || abi.startsWith("arm") -> "arm"
             abi.startsWith("x86_64") -> "x86_64"
             abi.startsWith("x86") -> "x86"
-            else -> "aarch64"
+            else -> {
+                RuntimeLogger.w("Unknown ABI '$abi', falling back to aarch64")
+                "aarch64"
+            }
         }
     }
 
@@ -88,15 +104,20 @@ class BootstrapManager(private val context: Context) {
         val assetName = "bootstrap/bootstrap-$arch.zip"
         onProgress?.invoke(20, "Opening bootstrap...")
 
+        val targetDir = prefixDir.canonicalFile
+
         context.assets.open(assetName).use { input ->
-            // We don't know total size easily from assets, so we approximate by entry count later if needed.
-            // For now simple progressive feel.
             ZipInputStream(input).use { zis ->
                 var entry = zis.nextEntry
                 var count = 0
                 while (entry != null) {
                     count++
-                    val outFile = File(prefixDir, entry.name)
+
+                    // --- Zip Slip protection ---
+                    val outFile = File(targetDir, entry.name).canonicalFile
+                    if (!outFile.toPath().startsWith(targetDir.toPath())) {
+                        throw SecurityException("Zip Slip blocked: entry '${entry.name}' resolves outside target directory")
+                    }
 
                     if (entry.isDirectory) {
                         outFile.mkdirs()
@@ -105,6 +126,7 @@ class BootstrapManager(private val context: Context) {
                         FileOutputStream(outFile).use { fos ->
                             zis.copyTo(fos)
                         }
+                        // Best-effort executable bit for common binary locations
                         if (entry.name.startsWith("bin/") ||
                             entry.name.startsWith("libexec/") ||
                             entry.name.contains("/bin/")
@@ -113,7 +135,7 @@ class BootstrapManager(private val context: Context) {
                         }
                     }
 
-                    // Rough progress 20% → 90%
+                    // Approximate progress
                     if (count % 25 == 0) {
                         val fakePercent = (20 + (count.coerceAtMost(400) * 70 / 400)).coerceAtMost(90)
                         onProgress?.invoke(fakePercent, "Extracting... ($count files)")
