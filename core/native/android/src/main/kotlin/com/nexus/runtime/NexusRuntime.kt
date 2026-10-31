@@ -65,7 +65,11 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     fun hasBinary(name: String): Boolean {
-        val result = runCommand("command -v $name >/dev/null 2>&1 && echo yes || echo no")
+        // Only allow safe binary names
+        if (!name.matches(Regex("^[a-zA-Z0-9][a-zA-Z0-9._+-]*$"))) {
+            return false
+        }
+        val result = runCommand("command -v '$name' >/dev/null 2>&1 && echo yes || echo no")
         return result.stdout.trim() == "yes"
     }
 

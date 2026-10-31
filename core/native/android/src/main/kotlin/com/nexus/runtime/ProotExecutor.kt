@@ -20,6 +20,7 @@ class ProotExecutor(
 
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
+        private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB cap
     }
 
     data class CommandResult(
@@ -114,7 +115,11 @@ class ProotExecutor(
             val stdoutThread = Thread {
                 try {
                     BufferedReader(InputStreamReader(process.inputStream)).use { reader ->
-                        reader.forEachLine { stdout.appendLine(it) }
+                        var total = 0
+                        reader.forEachLine { line ->
+                            total += line.length + 1
+                            if (total <= MAX_OUTPUT_BYTES) stdout.appendLine(line)
+                        }
                     }
                 } catch (_: Exception) { /* process closed */ }
             }.apply { name = "nexus-proot-stdout"; isDaemon = true }
@@ -122,7 +127,11 @@ class ProotExecutor(
             val stderrThread = Thread {
                 try {
                     BufferedReader(InputStreamReader(process.errorStream)).use { reader ->
-                        reader.forEachLine { stderr.appendLine(it) }
+                        var total = 0
+                        reader.forEachLine { line ->
+                            total += line.length + 1
+                            if (total <= MAX_OUTPUT_BYTES) stderr.appendLine(line)
+                        }
                     }
                 } catch (_: Exception) { /* process closed */ }
             }.apply { name = "nexus-proot-stderr"; isDaemon = true }
