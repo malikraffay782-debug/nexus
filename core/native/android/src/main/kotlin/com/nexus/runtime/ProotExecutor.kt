@@ -72,6 +72,10 @@ class ProotExecutor(
             else -> timeoutSec
         }
 
+        if (command.isBlank()) {
+            return CommandResult(-1, "", "empty command", false)
+        }
+
         if (!bootstrapManager.isReady) {
             return CommandResult(-1, "", "Runtime not ready. Call initialize() first.", false)
         }

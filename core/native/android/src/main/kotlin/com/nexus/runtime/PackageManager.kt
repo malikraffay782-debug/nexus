@@ -2,9 +2,11 @@ package com.nexus.runtime
 
 /**
  * Thin wrapper around the embedded package manager.
- * All package names are validated before being passed to the shell.
+ * Executes via [runLocked] so install/update cannot race with bootstrap re-init.
  */
-class PackageManager(private val executor: ProotExecutor) {
+class PackageManager(
+    private val runLocked: (command: String, timeoutSec: Long) -> ProotExecutor.CommandResult
+) {
 
     data class InstallResult(
         val success: Boolean,
@@ -28,7 +30,7 @@ class PackageManager(private val executor: ProotExecutor) {
     }
 
     fun update(): InstallResult {
-        val result = executor.run("pkg update -y || apt-get update -y", timeoutSec = 120)
+        val result = runLocked("pkg update -y || apt-get update -y", 120)
         return InstallResult(
             success = result.exitCode == 0,
             output = result.stdout,
@@ -41,7 +43,6 @@ class PackageManager(private val executor: ProotExecutor) {
             return InstallResult(false, "", "No packages specified")
         }
 
-        // Deduplicate while preserving order
         val seen = linkedSetOf<String>()
         val deduped = packages.filter { seen.add(it) }
 
@@ -51,7 +52,6 @@ class PackageManager(private val executor: ProotExecutor) {
             }
         }
 
-        // Install in small batches to avoid E2BIG / huge command lines
         val batchSize = 8
         val outputs = StringBuilder()
         for (batch in deduped.chunked(batchSize)) {
@@ -63,7 +63,7 @@ class PackageManager(private val executor: ProotExecutor) {
                     apt-get install -y $quoted
                 fi
             """.trimIndent()
-            val result = executor.run(cmd, timeoutSec = 600)
+            val result = runLocked(cmd, 600)
             if (result.stdout.isNotBlank()) outputs.append(result.stdout).append('\n')
             if (result.exitCode != 0) {
                 return InstallResult(
@@ -82,17 +82,18 @@ class PackageManager(private val executor: ProotExecutor) {
         if (validateName(packageName) != null) return false
 
         val quoted = shellQuote(packageName)
-        // Prefer exact match via dpkg-query; fallback to pkg with whole-line match
-        val result = executor.run(
+        // dpkg-query format: ${Status} must reach the shell, not Kotlin
+        val result = runLocked(
             """
             if command -v dpkg-query >/dev/null 2>&1; then
-                dpkg-query -W -f='\${'$'}{Status}' $quoted 2>/dev/null | grep -Fx 'install ok installed'
+                dpkg-query -W -f='${'$'}{Status}\n' $quoted 2>/dev/null | grep -Fx 'install ok installed'
             elif command -v dpkg >/dev/null 2>&1; then
                 dpkg -s $quoted 2>/dev/null | grep -q '^Status:.*installed'
             else
-                pkg list-installed 2>/dev/null | awk '{print \$1}' | grep -Fx $quoted
+                pkg list-installed 2>/dev/null | awk '{print $$1}' | grep -Fx $quoted
             fi
-            """.trimIndent()
+            """.trimIndent(),
+            60
         )
         return result.exitCode == 0
     }
@@ -111,7 +112,7 @@ class PackageManager(private val executor: ProotExecutor) {
             fi
         """.trimIndent()
 
-        val result = executor.run(cmd)
+        val result = runLocked(cmd, 120)
         return InstallResult(
             success = result.exitCode == 0,
             output = result.stdout,

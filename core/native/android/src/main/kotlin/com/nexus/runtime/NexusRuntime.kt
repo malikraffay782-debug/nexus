@@ -9,7 +9,7 @@ import kotlin.concurrent.write
  * Main entry point for the Embedded Linux Runtime.
  *
  * initialize() takes a write lock (may delete/recreate prefix).
- * runCommand() takes a read lock so it cannot race with re-bootstrap.
+ * runCommand() / package ops take a read lock so they cannot race with re-bootstrap.
  */
 class NexusRuntime private constructor(context: Context) {
 
@@ -18,7 +18,11 @@ class NexusRuntime private constructor(context: Context) {
     private val executor = ProotExecutor(appContext, bootstrapManager)
     private val runtimeLock = ReentrantReadWriteLock()
 
-    val packages = PackageManager(executor)
+    val packages = PackageManager { command, timeoutSec ->
+        runtimeLock.read {
+            executor.run(command, null, timeoutSec)
+        }
+    }
 
     companion object {
         @Volatile
@@ -39,7 +43,11 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     val isReady: Boolean
-        get() = bootstrapManager.isReady
+        get() = try {
+            bootstrapManager.isReady
+        } catch (_: Throwable) {
+            false
+        }
 
     fun getPrefixPath(): String = bootstrapManager.getPrefixPath()
     fun getRuntimeRoot(): String = bootstrapManager.getRuntimeRootPath()
@@ -49,6 +57,9 @@ class NexusRuntime private constructor(context: Context) {
         workingDir: String? = null,
         timeoutSec: Long = 60
     ): ProotExecutor.CommandResult {
+        if (command.isBlank()) {
+            return ProotExecutor.CommandResult(-1, "", "empty command", false)
+        }
         return runtimeLock.read {
             executor.run(command, workingDir, timeoutSec)
         }
