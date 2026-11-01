@@ -216,11 +216,9 @@ class BootstrapManager(private val context: Context) {
             try {
                 val linkFile = File(linkAbs)
                 val parent = linkFile.parentFile?.canonicalFile ?: targetDir
-                // Re-validate at creation time (ancestor symlink escape)
+                // Link path itself must stay under prefix (do not weaken with parent-only check)
                 val resolvedLink = File(parent, linkFile.name).canonicalFile
-                if (!resolvedLink.toPath().startsWith(targetDir.toPath()) &&
-                    !parent.toPath().startsWith(targetDir.toPath())
-                ) {
+                if (!resolvedLink.toPath().startsWith(targetDir.toPath())) {
                     RuntimeLogger.w("Refusing symlink outside prefix: $linkAbs")
                     continue
                 }

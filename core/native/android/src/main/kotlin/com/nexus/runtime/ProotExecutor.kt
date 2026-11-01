@@ -148,8 +148,16 @@ class ProotExecutor(
 
             if (!finished) {
                 killProcessTree(process)
-                stdoutThread.join(1500)
-                stderrThread.join(1500)
+                // Close pipes first so drain threads unblock instead of hanging on live fds
+                try { process.inputStream.close() } catch (_: Exception) {}
+                try { process.errorStream.close() } catch (_: Exception) {}
+                try { process.outputStream.close() } catch (_: Exception) {}
+                try { stdoutThread.join(2000) } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
+                try { stderrThread.join(2000) } catch (_: InterruptedException) {
+                    Thread.currentThread().interrupt()
+                }
                 return CommandResult(
                     -1,
                     stdout.toString().trim(),
@@ -158,8 +166,12 @@ class ProotExecutor(
                 )
             }
 
-            stdoutThread.join(2000)
-            stderrThread.join(2000)
+            try { stdoutThread.join(2000) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            try { stderrThread.join(2000) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
 
             return CommandResult(
                 process.exitValue(),
