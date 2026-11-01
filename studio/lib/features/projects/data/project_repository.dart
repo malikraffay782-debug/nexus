@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -9,6 +10,7 @@ import '../domain/project.dart';
 /// Projects live at `<app documents>/projects/<id>/project.json`.
 class ProjectRepository {
   static const _manifest = 'project.json';
+  static const _manifestTmp = 'project.json.tmp';
 
   Future<Directory> _root() async {
     final docs = await getApplicationDocumentsDirectory();
@@ -19,15 +21,31 @@ class ProjectRepository {
 
   Future<String> rootPath() async => (await _root()).path;
 
+  bool _isSafeId(String id) {
+    if (id.isEmpty || id.length > 64) return false;
+    if (id.contains('/') || id.contains(r'\') || id.contains('..')) return false;
+    // Only allow simple id alphabet from our generator
+    return RegExp(r'^[a-zA-Z0-9_-]+$').hasMatch(id);
+  }
+
   Future<Directory?> _dirFor(String id) async {
-    if (id.isEmpty ||
-        id.contains('/') ||
-        id.contains(r'\') ||
-        id.contains('..')) {
-      return null;
-    }
+    if (!_isSafeId(id)) return null;
     final root = await _root();
-    return Directory(p.join(root.path, id));
+    final dir = Directory(p.join(root.path, id));
+    // Ensure resolved path stays under root (symlink escape)
+    try {
+      final rootReal = await root.resolveSymbolicLinks();
+      if (await dir.exists()) {
+        final dirReal = await dir.resolveSymbolicLinks();
+        if (!p.equals(dirReal, rootReal) &&
+            !p.isWithin(rootReal, dirReal)) {
+          return null;
+        }
+      }
+    } catch (_) {
+      // resolve may fail on some platforms; fall through with join path
+    }
+    return dir;
   }
 
   Future<Project?> _readFrom(Directory dir) async {
@@ -36,7 +54,10 @@ class ProjectRepository {
     try {
       final json = jsonDecode(await file.readAsString()) as Map<String, dynamic>;
       return Project.fromJson(json, path: dir.path);
-    } catch (_) {
+    } catch (e) {
+      // Keep on disk; do not crash list. Caller may surface later.
+      // ignore: avoid_print
+      print('Nexus: skip corrupt project at ${dir.path}: $e');
       return null;
     }
   }
@@ -44,10 +65,19 @@ class ProjectRepository {
   Future<List<Project>> list() async {
     final root = await _root();
     final projects = <Project>[];
-    await for (final entity in root.list(followLinks: false)) {
-      if (entity is! Directory) continue;
-      final project = await _readFrom(entity);
-      if (project != null) projects.add(project);
+    try {
+      await for (final entity in root.list(followLinks: false)) {
+        try {
+          if (entity is! Directory) continue;
+          final project = await _readFrom(entity);
+          if (project != null) projects.add(project);
+        } catch (_) {
+          // skip unreadable child
+        }
+      }
+    } catch (e) {
+      // ignore: avoid_print
+      print('Nexus: project list failed: $e');
     }
     projects.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return projects;
@@ -59,35 +89,73 @@ class ProjectRepository {
     return _readFrom(dir);
   }
 
+  String _newId() {
+    final ts = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
+    final rnd = Random.secure().nextInt(1 << 32).toRadixString(36);
+    return '${ts}_$rnd';
+  }
+
   Future<Project> create({
     required String name,
     required ProjectType type,
   }) async {
-    final root = await _root();
-    final id = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
-    final dir = Directory(p.join(root.path, id));
-    await dir.create(recursive: true);
-
-    final subfolders = [
-      'src',
-      'assets',
-      type == ProjectType.game ? 'scenes' : 'screens',
-    ];
-    for (final sub in subfolders) {
-      await Directory(p.join(dir.path, sub)).create();
+    final nameErr = Project.validateName(name);
+    if (nameErr != null) {
+      throw ArgumentError(nameErr);
     }
 
-    final project = Project(
-      id: id,
-      name: name.trim(),
-      type: type,
-      createdAt: DateTime.now(),
-      path: dir.path,
-    );
-    await File(p.join(dir.path, _manifest)).writeAsString(
-      const JsonEncoder.withIndent('  ').convert(project.toJson()),
-    );
-    return project;
+    final root = await _root();
+    Directory? dir;
+    String id = _newId();
+
+    // Retry a few times on id collision
+    for (var attempt = 0; attempt < 5; attempt++) {
+      id = attempt == 0 ? id : _newId();
+      dir = Directory(p.join(root.path, id));
+      if (!await dir.exists()) break;
+      dir = null;
+    }
+    if (dir == null) {
+      throw StateError('Could not allocate unique project id');
+    }
+
+    await dir.create(recursive: true);
+
+    try {
+      final subfolders = [
+        'src',
+        'assets',
+        type == ProjectType.game ? 'scenes' : 'screens',
+      ];
+      for (final sub in subfolders) {
+        await Directory(p.join(dir.path, sub)).create();
+      }
+
+      final project = Project(
+        id: id,
+        name: name.trim(),
+        type: type,
+        createdAt: DateTime.now(),
+        path: dir.path,
+      );
+
+      // Atomic-ish manifest write: tmp then rename
+      final tmp = File(p.join(dir.path, _manifestTmp));
+      final manifest = File(p.join(dir.path, _manifest));
+      await tmp.writeAsString(
+        const JsonEncoder.withIndent('  ').convert(project.toJson()),
+      );
+      if (await manifest.exists()) await manifest.delete();
+      await tmp.rename(manifest.path);
+
+      return project;
+    } catch (e) {
+      // Partial create → clean up
+      try {
+        if (await dir.exists()) await dir.delete(recursive: true);
+      } catch (_) {}
+      rethrow;
+    }
   }
 
   Future<void> delete(String id) async {

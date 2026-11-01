@@ -9,23 +9,35 @@ final projectRepositoryProvider =
 class ProjectsController extends AsyncNotifier<List<Project>> {
   ProjectRepository get _repo => ref.read(projectRepositoryProvider);
 
+  // Serialize mutations so concurrent create/delete don't stomp list state
+  Future<void> _chain = Future.value();
+
+  Future<T> _serialized<T>(Future<T> Function() fn) {
+    final next = _chain.then((_) => fn());
+    _chain = next.then((_) {}, onError: (_) {});
+    return next;
+  }
+
   @override
   Future<List<Project>> build() => _repo.list();
 
   Future<Project> create({
     required String name,
     required ProjectType type,
-  }) async {
-    final project = await _repo.create(name: name, type: type);
-    state = AsyncData(await _repo.list());
-    return project;
+  }) {
+    return _serialized(() async {
+      final project = await _repo.create(name: name, type: type);
+      state = AsyncData(await _repo.list());
+      return project;
+    });
   }
 
-  Future<void> delete(String id) async {
-    await _repo.delete(id);
-    state = AsyncData(await _repo.list());
-    // Invalidate workspace lookup for this id
-    ref.invalidate(projectByIdProvider(id));
+  Future<void> delete(String id) {
+    return _serialized(() async {
+      await _repo.delete(id);
+      state = AsyncData(await _repo.list());
+      ref.invalidate(projectByIdProvider(id));
+    });
   }
 
   Future<void> refresh() async {

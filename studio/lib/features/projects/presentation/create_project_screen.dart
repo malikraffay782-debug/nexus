@@ -63,11 +63,7 @@ class _CreateProjectScreenState extends ConsumerState<CreateProjectScreen> {
                   maxLength: 40,
                   decoration:
                       const InputDecoration(labelText: 'Project name'),
-                  validator: (v) {
-                    final s = v?.trim() ?? '';
-                    if (s.isEmpty) return 'Enter a name';
-                    return null;
-                  },
+                  validator: (v) => Project.validateName(v),
                   onFieldSubmitted: (_) => _submit(),
                 ),
                 const SizedBox(height: 16),

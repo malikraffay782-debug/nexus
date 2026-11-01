@@ -12,9 +12,18 @@ class ProjectRunner {
   const ProjectRunner();
 
   Future<RunResult> run(Project project) async {
-    final quotedName = _shellQuote(project.name);
-    final cmd = 'echo hello from $quotedName';
     try {
+      final ready = await EmbeddedRuntime.isReady();
+      if (!ready) {
+        return const RunResult(
+          ok: false,
+          message:
+              'Runtime not initialized. Open the Runtime tab and tap Initialize first.',
+        );
+      }
+
+      final quotedName = _shellQuote(project.name);
+      final cmd = 'echo hello from $quotedName';
       final result = await EmbeddedRuntime.runCommand(cmd);
       if (result.isSuccess) {
         return RunResult(

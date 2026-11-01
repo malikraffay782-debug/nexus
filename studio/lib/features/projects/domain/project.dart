@@ -23,8 +23,6 @@ class Project {
   final String name;
   final ProjectType type;
   final DateTime createdAt;
-
-  /// Absolute folder path — derived from disk, not stored in project.json.
   final String path;
 
   Map<String, dynamic> toJson() => {
@@ -35,12 +33,37 @@ class Project {
       };
 
   factory Project.fromJson(Map<String, dynamic> json, {required String path}) {
+    final id = json['id'];
+    final name = json['name'];
+    if (id is! String || id.trim().isEmpty) {
+      throw const FormatException('project.json: missing or invalid id');
+    }
+    if (name is! String || name.trim().isEmpty) {
+      throw const FormatException('project.json: missing or invalid name');
+    }
+    final createdRaw = json['createdAt'];
+    final createdAt = createdRaw is String
+        ? (DateTime.tryParse(createdRaw)?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0))
+        : DateTime.fromMillisecondsSinceEpoch(0);
+
     return Project(
-      id: json['id'] as String,
-      name: json['name'] as String,
+      id: id.trim(),
+      name: name.trim(),
       type: ProjectType.fromName(json['type'] as String?),
-      createdAt: DateTime.parse(json['createdAt'] as String).toLocal(),
+      createdAt: createdAt,
       path: path,
     );
+  }
+
+  /// Shared validation for create / rename.
+  static String? validateName(String? raw) {
+    final s = raw?.trim() ?? '';
+    if (s.isEmpty) return 'Enter a name';
+    if (s.length > 40) return 'Name too long';
+    if (s == '.' || s == '..') return 'Invalid name';
+    if (s.contains('/') || s.contains(r'\') || s.contains('\u0000')) {
+      return 'Name cannot contain path characters';
+    }
+    return null;
   }
 }

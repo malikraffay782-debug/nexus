@@ -6,18 +6,21 @@ class EmbeddedRuntime {
   static const MethodChannel _channel = MethodChannel('com.nexus/runtime');
   static const EventChannel _progressChannel = EventChannel('com.nexus/runtime/progress');
 
-  /// Listen to bootstrap progress (percent + message).
-  /// Not cached forever so hot-reload / engine restart still works.
-  static Stream<RuntimeProgress> get progressStream =>
-      _progressChannel.receiveBroadcastStream().map((event) {
-        final map = event is Map
-            ? Map<String, dynamic>.from(event)
-            : <String, dynamic>{};
-        return RuntimeProgress(
-          percent: map['percent'] as int? ?? 0,
-          message: map['message'] as String? ?? '',
-        );
-      });
+  static Stream<RuntimeProgress>? _progressStream;
+
+  /// Single broadcast stream — avoids native listener leaks from repeated access.
+  /// On full engine restart, process restart recreates this; hot-reload may need app restart.
+  static Stream<RuntimeProgress> get progressStream {
+    return _progressStream ??= _progressChannel.receiveBroadcastStream().map((event) {
+      final map = event is Map
+          ? Map<String, dynamic>.from(event)
+          : <String, dynamic>{};
+      return RuntimeProgress(
+        percent: map['percent'] as int? ?? 0,
+        message: map['message'] as String? ?? '',
+      );
+    });
+  }
 
   static Future<RuntimeInitResult> initialize() async {
     try {
