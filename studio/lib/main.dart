@@ -1,22 +1,9 @@
 import 'package:flutter/material.dart';
-import 'services/runtime_example.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'app.dart';
 
 void main() {
-  runApp(const NexusApp());
-}
-
-class NexusApp extends StatelessWidget {
-  const NexusApp({super.key});
-
-  @override
-  Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'Nexus Studio',
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Colors.deepPurple),
-        useMaterial3: true,
-      ),
-      home: const RuntimeTestScreen(),
-    );
-  }
+  WidgetsFlutterBinding.ensureInitialized();
+  runApp(const ProviderScope(child: NexusApp()));
 }

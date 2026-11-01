@@ -4,6 +4,11 @@
 
 No external Termux app required. The Linux environment lives inside the Nexus app itself.
 
+## Status
+
+- **Phase 0** – Embedded runtime foundation
+- **Phase 1 (in progress)** – Studio shell (projects, workspace, routing)
+
 ## Phase 0 Status: **Foundation Complete**
 
 The core embedded runtime, Flutter bridge, project skeleton, and symlink-safe bootstrap extraction are in place.
