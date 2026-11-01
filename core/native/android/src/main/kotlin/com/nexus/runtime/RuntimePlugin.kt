@@ -34,8 +34,10 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     private val mainHandler = Handler(Looper.getMainLooper())
 
     private var progressSink: EventChannel.EventSink? = null
+    @Volatile private var destroyed = false
 
     override fun onAttachedToEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        destroyed = false
         methodChannel = MethodChannel(binding.binaryMessenger, "com.nexus/runtime")
         methodChannel.setMethodCallHandler(this)
 
@@ -46,17 +48,14 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     }
 
     override fun onDetachedFromEngine(binding: FlutterPlugin.FlutterPluginBinding) {
+        destroyed = true
         methodChannel.setMethodCallHandler(null)
         eventChannel.setStreamHandler(null)
         progressSink = null
-        executor.shutdown()
+        executor.shutdownNow()
         try {
-            // Give in-flight work a short chance to finish, then force
-            if (!executor.awaitTermination(3, java.util.concurrent.TimeUnit.SECONDS)) {
-                executor.shutdownNow()
-            }
+            executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
         } catch (_: InterruptedException) {
-            executor.shutdownNow()
             Thread.currentThread().interrupt()
         }
     }
@@ -80,11 +79,22 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
      * (success or error). Prevents Dart Futures from hanging forever.
      */
     private fun <T> onWorker(result: Result, tag: String, block: () -> T) {
+        if (destroyed) {
+            try { result.error("NATIVE_DETACHED", "$tag: plugin is detached", null) } catch (_: Throwable) {}
+            return
+        }
         try {
             executor.execute {
+                if (destroyed) {
+                    mainHandler.post {
+                        try { result.error("NATIVE_DETACHED", "$tag: plugin is detached", null) } catch (_: Throwable) {}
+                    }
+                    return@execute
+                }
                 try {
                     val value = block()
                     mainHandler.post {
+                        if (destroyed) return@post
                         try {
                             result.success(value)
                         } catch (t: Throwable) {
@@ -94,15 +104,14 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 } catch (t: Throwable) {
                     RuntimeLogger.e("Worker error in $tag", t)
                     mainHandler.post {
+                        if (destroyed) return@post
                         try {
                             result.error(
-                            "NATIVE_ERROR",
-                            "$tag: ${t.javaClass.simpleName}: ${t.message}",
-                            t.stackTraceToString()
-                        )
-                        } catch (_: Throwable) {
-                            // Result already used or channel gone
-                        }
+                                "NATIVE_ERROR",
+                                "$tag: ${t.javaClass.simpleName}: ${t.message}",
+                                t.stackTraceToString()
+                            )
+                        } catch (_: Throwable) {}
                     }
                 }
             }
@@ -110,9 +119,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             RuntimeLogger.e("Worker rejected for $tag", e)
             try {
                 result.error("NATIVE_BUSY", "$tag: runtime busy or shutting down", null)
-            } catch (_: Throwable) {
-                // ignored
-            }
+            } catch (_: Throwable) {}
         }
     }
 

@@ -4,7 +4,9 @@ import android.content.Context
 import android.os.Build
 import java.io.File
 import java.nio.file.Paths
+import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Executes commands inside the embedded Linux environment using proot.
@@ -17,7 +19,7 @@ class ProotExecutor(
 
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
-        private const val MAX_OUTPUT_BYTES = 2 * 1024 * 1024 // 2 MB
+        private const val MAX_OUTPUT_CHARS = 2 * 1024 * 1024
         private const val MAX_TIMEOUT_SEC = 3600L
     }
 
@@ -108,6 +110,7 @@ class ProotExecutor(
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
 
+        // Direct argv — no extra shell wrapping (avoids injection / quoting issues)
         val prootArgs = listOf(
             actualProot, "-0",
             "-r", prefix.absolutePath,
@@ -121,10 +124,11 @@ class ProotExecutor(
         RuntimeLogger.d("Executing proot (cmdLen=${command.length}, cwd=$guestWorkDir)")
 
         var process: Process? = null
-        var stdoutThread: Thread? = null
-        var stderrThread: Thread? = null
         val stdout = StringBuilder()
         val stderr = StringBuilder()
+        val readerExecutor = Executors.newFixedThreadPool(2) { r ->
+            Thread(r, "nexus-proot-reader").apply { isDaemon = true }
+        }
 
         try {
             val pb = ProcessBuilder(prootArgs)
@@ -133,19 +137,12 @@ class ProotExecutor(
             pb.redirectErrorStream(false)
             process = pb.start()
 
-            val stdoutStream = process!!.inputStream
-            val stderrStream = process!!.errorStream
-
-            stdoutThread = Thread {
-                drainCapped(stdoutStream, stdout)
-            }.apply { name = "nexus-proot-stdout"; isDaemon = true }
-
-            stderrThread = Thread {
-                drainCapped(stderrStream, stderr)
-            }.apply { name = "nexus-proot-stderr"; isDaemon = true }
-
-            stdoutThread!!.start()
-            stderrThread!!.start()
+            val stdoutFuture = readerExecutor.submit {
+                drainCapped(process!!.inputStream, stdout)
+            }
+            val stderrFuture = readerExecutor.submit {
+                drainCapped(process!!.errorStream, stderr)
+            }
 
             val finished = process!!.waitFor(effectiveTimeout, TimeUnit.SECONDS)
 
@@ -153,8 +150,20 @@ class ProotExecutor(
                 killProcessTree(process!!)
             }
 
+            // Unblock readers
+            try { process?.inputStream?.close() } catch (_: Exception) {}
+            try { process?.errorStream?.close() } catch (_: Exception) {}
+            try { process?.outputStream?.close() } catch (_: Exception) {}
+
+            try { stdoutFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
+            try { stderrFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
+
             val timedOut = !finished
-            val exitCode = if (timedOut) -1 else process!!.exitValue()
+            val exitCode = if (timedOut) -1 else try {
+                process!!.exitValue()
+            } catch (_: Exception) {
+                -1
+            }
             val errExtra = if (timedOut) "\n[Timeout after ${effectiveTimeout}s]" else ""
 
             return CommandResult(
@@ -171,10 +180,10 @@ class ProotExecutor(
             try { process?.inputStream?.close() } catch (_: Exception) {}
             try { process?.errorStream?.close() } catch (_: Exception) {}
             try { process?.outputStream?.close() } catch (_: Exception) {}
-            try { stdoutThread?.join(2000) } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            try { stderrThread?.join(2000) } catch (_: InterruptedException) {
+            readerExecutor.shutdownNow()
+            try {
+                readerExecutor.awaitTermination(2, TimeUnit.SECONDS)
+            } catch (_: InterruptedException) {
                 Thread.currentThread().interrupt()
             }
         }
@@ -190,50 +199,56 @@ class ProotExecutor(
                     val n = reader.read(buf)
                     if (n == -1) break
                     if (!truncated) {
-                        if (totalChars + n <= MAX_OUTPUT_BYTES) {
+                        if (totalChars + n <= MAX_OUTPUT_CHARS) {
                             out.append(buf, 0, n)
                             totalChars += n
                         } else {
-                            val remain = MAX_OUTPUT_BYTES - totalChars
+                            val remain = MAX_OUTPUT_CHARS - totalChars
                             if (remain > 0) out.append(buf, 0, remain)
-                            out.append("\n[output truncated at $MAX_OUTPUT_BYTES chars]")
+                            out.append("\n[output truncated at $MAX_OUTPUT_CHARS chars]")
                             truncated = true
-                            // keep reading & discarding so pipe drains
                         }
                     }
                 }
             }
         } catch (_: Exception) {
-            // stream closed
+            // stream closed / interrupted
         }
     }
 
     /**
-     * Best-effort kill of the process and known descendants.
-     * Does NOT use negative-PID process-group kill (ProcessBuilder is not a group leader).
+     * Best-effort termination of proot and descendants.
+     * Uses ProcessHandle tree walk (API 26+) plus direct pid signals.
+     * Does not rely on process-group leadership (ProcessBuilder is not a session leader).
      */
     private fun killProcessTree(process: Process) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val handle = process.toHandle()
-                // Kill children first, then parent
-                handle.descendants().forEach { h ->
+                // Collect all descendants first, then kill deepest-first-ish
+                val kids = try {
+                    handle.descendants().toList()
+                } catch (_: Exception) {
+                    emptyList()
+                }
+                for (h in kids) {
                     try { h.destroyForcibly() } catch (_: Exception) {}
                 }
                 val pid = handle.pid()
-                val killProc = Runtime.getRuntime().exec(
+                // Signal the main pid (not -$pid group — we are not group leader)
+                val killer = Runtime.getRuntime().exec(
                     arrayOf(
                         "sh", "-c",
-                        "kill -TERM $pid 2>/dev/null || true; sleep 0.2; kill -KILL $pid 2>/dev/null || true"
+                        "kill -TERM $pid 2>/dev/null || true; sleep 0.15; kill -KILL $pid 2>/dev/null || true"
                     )
                 )
                 try {
-                    killProc.waitFor(2, TimeUnit.SECONDS)
+                    killer.waitFor(2, TimeUnit.SECONDS)
                 } finally {
-                    try { killProc.inputStream.close() } catch (_: Exception) {}
-                    try { killProc.outputStream.close() } catch (_: Exception) {}
-                    try { killProc.errorStream.close() } catch (_: Exception) {}
-                    try { killProc.destroyForcibly() } catch (_: Exception) {}
+                    try { killer.inputStream.close() } catch (_: Exception) {}
+                    try { killer.outputStream.close() } catch (_: Exception) {}
+                    try { killer.errorStream.close() } catch (_: Exception) {}
+                    try { killer.destroyForcibly() } catch (_: Exception) {}
                 }
             }
         } catch (_: Exception) {}
