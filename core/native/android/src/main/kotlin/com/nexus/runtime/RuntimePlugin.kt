@@ -23,11 +23,13 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     private lateinit var runtime: NexusRuntime
 
     // Allow multiple concurrent commands (install can be long)
+    // AbortPolicy: never run heavy work on the Flutter platform thread (ANR risk)
     private val executor = java.util.concurrent.ThreadPoolExecutor(
         2, 4,
         30L, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue(8),
-        java.util.concurrent.ThreadPoolExecutor.CallerRunsPolicy()
+        { r -> Thread(r, "nexus-runtime-worker").apply { isDaemon = true } },
+        java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
     private val mainHandler = Handler(Looper.getMainLooper())
 
@@ -107,7 +109,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
         } catch (e: java.util.concurrent.RejectedExecutionException) {
             RuntimeLogger.e("Worker rejected for $tag", e)
             try {
-                result.error("NATIVE_SHUTDOWN", "$tag: executor shut down", null)
+                result.error("NATIVE_BUSY", "$tag: runtime busy or shutting down", null)
             } catch (_: Throwable) {
                 // ignored
             }

@@ -148,8 +148,8 @@ class ProotExecutor(
 
             if (!finished) {
                 killProcessTree(process)
-                stdoutThread.join(800)
-                stderrThread.join(800)
+                stdoutThread.join(1500)
+                stderrThread.join(1500)
                 return CommandResult(
                     -1,
                     stdout.toString().trim(),
@@ -180,31 +180,31 @@ class ProotExecutor(
 
     /**
      * Always drain the stream to EOF so the child never blocks on a full pipe.
-     * Only the first MAX_OUTPUT_BYTES are kept in [out].
+     * Uses InputStreamReader so multi-byte UTF-8 sequences are not split across chunks.
+     * Only the first MAX_OUTPUT_BYTES (approx via char budget) are kept in [out].
      */
     private fun drainCapped(stream: java.io.InputStream, out: StringBuilder) {
         try {
-            val buf = ByteArray(8192)
-            var total = 0
-            var truncated = false
-            while (true) {
-                val n = stream.read(buf)
-                if (n == -1) break
-                if (!truncated) {
-                    if (total + n <= MAX_OUTPUT_BYTES) {
-                        out.append(String(buf, 0, n, Charsets.UTF_8))
-                        total += n
-                    } else {
-                        val remain = MAX_OUTPUT_BYTES - total
-                        if (remain > 0) {
-                            out.append(String(buf, 0, remain, Charsets.UTF_8))
+            java.io.InputStreamReader(stream, Charsets.UTF_8).use { reader ->
+                val buf = CharArray(8192)
+                var totalChars = 0
+                var truncated = false
+                while (true) {
+                    val n = reader.read(buf)
+                    if (n == -1) break
+                    if (!truncated) {
+                        if (totalChars + n <= MAX_OUTPUT_BYTES) {
+                            out.append(buf, 0, n)
+                            totalChars += n
+                        } else {
+                            val remain = MAX_OUTPUT_BYTES - totalChars
+                            if (remain > 0) out.append(buf, 0, remain)
+                            out.append("\n[output truncated at $MAX_OUTPUT_BYTES chars]")
+                            truncated = true
+                            // keep reading & discarding so pipe drains
                         }
-                        out.append("\n[output truncated at $MAX_OUTPUT_BYTES bytes]")
-                        truncated = true
-                        // keep reading & discarding
                     }
                 }
-                // when truncated, continue loop to drain
             }
         } catch (_: Exception) {
             // stream closed
