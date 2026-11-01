@@ -1,15 +1,23 @@
 package com.nexus.runtime
 
 import android.content.Context
+import java.util.concurrent.locks.ReentrantReadWriteLock
+import kotlin.concurrent.read
+import kotlin.concurrent.write
 
 /**
  * Main entry point for the Embedded Linux Runtime.
+ *
+ * initialize() takes a write lock (may delete/recreate prefix).
+ * runCommand() takes a read lock so it cannot race with re-bootstrap.
  */
 class NexusRuntime private constructor(context: Context) {
 
     private val appContext = context.applicationContext
     private val bootstrapManager = BootstrapManager(appContext)
     private val executor = ProotExecutor(appContext, bootstrapManager)
+    private val runtimeLock = ReentrantReadWriteLock()
+
     val packages = PackageManager(executor)
 
     companion object {
@@ -23,13 +31,11 @@ class NexusRuntime private constructor(context: Context) {
         }
     }
 
-    /**
-     * Initialize the runtime. Safe to call multiple times.
-     * @param onProgress optional callback (percent, message)
-     */
     fun initialize(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         RuntimeLogger.i("Initializing Nexus Embedded Runtime...")
-        return bootstrapManager.ensureBootstrap(onProgress)
+        return runtimeLock.write {
+            bootstrapManager.ensureBootstrap(onProgress)
+        }
     }
 
     val isReady: Boolean
@@ -43,21 +49,13 @@ class NexusRuntime private constructor(context: Context) {
         workingDir: String? = null,
         timeoutSec: Long = 60
     ): ProotExecutor.CommandResult {
-        return executor.run(command, workingDir, timeoutSec)
+        return runtimeLock.read {
+            executor.run(command, workingDir, timeoutSec)
+        }
     }
 
-    /**
-     * Convenience wrapper that returns only stdout on success.
-     * On failure it still returns a structured result so callers stay consistent.
-     */
-    fun exec(command: String): ProotExecutor.CommandResult {
-        return runCommand(command)
-    }
+    fun exec(command: String): ProotExecutor.CommandResult = runCommand(command)
 
-    /**
-     * Legacy-style helper that returns a plain string (kept for simple logging / quick checks).
-     * Prefer [runCommand] or [exec] when you need proper error handling.
-     */
     fun execToString(command: String): String {
         val result = runCommand(command)
         return when {
@@ -70,7 +68,6 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     fun hasBinary(name: String): Boolean {
-        // Only allow safe binary names
         if (!name.matches(Regex("^[a-zA-Z0-9][a-zA-Z0-9._+-]*$"))) {
             return false
         }

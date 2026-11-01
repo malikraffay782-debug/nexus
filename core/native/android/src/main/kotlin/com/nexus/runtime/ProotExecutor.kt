@@ -117,8 +117,10 @@ class ProotExecutor(
         RuntimeLogger.d("Executing proot (cmdLen=${command.length}, cwd=$guestWorkDir)")
 
         var process: Process? = null
-        val stdoutStream: java.io.InputStream
-        val stderrStream: java.io.InputStream
+        var stdoutThread: Thread? = null
+        var stderrThread: Thread? = null
+        val stdout = StringBuilder()
+        val stderr = StringBuilder()
 
         try {
             val pb = ProcessBuilder(prootArgs)
@@ -126,58 +128,36 @@ class ProotExecutor(
             pb.environment().putAll(env)
             pb.redirectErrorStream(false)
             process = pb.start()
-            stdoutStream = process.inputStream
-            stderrStream = process.errorStream
 
-            val stdout = StringBuilder()
-            val stderr = StringBuilder()
+            val stdoutStream = process!!.inputStream
+            val stderrStream = process!!.errorStream
 
-            // Drain fully always (discard after cap) so child never blocks on full pipe
-            val stdoutThread = Thread {
+            stdoutThread = Thread {
                 drainCapped(stdoutStream, stdout)
             }.apply { name = "nexus-proot-stdout"; isDaemon = true }
 
-            val stderrThread = Thread {
+            stderrThread = Thread {
                 drainCapped(stderrStream, stderr)
             }.apply { name = "nexus-proot-stderr"; isDaemon = true }
 
-            stdoutThread.start()
-            stderrThread.start()
+            stdoutThread!!.start()
+            stderrThread!!.start()
 
-            val finished = process.waitFor(effectiveTimeout, TimeUnit.SECONDS)
+            val finished = process!!.waitFor(effectiveTimeout, TimeUnit.SECONDS)
 
             if (!finished) {
-                killProcessTree(process)
-                // Close pipes first so drain threads unblock instead of hanging on live fds
-                try { process.inputStream.close() } catch (_: Exception) {}
-                try { process.errorStream.close() } catch (_: Exception) {}
-                try { process.outputStream.close() } catch (_: Exception) {}
-                try { stdoutThread.join(2000) } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                try { stderrThread.join(2000) } catch (_: InterruptedException) {
-                    Thread.currentThread().interrupt()
-                }
-                return CommandResult(
-                    -1,
-                    stdout.toString().trim(),
-                    (stderr.toString().trim() + "\n[Timeout after ${effectiveTimeout}s]").trim(),
-                    timedOut = true
-                )
+                killProcessTree(process!!)
             }
 
-            try { stdoutThread.join(2000) } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
-            try { stderrThread.join(2000) } catch (_: InterruptedException) {
-                Thread.currentThread().interrupt()
-            }
+            val timedOut = !finished
+            val exitCode = if (timedOut) -1 else process!!.exitValue()
+            val errExtra = if (timedOut) "\n[Timeout after ${effectiveTimeout}s]" else ""
 
             return CommandResult(
-                process.exitValue(),
+                exitCode,
                 stdout.toString().trim(),
-                stderr.toString().trim(),
-                timedOut = false
+                (stderr.toString().trim() + errExtra).trim(),
+                timedOut = timedOut
             )
         } catch (e: Exception) {
             RuntimeLogger.e("Execution failed", e)
@@ -187,14 +167,15 @@ class ProotExecutor(
             try { process?.inputStream?.close() } catch (_: Exception) {}
             try { process?.errorStream?.close() } catch (_: Exception) {}
             try { process?.outputStream?.close() } catch (_: Exception) {}
+            try { stdoutThread?.join(2000) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
+            try { stderrThread?.join(2000) } catch (_: InterruptedException) {
+                Thread.currentThread().interrupt()
+            }
         }
     }
 
-    /**
-     * Always drain the stream to EOF so the child never blocks on a full pipe.
-     * Uses InputStreamReader so multi-byte UTF-8 sequences are not split across chunks.
-     * Only the first MAX_OUTPUT_BYTES (approx via char budget) are kept in [out].
-     */
     private fun drainCapped(stream: java.io.InputStream, out: StringBuilder) {
         try {
             java.io.InputStreamReader(stream, Charsets.UTF_8).use { reader ->
@@ -223,29 +204,33 @@ class ProotExecutor(
         }
     }
 
+    /**
+     * Best-effort kill of the process and known descendants.
+     * Does NOT use negative-PID process-group kill (ProcessBuilder is not a group leader).
+     */
     private fun killProcessTree(process: Process) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                process.toHandle().descendants().forEach { h ->
+                val handle = process.toHandle()
+                // Kill children first, then parent
+                handle.descendants().forEach { h ->
                     try { h.destroyForcibly() } catch (_: Exception) {}
                 }
-                try {
-                    val pid = process.toHandle().pid()
-                    val killProc = Runtime.getRuntime().exec(
-                        arrayOf(
-                            "sh", "-c",
-                            "kill -TERM -$pid 2>/dev/null || true; sleep 0.2; kill -KILL -$pid 2>/dev/null || true; kill -KILL $pid 2>/dev/null || true"
-                        )
+                val pid = handle.pid()
+                val killProc = Runtime.getRuntime().exec(
+                    arrayOf(
+                        "sh", "-c",
+                        "kill -TERM $pid 2>/dev/null || true; sleep 0.2; kill -KILL $pid 2>/dev/null || true"
                     )
-                    try {
-                        killProc.waitFor(2, TimeUnit.SECONDS)
-                    } finally {
-                        try { killProc.inputStream.close() } catch (_: Exception) {}
-                        try { killProc.outputStream.close() } catch (_: Exception) {}
-                        try { killProc.errorStream.close() } catch (_: Exception) {}
-                        try { killProc.destroyForcibly() } catch (_: Exception) {}
-                    }
-                } catch (_: Exception) {}
+                )
+                try {
+                    killProc.waitFor(2, TimeUnit.SECONDS)
+                } finally {
+                    try { killProc.inputStream.close() } catch (_: Exception) {}
+                    try { killProc.outputStream.close() } catch (_: Exception) {}
+                    try { killProc.errorStream.close() } catch (_: Exception) {}
+                    try { killProc.destroyForcibly() } catch (_: Exception) {}
+                }
             }
         } catch (_: Exception) {}
         try { process.destroyForcibly() } catch (_: Exception) {}
