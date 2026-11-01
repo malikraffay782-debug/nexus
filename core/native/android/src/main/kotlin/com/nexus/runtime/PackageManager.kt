@@ -51,21 +51,29 @@ class PackageManager(private val executor: ProotExecutor) {
             }
         }
 
-        val quoted = deduped.joinToString(" ") { shellQuote(it) }
-        val cmd = """
-            if command -v pkg >/dev/null 2>&1; then
-                pkg install -y $quoted
-            else
-                apt-get install -y $quoted
-            fi
-        """.trimIndent()
-
-        val result = executor.run(cmd, timeoutSec = 600)
-        return InstallResult(
-            success = result.exitCode == 0,
-            output = result.stdout,
-            error = result.stderr
-        )
+        // Install in small batches to avoid E2BIG / huge command lines
+        val batchSize = 8
+        val outputs = StringBuilder()
+        for (batch in deduped.chunked(batchSize)) {
+            val quoted = batch.joinToString(" ") { shellQuote(it) }
+            val cmd = """
+                if command -v pkg >/dev/null 2>&1; then
+                    pkg install -y $quoted
+                else
+                    apt-get install -y $quoted
+                fi
+            """.trimIndent()
+            val result = executor.run(cmd, timeoutSec = 600)
+            if (result.stdout.isNotBlank()) outputs.append(result.stdout).append('\n')
+            if (result.exitCode != 0) {
+                return InstallResult(
+                    success = false,
+                    output = outputs.toString(),
+                    error = result.stderr.ifBlank { "Install failed in batch: ${batch.joinToString()}" }
+                )
+            }
+        }
+        return InstallResult(true, outputs.toString(), "")
     }
 
     fun install(packageName: String): InstallResult = install(listOf(packageName))

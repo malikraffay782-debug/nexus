@@ -219,9 +219,20 @@ class ProotExecutor(
                 }
                 try {
                     val pid = process.toHandle().pid()
-                    Runtime.getRuntime().exec(
-                        arrayOf("sh", "-c", "kill -TERM -$pid 2>/dev/null; sleep 0.2; kill -KILL -$pid 2>/dev/null; kill -KILL $pid 2>/dev/null")
+                    val killProc = Runtime.getRuntime().exec(
+                        arrayOf(
+                            "sh", "-c",
+                            "kill -TERM -$pid 2>/dev/null || true; sleep 0.2; kill -KILL -$pid 2>/dev/null || true; kill -KILL $pid 2>/dev/null || true"
+                        )
                     )
+                    try {
+                        killProc.waitFor(2, TimeUnit.SECONDS)
+                    } finally {
+                        try { killProc.inputStream.close() } catch (_: Exception) {}
+                        try { killProc.outputStream.close() } catch (_: Exception) {}
+                        try { killProc.errorStream.close() } catch (_: Exception) {}
+                        try { killProc.destroyForcibly() } catch (_: Exception) {}
+                    }
                 } catch (_: Exception) {}
             }
         } catch (_: Exception) {}

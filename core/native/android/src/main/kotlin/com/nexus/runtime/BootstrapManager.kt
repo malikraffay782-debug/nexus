@@ -215,10 +215,23 @@ class BootstrapManager(private val context: Context) {
         for ((target, linkAbs, _) in symlinks) {
             try {
                 val linkFile = File(linkAbs)
-                linkFile.parentFile?.mkdirs()
+                val parent = linkFile.parentFile?.canonicalFile ?: targetDir
+                // Re-validate at creation time (ancestor symlink escape)
+                val resolvedLink = File(parent, linkFile.name).canonicalFile
+                if (!resolvedLink.toPath().startsWith(targetDir.toPath()) &&
+                    !parent.toPath().startsWith(targetDir.toPath())
+                ) {
+                    RuntimeLogger.w("Refusing symlink outside prefix: $linkAbs")
+                    continue
+                }
+                parent.mkdirs()
                 if (linkFile.exists()) {
-                    if (linkFile.isFile) linkFile.delete()
-                    else {
+                    if (linkFile.isFile) {
+                        if (!linkFile.delete()) {
+                            RuntimeLogger.w("Failed to replace existing file: $linkAbs")
+                            continue
+                        }
+                    } else {
                         RuntimeLogger.w("Refusing to replace non-file at $linkAbs")
                         continue
                     }
