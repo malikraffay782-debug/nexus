@@ -125,7 +125,12 @@ class ProjectRepository {
       throw StateError('Could not allocate unique project id');
     }
 
-    await dir.create(recursive: true);
+    // Build fully under a hidden temp name, then rename into final id
+    final staging = Directory(p.join(root.path, '.$id.staging'));
+    if (await staging.exists()) {
+      await staging.delete(recursive: true);
+    }
+    await staging.create(recursive: true);
 
     try {
       for (final sub in [
@@ -133,7 +138,7 @@ class ProjectRepository {
         'assets',
         type == ProjectType.game ? 'scenes' : 'screens',
       ]) {
-        await Directory(p.join(dir.path, sub)).create();
+        await Directory(p.join(staging.path, sub)).create();
       }
 
       final project = Project(
@@ -141,34 +146,24 @@ class ProjectRepository {
         name: name.trim(),
         type: type,
         createdAt: DateTime.now(),
-        path: dir.path,
+        path: dir!.path, // final path after rename
       );
 
-      final tmpPath = p.join(
-        dir.path,
-        'project.json.${Random.secure().nextInt(1 << 30)}.tmp',
-      );
-      final tmp = File(tmpPath);
-      final manifest = File(p.join(dir.path, _manifest));
-      await tmp.writeAsString(
+      final manifest = File(p.join(staging.path, _manifest));
+      await manifest.writeAsString(
         const JsonEncoder.withIndent('  ').convert(project.toJson()),
         flush: true,
       );
-      if (await manifest.exists()) {
-        try {
-          await tmp.rename(manifest.path);
-        } on FileSystemException {
-          await tmp.copy(manifest.path);
-          await tmp.delete();
-        }
-      } else {
-        await tmp.rename(manifest.path);
-      }
 
-      return project;
+      // Atomic-ish publish: rename staging -> final id directory
+      await staging.rename(dir.path);
+      return project.copyWithPath(dir.path);
     } catch (e) {
       try {
-        if (await dir.exists()) await dir.delete(recursive: true);
+        if (await staging.exists()) await staging.delete(recursive: true);
+      } catch (_) {}
+      try {
+        if (await dir!.exists()) await dir.delete(recursive: true);
       } catch (_) {}
       rethrow;
     }

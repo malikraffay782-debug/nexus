@@ -6,23 +6,45 @@ import '../../projects/application/projects_providers.dart';
 import '../../projects/domain/project.dart';
 import '../application/project_runner.dart';
 
-class WorkspaceScreen extends ConsumerWidget {
+class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.projectId});
 
   final String projectId;
 
   @override
-  Widget build(BuildContext context, WidgetRef ref) {
-    // If project is deleted while this route is open, leave workspace.
-    ref.listen<AsyncValue<Project?>>(projectByIdProvider(projectId), (prev, next) {
-      next.whenData((project) {
-        if (project == null && context.mounted) {
-          context.go('/projects');
-        }
-      });
-    });
+  ConsumerState<WorkspaceScreen> createState() => _WorkspaceScreenState();
+}
 
-    final async = ref.watch(projectByIdProvider(projectId));
+class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
+  ProviderSubscription<AsyncValue<Project?>>? _sub;
+  bool _left = false;
+
+  @override
+  void initState() {
+    super.initState();
+    // Subscribe once — not on every rebuild
+    _sub = ref.listenManual<AsyncValue<Project?>>(
+      projectByIdProvider(widget.projectId),
+      (prev, next) {
+        next.whenData((project) {
+          if (project == null && mounted && !_left) {
+            _left = true;
+            context.go('/projects');
+          }
+        });
+      },
+    );
+  }
+
+  @override
+  void dispose() {
+    _sub?.close();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final async = ref.watch(projectByIdProvider(widget.projectId));
     return async.when(
       loading: () => const Scaffold(
         body: Center(child: CircularProgressIndicator()),
@@ -85,27 +107,28 @@ class _WorkspaceView extends StatefulWidget {
 
 class _WorkspaceViewState extends State<_WorkspaceView> {
   bool _running = false;
-  bool _disposed = false;
+  int _runGeneration = 0;
 
   bool get _isGame => widget.project.type == ProjectType.game;
 
   @override
   void dispose() {
-    _disposed = true;
+    _runGeneration++; // invalidate in-flight run UI
     super.dispose();
   }
 
   Future<void> _run() async {
-    if (_running || _disposed) return;
+    if (_running) return;
+    final gen = ++_runGeneration;
     setState(() => _running = true);
     try {
       final result = await const ProjectRunner().run(widget.project);
-      if (_disposed || !mounted) return;
+      if (!mounted || gen != _runGeneration) return;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
           title: Text(
-            result.ok ? 'Run: ${widget.project.name}' : 'Runtime issue',
+            result.ok ? 'Smoke test: ${widget.project.name}' : 'Runtime issue',
           ),
           content: SingleChildScrollView(
             child: SelectableText(
@@ -122,7 +145,9 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
         ),
       );
     } finally {
-      if (!_disposed && mounted) setState(() => _running = false);
+      if (mounted && gen == _runGeneration) {
+        setState(() => _running = false);
+      }
     }
   }
 

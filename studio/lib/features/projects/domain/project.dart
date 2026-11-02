@@ -66,6 +66,14 @@ class Project {
     );
   }
 
+  Project copyWithPath(String newPath) => Project(
+        id: id,
+        name: name,
+        type: type,
+        createdAt: createdAt,
+        path: newPath,
+      );
+
   static String? validateName(String? raw) {
     final s = raw?.trim() ?? '';
     if (s.isEmpty) return 'Enter a name';

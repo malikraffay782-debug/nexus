@@ -9,6 +9,7 @@ class RunResult {
   final String message;
 }
 
+/// Phase 1: runtime smoke test only — does not execute project source yet.
 class ProjectRunner {
   const ProjectRunner();
 
@@ -32,19 +33,15 @@ class ProjectRunner {
       }
 
       final quotedName = _shellQuote(project.name);
-      // Guest cwd: proot maps /home; project is on Android FS — for Phase 1
-      // we only echo; later bind-mount project.path when running real code.
       final cmd = 'echo hello from $quotedName';
-      final result = await EmbeddedRuntime.runCommand(
-        cmd,
-        // Host path is not a guest path; keep default guest /home until bind-mount
-        timeoutSec: 30,
-      );
+      final result = await EmbeddedRuntime.runCommand(cmd, timeoutSec: 30);
 
       if (result.isSuccess) {
         return RunResult(
           ok: true,
-          message: result.stdout.isEmpty ? '(no output)' : result.stdout,
+          message:
+              '${result.stdout.isEmpty ? "(no output)" : result.stdout}\n\n'
+              '[Phase 1 smoke test — project code is not executed yet]',
         );
       }
       return RunResult(
