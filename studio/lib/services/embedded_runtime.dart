@@ -43,9 +43,14 @@ class EmbeddedRuntime {
     }
   }
 
-  static Future<bool> isReady() async {
+    static Future<bool> isReady() async {
     try {
-      return await _channel.invokeMethod<bool>('isReady').timeout(const Duration(seconds: 5)) ?? false;
+      final raw = await _channel
+          .invokeMethod<dynamic>('isReady')
+          .timeout(const Duration(seconds: 5));
+      if (raw is bool) return raw;
+      if (raw is Map) return raw['ready'] == true;
+      return false;
     } catch (_) {
       return false;
     }

@@ -171,9 +171,19 @@ class ProjectRepository {
 
   Future<void> delete(String id) async {
     final dir = await _dirFor(id);
-    if (dir != null && await dir.exists()) {
-      await dir.delete(recursive: true);
+    if (dir == null) return;
+    // Re-check immediately before destructive action
+    if (await _isSymlink(dir)) {
+      throw StateError('Refusing to delete symlinked project path');
     }
+    if (!await dir.exists()) return;
+    final root = await _root();
+    final rootReal = await root.resolveSymbolicLinks();
+    final dirReal = await dir.resolveSymbolicLinks();
+    if (!p.isWithin(rootReal, dirReal) && !p.equals(rootReal, dirReal)) {
+      throw StateError('Refusing to delete path outside projects root');
+    }
+    await Directory(dirReal).delete(recursive: true);
   }
 
   Future<bool> exists(String id) async {

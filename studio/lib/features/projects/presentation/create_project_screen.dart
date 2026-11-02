@@ -33,8 +33,20 @@ class _CreateProjectScreenState extends ConsumerState<CreateProjectScreen> {
           .read(projectsProvider.notifier)
           .create(name: _nameCtrl.text, type: _type);
       if (!mounted) return;
+      // Confirm project is readable before opening workspace
+      final verified =
+          await ref.read(projectRepositoryProvider).getById(project.id);
+      if (!mounted) return;
+      if (verified == null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Project created but could not be verified on disk'),
+          ),
+        );
+        return;
+      }
       _nameCtrl.clear();
-      context.push('/workspace/${project.id}');
+      context.push('/workspace/${verified.id}');
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
