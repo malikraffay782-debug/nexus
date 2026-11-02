@@ -173,8 +173,8 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 }
             }
 
-            "getPrefixPath" -> result.success(runtime.getPrefixPath())
-            "getRuntimeRoot" -> result.success(runtime.getRuntimeRoot())
+            "getPrefixPath" -> onWorker(result, "getPrefixPath") { runtime.getPrefixPath() }
+            "getRuntimeRoot" -> onWorker(result, "getRuntimeRoot") { runtime.getRuntimeRoot() }
 
             "pythonVersion" -> {
                 onWorker(result, "pythonVersion") {

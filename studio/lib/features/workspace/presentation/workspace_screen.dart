@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -123,6 +124,9 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
     setState(() => _running = true);
     try {
       final result = await const ProjectRunner().run(widget.project);
+      if (!mounted || gen != _runGeneration) return;
+      // Project may have been deleted while running
+      if (!await Directory(widget.project.path).exists()) return;
       if (!mounted || gen != _runGeneration) return;
       await showDialog<void>(
         context: context,

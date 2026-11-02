@@ -11,18 +11,30 @@ class ProjectRepository {
   static const _manifest = 'project.json';
 
   Future<Directory> _root() async {
-    try {
-      final docs = await getApplicationDocumentsDirectory();
-      final dir = Directory(p.join(docs.path, 'projects'));
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
+    Object? lastError;
+    for (var attempt = 0; attempt < 2; attempt++) {
+      try {
+        final docs = await getApplicationDocumentsDirectory();
+        final dir = Directory(p.join(docs.path, 'projects'));
+        if (!await dir.exists()) {
+          await dir.create(recursive: true);
+        }
+        return dir;
+      } on FileSystemException catch (e) {
+        lastError = e;
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          continue;
+        }
+      } catch (e) {
+        lastError = e;
+        if (attempt == 0) {
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+          continue;
+        }
       }
-      return dir;
-    } on FileSystemException catch (e) {
-      throw StateError('Projects folder unavailable: ${e.message}');
-    } catch (e) {
-      throw StateError('Projects folder unavailable: $e');
     }
+    throw StateError('Projects folder unavailable: $lastError');
   }
 
   Future<String> rootPath() async => (await _root()).path;
@@ -155,7 +167,10 @@ class ProjectRepository {
         flush: true,
       );
 
-      // Atomic-ish publish: rename staging -> final id directory
+      // Refuse clobber if another process created final path
+      if (await dir!.exists()) {
+        throw StateError('Project id collision at publish time');
+      }
       await staging.rename(dir.path);
       return project.copyWithPath(dir.path);
     } catch (e) {
