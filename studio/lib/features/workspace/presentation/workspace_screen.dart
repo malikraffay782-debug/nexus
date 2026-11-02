@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:go_router/go_router.dart';
 
 import '../../projects/application/projects_providers.dart';
 import '../../projects/domain/project.dart';
@@ -24,8 +25,23 @@ class WorkspaceScreen extends ConsumerWidget {
       data: (project) {
         if (project == null) {
           return Scaffold(
-            appBar: AppBar(),
-            body: const Center(child: Text('Project not found')),
+            appBar: AppBar(title: const Text('Project')),
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(24),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Text('This project no longer exists.'),
+                    const SizedBox(height: 16),
+                    FilledButton(
+                      onPressed: () => context.go('/projects'),
+                      child: const Text('Back to projects'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
           );
         }
         return _WorkspaceView(project: project);
@@ -34,38 +50,52 @@ class WorkspaceScreen extends ConsumerWidget {
   }
 }
 
-class _WorkspaceView extends StatelessWidget {
+class _WorkspaceView extends StatefulWidget {
   const _WorkspaceView({required this.project});
 
   final Project project;
 
-  bool get _isGame => project.type == ProjectType.game;
+  @override
+  State<_WorkspaceView> createState() => _WorkspaceViewState();
+}
 
-  Future<void> _run(BuildContext context) async {
-    final result = await const ProjectRunner().run(project);
-    if (!context.mounted) return;
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(result.ok ? 'Run: ${project.name}' : 'Runtime issue'),
-        content: SingleChildScrollView(
-          child: SelectableText(
-            result.message.isEmpty ? '(no output)' : result.message,
-            style: const TextStyle(fontFamily: 'monospace'),
+class _WorkspaceViewState extends State<_WorkspaceView> {
+  bool _running = false;
+
+  bool get _isGame => widget.project.type == ProjectType.game;
+
+  Future<void> _run() async {
+    if (_running) return;
+    setState(() => _running = true);
+    try {
+      final result = await const ProjectRunner().run(widget.project);
+      if (!mounted) return;
+      await showDialog<void>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: Text(result.ok ? 'Run: ${widget.project.name}' : 'Runtime issue'),
+          content: SingleChildScrollView(
+            child: SelectableText(
+              result.message.isEmpty ? '(no output)' : result.message,
+              style: const TextStyle(fontFamily: 'monospace'),
+            ),
           ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Close'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Close'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      if (mounted) setState(() => _running = false);
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    final project = widget.project;
     final tabs = <({String label, IconData icon, String hint})>[
       _isGame
           ? (
@@ -95,9 +125,15 @@ class _WorkspaceView extends StatelessWidget {
             Padding(
               padding: const EdgeInsets.only(right: 12),
               child: FilledButton.icon(
-                onPressed: () => _run(context),
-                icon: const Icon(Icons.play_arrow),
-                label: const Text('Run'),
+                onPressed: _running ? null : _run,
+                icon: _running
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(strokeWidth: 2),
+                      )
+                    : const Icon(Icons.play_arrow),
+                label: Text(_running ? 'Running…' : 'Run'),
               ),
             ),
           ],

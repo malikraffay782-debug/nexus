@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import '../../../services/embedded_runtime.dart';
 import '../../projects/domain/project.dart';
 
@@ -7,12 +9,19 @@ class RunResult {
   final String message;
 }
 
-/// Single integration point between Studio shell and EmbeddedRuntime.
 class ProjectRunner {
   const ProjectRunner();
 
   Future<RunResult> run(Project project) async {
     try {
+      final dir = Directory(project.path);
+      if (!await dir.exists()) {
+        return const RunResult(
+          ok: false,
+          message: 'Project folder is missing on disk.',
+        );
+      }
+
       final ready = await EmbeddedRuntime.isReady();
       if (!ready) {
         return const RunResult(
@@ -23,8 +32,15 @@ class ProjectRunner {
       }
 
       final quotedName = _shellQuote(project.name);
+      // Guest cwd: proot maps /home; project is on Android FS — for Phase 1
+      // we only echo; later bind-mount project.path when running real code.
       final cmd = 'echo hello from $quotedName';
-      final result = await EmbeddedRuntime.runCommand(cmd);
+      final result = await EmbeddedRuntime.runCommand(
+        cmd,
+        // Host path is not a guest path; keep default guest /home until bind-mount
+        timeoutSec: 30,
+      );
+
       if (result.isSuccess) {
         return RunResult(
           ok: true,

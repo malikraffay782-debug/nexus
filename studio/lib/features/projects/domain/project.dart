@@ -4,10 +4,14 @@ enum ProjectType {
 
   String get label => this == ProjectType.game ? 'Game' : 'App';
 
-  static ProjectType fromName(String? name) => ProjectType.values.firstWhere(
-        (t) => t.name == name,
-        orElse: () => ProjectType.app,
-      );
+  /// Strict: unknown type is invalid (no silent default for manifests).
+  static ProjectType? tryParse(String? name) {
+    if (name == null) return null;
+    for (final t in ProjectType.values) {
+      if (t.name == name) return t;
+    }
+    return null;
+  }
 }
 
 class Project {
@@ -25,6 +29,8 @@ class Project {
   final DateTime createdAt;
   final String path;
 
+  static final idPattern = RegExp(r'^[a-zA-Z0-9_-]+$');
+
   Map<String, dynamic> toJson() => {
         'id': id,
         'name': name,
@@ -35,27 +41,31 @@ class Project {
   factory Project.fromJson(Map<String, dynamic> json, {required String path}) {
     final id = json['id'];
     final name = json['name'];
-    if (id is! String || id.trim().isEmpty) {
+    if (id is! String || id.trim().isEmpty || !idPattern.hasMatch(id.trim())) {
       throw const FormatException('project.json: missing or invalid id');
     }
     if (name is! String || name.trim().isEmpty) {
       throw const FormatException('project.json: missing or invalid name');
     }
+    final type = ProjectType.tryParse(json['type'] as String?);
+    if (type == null) {
+      throw const FormatException('project.json: missing or invalid type');
+    }
     final createdRaw = json['createdAt'];
     final createdAt = createdRaw is String
-        ? (DateTime.tryParse(createdRaw)?.toLocal() ?? DateTime.fromMillisecondsSinceEpoch(0))
+        ? (DateTime.tryParse(createdRaw)?.toLocal() ??
+            DateTime.fromMillisecondsSinceEpoch(0))
         : DateTime.fromMillisecondsSinceEpoch(0);
 
     return Project(
       id: id.trim(),
       name: name.trim(),
-      type: ProjectType.fromName(json['type'] as String?),
+      type: type,
       createdAt: createdAt,
       path: path,
     );
   }
 
-  /// Shared validation for create / rename.
   static String? validateName(String? raw) {
     final s = raw?.trim() ?? '';
     if (s.isEmpty) return 'Enter a name';
