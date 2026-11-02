@@ -142,13 +142,15 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             }
 
             "isReady" -> {
-                val ready = try {
-                    runtime.isReady
-                } catch (t: Throwable) {
-                    RuntimeLogger.e("isReady check failed", t)
-                    false
+                onWorker(result, "isReady") {
+                    val ready = try {
+                        runtime.isReady
+                    } catch (t: Throwable) {
+                        RuntimeLogger.e("isReady check failed", t)
+                        false
+                    }
+                    mapOf("ready" to ready)
                 }
-                result.success(ready)
             }
 
             "runCommand" -> {
