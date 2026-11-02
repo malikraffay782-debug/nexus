@@ -13,6 +13,15 @@ class WorkspaceScreen extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // If project is deleted while this route is open, leave workspace.
+    ref.listen<AsyncValue<Project?>>(projectByIdProvider(projectId), (prev, next) {
+      next.whenData((project) {
+        if (project == null && context.mounted) {
+          context.go('/projects');
+        }
+      });
+    });
+
     final async = ref.watch(projectByIdProvider(projectId));
     return async.when(
       loading: () => const Scaffold(
@@ -20,7 +29,22 @@ class WorkspaceScreen extends ConsumerWidget {
       ),
       error: (e, _) => Scaffold(
         appBar: AppBar(),
-        body: Center(child: Text('Error: $e')),
+        body: Center(
+          child: Padding(
+            padding: const EdgeInsets.all(24),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text('$e', textAlign: TextAlign.center),
+                const SizedBox(height: 16),
+                FilledButton(
+                  onPressed: () => context.go('/projects'),
+                  child: const Text('Back to projects'),
+                ),
+              ],
+            ),
+          ),
+        ),
       ),
       data: (project) {
         if (project == null) {
@@ -61,19 +85,28 @@ class _WorkspaceView extends StatefulWidget {
 
 class _WorkspaceViewState extends State<_WorkspaceView> {
   bool _running = false;
+  bool _disposed = false;
 
   bool get _isGame => widget.project.type == ProjectType.game;
 
+  @override
+  void dispose() {
+    _disposed = true;
+    super.dispose();
+  }
+
   Future<void> _run() async {
-    if (_running) return;
+    if (_running || _disposed) return;
     setState(() => _running = true);
     try {
       final result = await const ProjectRunner().run(widget.project);
-      if (!mounted) return;
+      if (_disposed || !mounted) return;
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
-          title: Text(result.ok ? 'Run: ${widget.project.name}' : 'Runtime issue'),
+          title: Text(
+            result.ok ? 'Run: ${widget.project.name}' : 'Runtime issue',
+          ),
           content: SingleChildScrollView(
             child: SelectableText(
               result.message.isEmpty ? '(no output)' : result.message,
@@ -89,7 +122,7 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
         ),
       );
     } finally {
-      if (mounted) setState(() => _running = false);
+      if (!_disposed && mounted) setState(() => _running = false);
     }
   }
 

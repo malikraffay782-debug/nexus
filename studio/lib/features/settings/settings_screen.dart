@@ -24,8 +24,16 @@ class SettingsScreen extends ConsumerWidget {
             subtitle: Text(root.when(
               data: (p) => p,
               loading: () => '…',
-              error: (e, _) => 'Unavailable',
+              error: (e, _) => 'Unavailable — $e',
             )),
+            trailing: IconButton(
+              tooltip: 'Retry',
+              icon: const Icon(Icons.refresh),
+              onPressed: () {
+                ref.invalidate(projectsRootPathProvider);
+                ref.invalidate(projectsProvider);
+              },
+            ),
           ),
           const ListTile(
             leading: Icon(Icons.info_outline),

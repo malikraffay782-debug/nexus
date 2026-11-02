@@ -32,10 +32,19 @@ class ProjectRepository {
     return Project.idPattern.hasMatch(id);
   }
 
+  Future<bool> _isSymlink(FileSystemEntity entity) async {
+    try {
+      return await FileSystemEntity.isLink(entity.path);
+    } catch (_) {
+      return false;
+    }
+  }
+
   Future<Directory?> _dirFor(String id) async {
     if (!_isSafeId(id)) return null;
     final root = await _root();
     final dir = Directory(p.join(root.path, id));
+    if (await _isSymlink(dir)) return null;
     try {
       final rootReal = await root.resolveSymbolicLinks();
       if (await dir.exists()) {
@@ -63,19 +72,20 @@ class ProjectRepository {
   }
 
   Future<List<Project>> list() async {
+    // Let storage failure bubble so UI can show AsyncError (not fake empty list)
     final root = await _root();
     final projects = <Project>[];
     try {
       await for (final entity in root.list(followLinks: false)) {
         try {
           if (entity is! Directory) continue;
+          if (await _isSymlink(entity)) continue;
           final project = await _readFrom(entity);
           if (project != null) projects.add(project);
         } catch (_) {}
       }
-    } catch (e) {
-      // ignore: avoid_print
-      print('Nexus: project list failed: $e');
+    } on FileSystemException catch (e) {
+      throw StateError('Could not read projects: ${e.message}');
     }
     projects.sort((a, b) => b.createdAt.compareTo(a.createdAt));
     return projects;
@@ -84,6 +94,7 @@ class ProjectRepository {
   Future<Project?> getById(String id) async {
     final dir = await _dirFor(id);
     if (dir == null || !await dir.exists()) return null;
+    if (await _isSymlink(dir)) return null;
     return _readFrom(dir);
   }
 
@@ -133,20 +144,20 @@ class ProjectRepository {
         path: dir.path,
       );
 
-      // Atomic replace: write temp in same dir, rename over target (no pre-delete)
-      final tmpPath = p.join(dir.path, 'project.json.${Random.secure().nextInt(1 << 30)}.tmp');
+      final tmpPath = p.join(
+        dir.path,
+        'project.json.${Random.secure().nextInt(1 << 30)}.tmp',
+      );
       final tmp = File(tmpPath);
       final manifest = File(p.join(dir.path, _manifest));
       await tmp.writeAsString(
         const JsonEncoder.withIndent('  ').convert(project.toJson()),
         flush: true,
       );
-      // On most filesystems rename replaces existing destination atomically within same dir
       if (await manifest.exists()) {
         try {
           await tmp.rename(manifest.path);
         } on FileSystemException {
-          // Fallback: copy bytes then delete tmp (still better than delete-first)
           await tmp.copy(manifest.path);
           await tmp.delete();
         }
