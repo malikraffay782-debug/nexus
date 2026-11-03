@@ -4,7 +4,9 @@ import android.content.Context
 import android.os.Build
 import android.system.Os
 import java.io.BufferedReader
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.StringReader
 import java.io.FileNotFoundException
 import java.io.FileOutputStream
 import java.io.InputStreamReader

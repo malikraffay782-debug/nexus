@@ -122,9 +122,11 @@ class WorkspaceFilesController extends ChangeNotifier {
     _saving = true;
     _notify();
     final snapshot = text.text;
+    final savedForPath = path;
     try {
       await service.writeText(path, snapshot);
       if (_disposed) return null;
+      if (_openPath != savedForPath) return null;
       _savedText = snapshot;
       _dirty = text.text != _savedText;
       return null;
