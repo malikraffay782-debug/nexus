@@ -32,6 +32,7 @@ class WorkspaceFilesController extends ChangeNotifier {
   bool _opening = false;
   bool _saving = false;
   bool _disposed = false;
+  int _openGen = 0;
 
   bool get loadingTree => _loadingTree;
   String? get treeError => _treeError;
@@ -88,11 +89,12 @@ class WorkspaceFilesController extends ChangeNotifier {
   /// Opens a file in the editor. Returns an error message, or null on success.
   /// Callers must confirm discarding unsaved changes before calling this.
   Future<String?> openFile(String relPath) async {
+    final gen = ++_openGen;
     _opening = true;
     _notify();
     try {
       final content = await service.readText(relPath);
-      if (_disposed) return null;
+      if (_disposed || gen != _openGen) return null;
       _savedText = content;
       _openPath = relPath;
       text.highlightPython = relPath.endsWith('.py');
@@ -100,12 +102,16 @@ class WorkspaceFilesController extends ChangeNotifier {
       _dirty = false;
       return null;
     } on WorkspaceException catch (e) {
+      if (gen != _openGen) return null;
       return e.message;
     } catch (_) {
+      if (gen != _openGen) return null;
       return 'Could not open file';
     } finally {
-      _opening = false;
-      _notify();
+      if (gen == _openGen) {
+        _opening = false;
+        _notify();
+      }
     }
   }
 

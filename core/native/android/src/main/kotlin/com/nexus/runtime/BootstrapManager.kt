@@ -149,7 +149,15 @@ class BootstrapManager(private val context: Context) {
                     val name = entry.name
 
                     if (name == "SYMLINKS.txt" || name.endsWith("/SYMLINKS.txt")) {
-                        BufferedReader(InputStreamReader(zis)).use { reader ->
+                        // Do NOT wrap ZipInputStream in Reader.use — that closes the zip stream.
+                        val baos = ByteArrayOutputStream()
+                        val buf = ByteArray(8192)
+                        while (true) {
+                            val n = zis.read(buf)
+                            if (n <= 0) break
+                            baos.write(buf, 0, n)
+                        }
+                        BufferedReader(StringReader(baos.toString(Charsets.UTF_8.name()))).use { reader ->
                             var line = reader.readLine()
                             while (line != null) {
                                 val parts = line.split("←")
@@ -162,7 +170,6 @@ class BootstrapManager(private val context: Context) {
                                         RuntimeLogger.w("Skipping unsafe symlink destination: $linkRel")
                                     } else {
                                         val parent = linkAbsFile.parentFile ?: targetDir
-                                        // Resolve the final target path and ensure it stays inside prefix
                                         if (isResolvedTargetSafe(target, parent, targetDir)) {
                                             symlinks.add(Triple(target, linkAbsFile.absolutePath, parent))
                                         } else {

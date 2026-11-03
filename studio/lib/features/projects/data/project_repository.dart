@@ -75,7 +75,17 @@ class ProjectRepository {
     try {
       final json =
           jsonDecode(await file.readAsString()) as Map<String, dynamic>;
-      return Project.fromJson(json, path: dir.path);
+      final project = Project.fromJson(json, path: dir.path);
+      final dirId = p.basename(dir.path);
+      if (project.id != dirId) {
+        // ignore: avoid_print
+        print(
+          'Nexus: skip project with id mismatch at ${dir.path}: '
+          'manifest=${project.id} dir=$dirId',
+        );
+        return null;
+      }
+      return project;
     } catch (e) {
       // ignore: avoid_print
       print('Nexus: skip corrupt project at ${dir.path}: $e');
