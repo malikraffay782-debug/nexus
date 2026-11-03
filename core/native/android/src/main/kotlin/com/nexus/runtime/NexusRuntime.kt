@@ -1,6 +1,7 @@
 package com.nexus.runtime
 
 import android.content.Context
+import java.io.File
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -75,6 +76,34 @@ class NexusRuntime private constructor(context: Context) {
                 "ERROR(${result.exitCode}): ${result.stderr}\n${result.stdout}"
             result.stdout.isNotBlank() -> "ERROR(${result.exitCode}): ${result.stdout}"
             else -> "ERROR(${result.exitCode}): ${result.stderr.ifBlank { "no output" }}"
+        }
+    }
+
+
+    /**
+     * Run project src/main.py under proot with host project dir bound at /home/project.
+     * [projectId] only — host path is resolved and validated in Kotlin.
+     */
+    fun runProject(projectId: String, timeoutSec: Long = 30): ProotExecutor.CommandResult {
+        return runtimeLock.read {
+            if (!bootstrapManager.isReady) {
+                return@read ProotExecutor.CommandResult(
+                    -1, "", "Runtime not ready. Call initialize() first.", false
+                )
+            }
+            try {
+                // Match Flutter path_provider application documents on Android
+                val projectsRoot = File(appContext.getDir("flutter", android.content.Context.MODE_PRIVATE), "projects")
+                val mount = ProjectMount.resolve(projectsRoot, projectId)
+                ProjectMount.ensureGuestMountPoint(bootstrapManager.prefixDir)
+                executor.runGuest(
+                    guestArgv = mount.guestCommand(),
+                    extraProotArgs = mount.prootArgs(),
+                    timeoutSec = timeoutSec.coerceIn(1, 120)
+                )
+            } catch (e: ProjectMountException) {
+                ProotExecutor.CommandResult(-1, "", e.message ?: "Invalid project", false)
+            }
         }
     }
 

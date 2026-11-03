@@ -133,7 +133,7 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
         context: context,
         builder: (ctx) => AlertDialog(
           title: Text(
-            result.ok ? 'Smoke test: ${widget.project.name}' : 'Runtime issue',
+            result.ok ? 'Run: ${widget.project.name}' : 'Run failed',
           ),
           content: SingleChildScrollView(
             child: SelectableText(

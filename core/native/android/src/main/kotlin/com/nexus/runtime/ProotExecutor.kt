@@ -6,11 +6,9 @@ import java.io.File
 import java.nio.file.Paths
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
-import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Executes commands inside the embedded Linux environment using proot.
- * Command strings are treated as trusted (Studio power tool).
  */
 class ProotExecutor(
     private val context: Context,
@@ -63,19 +61,58 @@ class ProotExecutor(
         return normalized
     }
 
+    /** Shell form (trusted callers). */
     fun run(
         command: String,
         workingDir: String? = null,
         timeoutSec: Long = DEFAULT_TIMEOUT_SEC
     ): CommandResult {
+        if (command.isBlank()) {
+            return CommandResult(-1, "", "empty command", false)
+        }
+        val guestWorkDir = safeWorkingDir(workingDir)
+        return execute(
+            guestArgv = listOf("/bin/sh", "-c", command),
+            extraProotArgs = emptyList(),
+            guestWorkDir = guestWorkDir,
+            timeoutSec = timeoutSec
+        )
+    }
+
+    /**
+     * Argv form — no shell. Used for project Run.
+     * [extraProotArgs] typically: -b host:/home/project -w /home/project
+     */
+    fun runGuest(
+        guestArgv: List<String>,
+        extraProotArgs: List<String> = emptyList(),
+        timeoutSec: Long = DEFAULT_TIMEOUT_SEC
+    ): CommandResult {
+        if (guestArgv.isEmpty()) {
+            return CommandResult(-1, "", "empty guest argv", false)
+        }
+        // When extra args include -w, pass a placeholder work dir that won't be used
+        val hasW = extraProotArgs.contains("-w")
+        return execute(
+            guestArgv = guestArgv,
+            extraProotArgs = extraProotArgs,
+            guestWorkDir = if (hasW) ProjectMount.GUEST_DIR else "/home",
+            timeoutSec = timeoutSec,
+            skipDefaultW = hasW
+        )
+    }
+
+    private fun execute(
+        guestArgv: List<String>,
+        extraProotArgs: List<String>,
+        guestWorkDir: String,
+        timeoutSec: Long,
+        skipDefaultW: Boolean = false
+    ): CommandResult {
         val effectiveTimeout = when {
             timeoutSec <= 0L -> DEFAULT_TIMEOUT_SEC
             timeoutSec > MAX_TIMEOUT_SEC -> MAX_TIMEOUT_SEC
             else -> timeoutSec
-        }
-
-        if (command.isBlank()) {
-            return CommandResult(-1, "", "empty command", false)
         }
 
         if (!bootstrapManager.isReady) {
@@ -85,7 +122,6 @@ class ProotExecutor(
         val prefix = bootstrapManager.prefixDir.canonicalFile
         val runtimeRoot = File(bootstrapManager.getRuntimeRootPath()).canonicalFile
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
-        val guestWorkDir = safeWorkingDir(workingDir)
 
         val prootCandidates = listOf(
             File(nativeLibDir, "libproot.so"),
@@ -110,18 +146,22 @@ class ProotExecutor(
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
 
-        // Direct argv — no extra shell wrapping (avoids injection / quoting issues)
-        val prootArgs = listOf(
+        val prootArgs = mutableListOf(
             actualProot, "-0",
             "-r", prefix.absolutePath,
             "-b", "/dev", "-b", "/proc", "-b", "/sys",
             "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
-            "-b", "${runtimeRoot.absolutePath}/home:/home",
-            "-w", guestWorkDir,
-            "/bin/sh", "-c", command
+            "-b", "${runtimeRoot.absolutePath}/home:/home"
         )
+        // Project bind etc. before -w / program
+        prootArgs.addAll(extraProotArgs)
+        if (!skipDefaultW) {
+            prootArgs.add("-w")
+            prootArgs.add(guestWorkDir)
+        }
+        prootArgs.addAll(guestArgv)
 
-        RuntimeLogger.d("Executing proot (cmdLen=${command.length}, cwd=$guestWorkDir)")
+        RuntimeLogger.d("Executing proot argv=${guestArgv.take(4)} extra=${extraProotArgs.size}")
 
         var process: Process? = null
         val stdout = StringBuilder()
@@ -150,7 +190,6 @@ class ProotExecutor(
                 killProcessTree(process!!)
             }
 
-            // Unblock readers
             try { process?.inputStream?.close() } catch (_: Exception) {}
             try { process?.errorStream?.close() } catch (_: Exception) {}
             try { process?.outputStream?.close() } catch (_: Exception) {}
@@ -212,20 +251,13 @@ class ProotExecutor(
                 }
             }
         } catch (_: Exception) {
-            // stream closed / interrupted
         }
     }
 
-    /**
-     * Best-effort termination of proot and descendants.
-     * Uses ProcessHandle tree walk (API 26+) plus direct pid signals.
-     * Does not rely on process-group leadership (ProcessBuilder is not a session leader).
-     */
     private fun killProcessTree(process: Process) {
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 val handle = process.toHandle()
-                // Collect all descendants first, then kill deepest-first-ish
                 val kids = try {
                     handle.descendants().toList()
                 } catch (_: Exception) {
@@ -235,7 +267,6 @@ class ProotExecutor(
                     try { h.destroyForcibly() } catch (_: Exception) {}
                 }
                 val pid = handle.pid()
-                // Signal the main pid (not -$pid group — we are not group leader)
                 val killer = Runtime.getRuntime().exec(
                     arrayOf(
                         "sh", "-c",

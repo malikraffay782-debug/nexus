@@ -176,6 +176,26 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             "getPrefixPath" -> onWorker(result, "getPrefixPath") { runtime.getPrefixPath() }
             "getRuntimeRoot" -> onWorker(result, "getRuntimeRoot") { runtime.getRuntimeRoot() }
 
+                        "runProject" -> {
+                val projectId = call.argument<String>("projectId")
+                if (projectId.isNullOrBlank()) {
+                    result.error("bad_args", "projectId required", null)
+                    return
+                }
+                val timeoutSec = (call.argument<Number>("timeoutSec")?.toLong()
+                    ?: ((call.argument<Number>("timeoutMs")?.toLong() ?: 30000L) / 1000L))
+                    .coerceIn(1L, 120L)
+                onWorker(result, "runProject") {
+                    val cmdResult = runtime.runProject(projectId, timeoutSec)
+                    mapOf(
+                        "exitCode" to cmdResult.exitCode,
+                        "stdout" to cmdResult.stdout,
+                        "stderr" to cmdResult.stderr,
+                        "timedOut" to cmdResult.timedOut
+                    )
+                }
+            }
+
             "pythonVersion" -> {
                 onWorker(result, "pythonVersion") {
                     runtime.pythonVersion()

@@ -1,28 +1,26 @@
-import 'dart:io';
-
 import '../../../services/embedded_runtime.dart';
 import '../../projects/domain/project.dart';
 
 class RunResult {
-  const RunResult({required this.ok, required this.message});
+  const RunResult({
+    required this.ok,
+    required this.message,
+    this.exitCode,
+    this.timedOut = false,
+  });
+
   final bool ok;
   final String message;
+  final int? exitCode;
+  final bool timedOut;
 }
 
-/// Phase 1: runtime smoke test only — does not execute project source yet.
+/// Runs project entry: python3 /home/project/src/main.py (cwd /home/project).
 class ProjectRunner {
   const ProjectRunner();
 
   Future<RunResult> run(Project project) async {
     try {
-      final dir = Directory(project.path);
-      if (!await dir.exists()) {
-        return const RunResult(
-          ok: false,
-          message: 'Project folder is missing on disk.',
-        );
-      }
-
       final ready = await EmbeddedRuntime.isReady();
       if (!ready) {
         return const RunResult(
@@ -32,26 +30,62 @@ class ProjectRunner {
         );
       }
 
-      final quotedName = _shellQuote(project.name);
-      final cmd = 'echo hello from $quotedName';
-      final result = await EmbeddedRuntime.runCommand(cmd, timeoutSec: 30);
+      final result = await EmbeddedRuntime.runProject(
+        project.id,
+        timeoutSec: 30,
+      );
 
-      if (result.isSuccess) {
+      final stdout = result.stdout;
+      final stderr = result.stderr;
+      final output = stderr.isEmpty
+          ? stdout
+          : (stdout.isEmpty ? stderr : '$stdout\n$stderr').trim();
+
+      if (result.timedOut) {
         return RunResult(
-          ok: true,
-          message:
-              '${result.stdout.isEmpty ? "(no output)" : result.stdout}\n\n'
-              '[Phase 1 smoke test — project code is not executed yet]',
+          ok: false,
+          message: output.isEmpty
+              ? 'Timed out after 30s'
+              : '$output\n\n[Timed out after 30s]',
+          exitCode: result.exitCode,
+          timedOut: true,
         );
       }
+
+      if (result.exitCode == 127) {
+        return RunResult(
+          ok: false,
+          message:
+              'python3 is not installed in the runtime.\nInstall it from the Runtime tab: pkg install python\n\n$output',
+          exitCode: 127,
+        );
+      }
+
+      if (result.exitCode == 0) {
+        return RunResult(
+          ok: true,
+          message: output.isEmpty ? '(no output)' : output,
+          exitCode: 0,
+        );
+      }
+
+      // Native ProjectMount errors come as stderr with exit -1
+      final err = result.stderr.trim();
+      if (err.contains('src/main.py not found') ||
+          err.contains('Project folder') ||
+          err.contains('Invalid project')) {
+        return RunResult(ok: false, message: err, exitCode: result.exitCode);
+      }
+
       return RunResult(
         ok: false,
-        message: 'ERROR(${result.exitCode}): ${result.stderr}'.trim(),
+        message: output.isEmpty
+            ? 'Script exited with code ${result.exitCode}'
+            : output,
+        exitCode: result.exitCode,
       );
     } catch (e) {
       return RunResult(ok: false, message: e.toString());
     }
   }
-
-  static String _shellQuote(String s) => "'${s.replaceAll("'", "'\\''")}'";
 }

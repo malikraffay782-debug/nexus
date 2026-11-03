@@ -133,7 +133,53 @@ class EmbeddedRuntime {
     }
   }
 
-  static Future<String> pythonVersion() async {
+  
+  /// Run project src/main.py inside proot (host project dir bound at /home/project).
+  /// Only [projectId] is sent — native code resolves and validates the path.
+  static Future<CommandResult> runProject(
+    String projectId, {
+    int timeoutSec = 30,
+  }) async {
+    try {
+      final result = await _channel.invokeMethod<Map>(
+        'runProject',
+        {
+          'projectId': projectId,
+          'timeoutSec': timeoutSec,
+        },
+      ).timeout(Duration(seconds: timeoutSec + 15));
+      if (result == null) {
+        return CommandResult(
+          exitCode: -1,
+          stdout: '',
+          stderr: 'Null response from native',
+          timedOut: false,
+        );
+      }
+      return CommandResult(
+        exitCode: result['exitCode'] as int? ?? -1,
+        stdout: result['stdout'] as String? ?? '',
+        stderr: result['stderr'] as String? ?? '',
+        timedOut: result['timedOut'] as bool? ?? false,
+      );
+    } on PlatformException catch (e) {
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: e.message ?? e.code,
+        timedOut: false,
+      );
+    } catch (e) {
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: e.toString(),
+        timedOut: false,
+      );
+    }
+  }
+
+static Future<String> pythonVersion() async {
     try {
       return await _channel
               .invokeMethod<String>('pythonVersion')
