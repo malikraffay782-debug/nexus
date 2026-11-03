@@ -152,6 +152,11 @@ class ProjectRepository {
       ]) {
         await Directory(p.join(staging.path, sub)).create();
       }
+      // Default entry script for future real Run
+      await File(p.join(staging.path, 'src', 'main.py')).writeAsString(
+        "# Nexus project: will run via embedded runtime later\n"
+        "print('hello from nexus')\n",
+      )
 
       final project = Project(
         id: id,

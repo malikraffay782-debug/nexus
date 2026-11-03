@@ -6,6 +6,7 @@ import 'package:go_router/go_router.dart';
 import '../../projects/application/projects_providers.dart';
 import '../../projects/domain/project.dart';
 import '../application/project_runner.dart';
+import '../widgets/workspace_code_tab.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.projectId});
@@ -206,7 +207,10 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
         body: TabBarView(
           children: [
             for (final t in tabs)
-              _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
+              if (t.label == 'Code')
+                WorkspaceCodeTab(projectPath: project.path)
+              else
+                _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
           ],
         ),
       ),
