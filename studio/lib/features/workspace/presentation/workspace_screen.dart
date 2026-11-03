@@ -6,6 +6,8 @@ import 'package:go_router/go_router.dart';
 import '../../projects/application/projects_providers.dart';
 import '../../projects/domain/project.dart';
 import '../application/project_runner.dart';
+import '../widgets/run_guard.dart';
+import '../files/workspace_files_provider.dart';
 import '../widgets/workspace_code_tab.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
@@ -98,16 +100,17 @@ class _WorkspaceScreenState extends ConsumerState<WorkspaceScreen> {
   }
 }
 
-class _WorkspaceView extends StatefulWidget {
+
+class _WorkspaceView extends ConsumerStatefulWidget {
   const _WorkspaceView({required this.project});
 
   final Project project;
 
   @override
-  State<_WorkspaceView> createState() => _WorkspaceViewState();
+  ConsumerState<_WorkspaceView> createState() => _WorkspaceViewState();
 }
 
-class _WorkspaceViewState extends State<_WorkspaceView> {
+class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
   bool _running = false;
   int _runGeneration = 0;
 
@@ -115,18 +118,22 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
 
   @override
   void dispose() {
-    _runGeneration++; // invalidate in-flight run UI
+    _runGeneration++;
     super.dispose();
   }
 
   Future<void> _run() async {
     if (_running) return;
+    final files =
+        ref.read(workspaceFilesControllerProvider(widget.project.path));
+    if (!await confirmRunWithUnsavedChanges(context, files)) return;
+    if (!mounted) return;
+
     final gen = ++_runGeneration;
     setState(() => _running = true);
     try {
       final result = await const ProjectRunner().run(widget.project);
       if (!mounted || gen != _runGeneration) return;
-      // Project may have been deleted while running
       if (!await Directory(widget.project.path).exists()) return;
       if (!mounted || gen != _runGeneration) return;
       await showDialog<void>(
@@ -159,6 +166,7 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
   @override
   Widget build(BuildContext context) {
     final project = widget.project;
+    final files = ref.watch(workspaceFilesControllerProvider(project.path));
     final tabs = <({String label, IconData icon, String hint})>[
       _isGame
           ? (
@@ -208,7 +216,7 @@ class _WorkspaceViewState extends State<_WorkspaceView> {
           children: [
             for (final t in tabs)
               if (t.label == 'Code')
-                WorkspaceCodeTab(projectPath: project.path)
+                WorkspaceCodeTab(controller: files)
               else
                 _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
           ],
