@@ -92,7 +92,8 @@ class NexusRuntime private constructor(context: Context) {
                 )
             }
             try {
-                // Match Flutter path_provider application documents on Android
+                // CONTRACT: must match Flutter path_provider getApplicationDocumentsDirectory()
+                // which is context.getDir("flutter", MODE_PRIVATE) on Android.
                 val projectsRoot = File(appContext.getDir("flutter", android.content.Context.MODE_PRIVATE), "projects")
                 val mount = ProjectMount.resolve(projectsRoot, projectId)
                 ProjectMount.ensureGuestMountPoint(bootstrapManager.prefixDir)

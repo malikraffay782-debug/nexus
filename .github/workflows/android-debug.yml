@@ -24,7 +24,14 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Toolchain versions
+        run: |
+          flutter --version
+          java -version
+          cat android/settings.gradle | head -30
+
       - run: flutter pub get
+      - run: flutter analyze --no-fatal-infos || true
       - run: flutter build apk --debug
 
       - uses: actions/upload-artifact@v4

@@ -166,7 +166,7 @@ class ProjectRepository {
       await File(p.join(staging.path, 'src', 'main.py')).writeAsString(
         "# Nexus project: will run via embedded runtime later\n"
         "print('hello from nexus')\n",
-      )
+      );
 
       final project = Project(
         id: id,
