@@ -24,14 +24,42 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Fetch embedded runtime (bootstrap + proot)
+        working-directory: ${{ github.workspace }}
+        run: |
+          set -euo pipefail
+          TAG="bootstrap-2026.11.01-r1+apt.android-7"
+          ASSETS="studio/android/app/src/main/assets/bootstrap"
+          JNI="studio/android/app/src/main/jniLibs/arm64-v8a"
+          mkdir -p "$ASSETS" "$JNI"
+          curl -fsSL -L -o "$ASSETS/bootstrap-aarch64.zip" \
+            "https://github.com/termux/termux-packages/releases/download/${TAG}/bootstrap-aarch64.zip"
+          BASE="https://packages.termux.dev/apt/termux-main"
+          cd /tmp
+          curl -fsSL -L -o proot.deb "$BASE/pool/main/p/proot/proot_5.1.107.102_aarch64.deb"
+          curl -fsSL -L -o talloc.deb "$BASE/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb"
+          curl -fsSL -L -o shmem.deb "$BASE/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb"
+          rm -rf debroot && mkdir debroot && cd debroot
+          for d in proot.deb talloc.deb shmem.deb; do
+            ar x /tmp/$d
+            tar xf data.tar.* 2>/dev/null || true
+            rm -f data.tar.* control.tar.* debian-binary
+          done
+          USR=data/data/com.termux/files/usr
+          cp -f "$USR/bin/proot" "${{ github.workspace }}/$JNI/libproot.so"
+          cp -f "$USR/libexec/proot/loader" "${{ github.workspace }}/$JNI/libproot-loader.so"
+          cp -f "$USR/lib/libandroid-shmem.so" "${{ github.workspace }}/$JNI/libandroid-shmem.so"
+          cp -f "$USR/lib/libtalloc.so.2.5.0" "${{ github.workspace }}/$JNI/libtalloc.so"
+          chmod 755 "${{ github.workspace }}/$JNI"/*
+          ls -lh "${{ github.workspace }}/$ASSETS"
+          ls -lh "${{ github.workspace }}/$JNI"
+
       - name: Toolchain versions
         run: |
           flutter --version
           java -version
-          cat android/settings.gradle | head -30
 
       - run: flutter pub get
-      - run: flutter analyze --no-fatal-infos || true
       - run: flutter build apk --debug
 
       - uses: actions/upload-artifact@v4
