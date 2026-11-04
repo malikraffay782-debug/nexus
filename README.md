@@ -1,127 +1,136 @@
 # Nexus
 
-**Mobile-first Hybrid Engine + Studio** with a fully **embedded Linux runtime** (Termux-style: proot + bootstrap).
+**Mobile-first Hybrid Engine + Studio** with an **embedded Linux runtime** (Termux-style proot + bootstrap) inside a Flutter Android app.
 
-No separate Termux app. Linux userspace lives inside the Nexus Android app private storage and is driven from Flutter via MethodChannel.
+- **Repo:** https://github.com/malikraffay782-debug/nexus  
+- **Package ID:** `com.nexus.studio`  
+- **Min SDK:** 26 · **Target SDK:** 34 · **Compile SDK:** 35  
+- **Primary ABI for runtime:** `arm64-v8a` (aarch64)
 
-**Repo:** https://github.com/malikraffay782-debug/nexus
-
----
-
-## Vision (target level)
-
-Nexus is **not** a thin code notepad. The intended product level is closer to a **mobile Unity/Roblox-style studio**, built in phases:
-
-| Layer | Role |
-|-------|------|
-| **Nexus Studio** | Flutter UI — projects, code editor, later blocks / scene / screens |
-| **Nexus Core** | Game/app logic (Python first; later toolchains inside the runtime) |
-| **Embedded Runtime** | Isolated Linux prefix via proot — packages, Python, compilers |
-
-**Project types**
-
-- **Game** — Scene / Code / Assets (scene editor + 2D runtime later)
-- **App** — Screens / Code / Assets
-
-**Important architecture rule**
-
-- **Embedded Linux** = tools, scripts, packages, build helpers  
-- **Game rendering / frame loop** = Flutter/Android side (not GPU inside proot)  
-- proot is a **developer power tool**, not a multi-tenant security sandbox  
+This README is written so a **human or another AI** can continue work without the original chat history.
 
 ---
 
-## Current status (honest)
+## 1. Product goal
 
-| Area | Status | Notes |
-|------|--------|--------|
-| **Phase 0 – Embedded Runtime** | Done (code) | Bootstrap, proot, locks, hardening, package mgr |
-| **Phase 1 – Studio shell** | Done | Projects CRUD, routing, workspace shell |
-| **Phase 1.5 – Code workspace** | Done | File tree + editor + path safety |
-| **Phase 2 – Real project Run** | Done (code) | Mount `projects/<id>` → `/home/project`, run `src/main.py` |
-| **Phase 2b – Run guard + Runtime UI** | Done | Unsaved-changes dialog; Runtime debug screen |
-| **CI debug APK** | **Green** | `flutter build apk --debug` succeeds |
-| **Device functional runtime** | **Blocked on binaries** | Need bootstrap zip + `libproot*.so` in APK |
-| **Scene / Screen / Assets editors** | Placeholders | Not implemented |
-| **2D engine / Flame / blocks** | Not started | After device smoke |
+Build a **Studio** (projects, code editor, later scenes/blocks) on Flutter, and an **embedded Linux userspace** for Python/tools — **without** depending on a separate Termux app.
 
-### Latest successful CI APK
+| Layer | Responsibility |
+|-------|----------------|
+| **Studio (Flutter)** | UI, projects, editor, Run button, Runtime debug screen |
+| **Bridge** | MethodChannel `com.nexus/runtime` + progress EventChannel |
+| **Kotlin runtime** | Bootstrap extract, proot exec, package install, project mount |
+| **Embedded Linux** | Termux bootstrap prefix under app private storage |
 
-- Workflow: [Build Android APK](https://github.com/malikraffay782-debug/nexus/actions/workflows/android-debug.yml)
-- Example green run: commit `917ba86` (Kotlin `ProcessHandle` compile fix)
-- Artifact name: **`nexus-apk`** → contains `app-debug.apk`
-- Download: GitHub → Actions → latest **success** run → Artifacts → `nexus-apk`
-
-> This APK is the **Studio shell + native bridge**. Without packaging bootstrap + proot libs, **Initialize / Python / Run** will not fully work on device.
+**Architecture rule:** game rendering / frame loop stays on **Flutter/Android**. proot is for **code, tools, packages** — not GPU inside Linux.
 
 ---
 
-## What works in code today
+## 2. End-to-end flow (read this first)
 
-### Embedded runtime (Kotlin)
+```
+User opens Nexus Studio
+  → Projects list (documents/.../projects/<id>/)
+  → Create Game or App project
+  → Workspace: file tree + code editor (src/main.py default)
+  → Runtime tab: Initialize → extracts bootstrap zip from APK assets
+  → Install Python → pkg install python inside proot
+  → Run → Kotlin binds projects/<id> → /home/project, runs python3 src/main.py
+```
 
-- `BootstrapManager` — zip extract, Zip Slip checks, `SYMLINKS.txt` (stream-safe), version file  
-- `ProotExecutor` — proot argv, output cap, timeout kill (**no `Process.toHandle`** — Android SDK safe)  
-- `NexusRuntime` — RW lock between init and commands  
-- `PackageManager` — validated package names + mutation mutex  
-- `ProjectMount` — only `projectId` from Flutter; host path resolved in Kotlin  
-- `RuntimePlugin` — MethodChannel `com.nexus/runtime`, progress EventChannel  
+### 2.1 Data paths (must stay in sync)
 
-### Studio (Flutter)
+| Side | Path |
+|------|------|
+| Flutter projects root | `getApplicationDocumentsDirectory()/projects` |
+| Kotlin projects root | `context.getDir("flutter", MODE_PRIVATE)/projects` |
+| Same on device | `/data/user/0/com.nexus.studio/app_flutter/projects` |
+| Runtime prefix | under app files (BootstrapManager `prefixDir`) |
+| Guest project mount | host `projects/<id>` → guest `/home/project` |
 
-- Projects: create / list / delete under app documents `projects/<id>/`  
-- Workspace: Code tab (tree + editor), Run button  
-- Run guard: Save and Run / Run without saving / Cancel  
-- `ProjectRunner` → `EmbeddedRuntime.runProject(projectId)`  
-- Runtime tab: Initialize, Install Python, status, log  
+Only **projectId** crosses the bridge for Run. Kotlin resolves the host path (no path injection from Dart).
 
-### Security posture (documented)
+### 2.2 MethodChannel API (`com.nexus/runtime`)
 
-See `embedded-runtime/docs/security-notes.md`.
+Implemented in `RuntimePlugin.kt` → `NexusRuntime` → `BootstrapManager` / `ProotExecutor` / `PackageManager` / `ProjectMount`.
 
-- Trusted local power-user tool  
-- Path validation on project mounts and workspace files  
-- Not an untrusted-code jail  
+| Method | Purpose |
+|--------|---------|
+| `initialize` | Extract bootstrap if needed; progress events |
+| `isReady` | Bootstrap present and usable |
+| `runCommand` | Trusted shell command in proot |
+| `runProject` | Mount project + run `python3 /home/project/src/main.py` |
+| `installPackage` | `pkg`/`apt` install validated names |
+| `updatePackages` | apt/pkg update |
+| `pythonVersion` / `hasBinary` | probes |
+| `getPrefixPath` / `getRuntimeRoot` | debug paths |
+
+Flutter wrapper: `studio/lib/services/embedded_runtime.dart`.  
+UI adapter: `RuntimeFacade` / `EmbeddedRuntimeFacade` in runtime_debug feature.
+
+### 2.3 Bootstrap + proot packaging
+
+- Asset: `studio/android/app/src/main/assets/bootstrap/bootstrap-aarch64.zip`  
+  (gitignored; **CI downloads** Termux bootstrap before build)
+- Native: `jniLibs/arm64-v8a/libproot.so` (proot binary renamed),  
+  `libproot-loader.so`, `libtalloc.so`, `libandroid-shmem.so`
+- `extractNativeLibs=true` + `useLegacyPackaging=true` so proot is executable from `nativeLibraryDir`
+
+Without bootstrap in the APK, Initialize fails with:  
+`Bootstrap asset not found: bootstrap/bootstrap-aarch64.zip`
 
 ---
 
-## Repository layout
+## 3. Repo layout
 
 ```
 nexus/
-├── README.md
-├── scripts/fetch-runtime.sh          # download Termux bootstrap (TARGET_TAG)
+├── README.md                          ← this file
+├── scripts/fetch-runtime.sh           ← optional local bootstrap download
 ├── .github/workflows/android-debug.yml
-├── core/native/android/.../com/nexus/runtime/
-│   ├── BootstrapManager.kt
-│   ├── ProotExecutor.kt
-│   ├── NexusRuntime.kt
-│   ├── PackageManager.kt
-│   ├── ProjectMount.kt
-│   ├── RuntimePlugin.kt
+├── core/native/android/src/main/kotlin/com/nexus/runtime/
+│   ├── BootstrapManager.kt            ← zip extract, SYMLINKS.txt, Zip Slip checks
+│   ├── ProotExecutor.kt               ← proot ProcessBuilder, timeout kill (no ProcessHandle)
+│   ├── NexusRuntime.kt                ← facade + RW lock
+│   ├── PackageManager.kt              ← validated pkg names + mutex
+│   ├── ProjectMount.kt                ← projectId → bind mount args
+│   ├── RuntimePlugin.kt               ← Flutter plugin
 │   └── RuntimeLogger.kt
-├── embedded-runtime/docs/
-│   ├── architecture.md
-│   ├── security-notes.md
-│   └── project-mount.md
-└── studio/                           # Flutter app
-    ├── lib/features/projects/
-    ├── lib/features/workspace/       # files, editor, run guard, runner
-    ├── lib/features/runtime_debug/   # RuntimeDebugScreen + facade
-    ├── lib/services/embedded_runtime.dart
-    └── android/                      # MainActivity registers RuntimePlugin
+├── embedded-runtime/docs/             ← architecture + security notes
+└── studio/                            ← Flutter application
+    ├── pubspec.yaml                   ← versionName+versionCode
+    ├── lib/
+    │   ├── main.dart / app.dart
+    │   ├── core/router/               ← go_router shell
+    │   ├── features/projects/         ← CRUD + repository
+    │   ├── features/workspace/        ← editor, run guard, ProjectRunner
+    │   ├── features/runtime_debug/    ← Initialize / Install Python UI
+    │   └── services/embedded_runtime.dart
+    └── android/
+        ├── app/build.gradle           ← SDK pins, signing, jni/assets sourceSets
+        ├── keystore/debug.keystore    ← stable CI signing (not Play production)
+        └── app/src/main/
+            ├── AndroidManifest.xml
+            ├── assets/bootstrap/      ← bootstrap zip (CI)
+            └── jniLibs/arm64-v8a/     ← proot libs
 ```
 
 ---
 
-## Build APK (CI or local)
+## 4. Security model (short)
 
-### CI
+- Trusted local power-user tool, **not** a multi-tenant sandbox.  
+- Zip Slip blocked via canonical path prefix checks.  
+- Symlink targets validated relative to prefix.  
+- Package names validated before shell.  
+- Project mount only by id; host path built in Kotlin.  
+- Details: `embedded-runtime/docs/security-notes.md`.
 
-```bash
-# push to main triggers workflow, or run workflow_dispatch
-# Artifact: nexus-apk / app-debug.apk
-```
+**Do not** use `Process.toHandle()` / `ProcessHandle` — missing from Android SDK stubs (`compileDebugKotlin` fails).
+
+---
+
+## 5. Build & CI
 
 ### Local
 
@@ -129,79 +138,93 @@ nexus/
 cd studio
 flutter pub get
 flutter build apk --debug
-# output: build/app/outputs/flutter-apk/app-debug.apk
+# app-debug.apk under build/app/outputs/flutter-apk/
 ```
 
-### Android toolchain pins (see `studio/android/`)
+Bootstrap must exist under assets (run `scripts/fetch-runtime.sh` with `TARGET_TAG=...` or copy zip manually).
 
-- AGP **8.11.1**
-- Kotlin **2.3.20**
-- Gradle **8.14**
-- `android.useAndroidX=true`
-- Java **17**
+### CI (GitHub Actions)
 
----
+Workflow: `.github/workflows/android-debug.yml`
 
-## Device / Termux-level runtime setup (required for real Initialize)
+1. Checkout  
+2. Java 17 + Android SDK  
+3. Install **NDK 27.0.12077973** (pinned; NDK 28 side-by-side zip was failing on runners)  
+4. Flutter stable  
+5. Download Termux bootstrap + extract proot debs into jniLibs  
+6. `flutter build apk --debug`  
+7. Upload artifact **`nexus-apk`** → `app-debug.apk`
 
-Binaries are **not** in git (`.gitignore`).
+### Toolchain pins
 
-1. **Bootstrap zip** (per ABI), into app assets, e.g.  
-   `studio/android/app/src/main/assets/bootstrap/bootstrap-aarch64.zip`  
-   Script: `TARGET_TAG=<termux-package-release> bash scripts/fetch-runtime.sh aarch64`
+| Item | Value |
+|------|--------|
+| AGP | 8.11.1 (see `settings.gradle`) |
+| Kotlin | 2.3.20 |
+| Gradle | 8.14 |
+| NDK | **27.0.12077973** (explicit in `app/build.gradle`) |
+| Java | 17 |
+| AndroidX | `android.useAndroidX=true` |
 
-2. **proot libs** into jniLibs, e.g.  
-   `studio/android/app/src/main/jniLibs/arm64-v8a/libproot.so`  
-   `libproot-loader.so`
+### Signing / install
 
-3. Install APK → **Runtime** tab → **Initialize** → **Install Python** → open project → **Run**
-
-Expected after full packaging: `src/main.py` prints under proot with cwd `/home/project`.
-
-Path contract:
-
-- Flutter: `getApplicationDocumentsDirectory()/projects/<id>`  
-- Kotlin: `context.getDir("flutter", MODE_PRIVATE)/projects/<id>`  
-  (same directory on Android)
-
----
-
-## Flutter bridge API (summary)
-
-`studio/lib/services/embedded_runtime.dart`
-
-| Method | Purpose |
-|--------|---------|
-| `initialize()` | Extract/bootstrap runtime |
-| `isReady()` | Bootstrap present |
-| `runCommand(cmd)` | Trusted shell command in proot |
-| `runProject(projectId)` | Bind project + `python3 /home/project/src/main.py` |
-| `installPackages([...])` | pkg/apt install |
-| `pythonVersion()` | Version string |
-| `progressStream` | Bootstrap progress |
+- Debug (and CI) APK signed with **repo** `studio/android/keystore/debug.keystore`.  
+- Avoids “App not installed” when CI used ephemeral debug keys.  
+- **Uninstall** any older Nexus Studio before installing a newly signed build.  
+- Install **`app-debug.apk`** from the artifact zip — not the zip itself.
 
 ---
 
-## Recommended next work order
+## 6. Device smoke checklist
 
-1. Package **bootstrap + proot** into a debug APK and smoke on a real phone  
-2. Confirm Initialize → Install Python → Run `main.py`  
-3. Only then: scene JSON / 2D runtime design (Flutter-side loop, not proot GPU)  
-4. Blocks editor last (depends on editor + run + scene contracts)
-
----
-
-## Known gaps
-
-- No bootstrap/proot in default CI APK  
-- Scene / Screen / Asset editors are placeholders  
-- No cancel-token API for long native jobs (Dart timeout ≠ process kill registry)  
-- Corrupt projects are skipped in list (no quarantine UI yet)  
-- Single-ABI packaging notes still need hardening for non-arm64  
+1. Uninstall old `com.nexus.studio` if present.  
+2. Install latest CI `app-debug.apk`.  
+3. Runtime → **Initialize** (first extract can take ~30–90s).  
+4. **Install Python** → wait for success.  
+5. Open a project → edit `src/main.py` → **Run**.  
+6. Expect stdout in run result / log.
 
 ---
 
-## License / credit
+## 7. Phase status
 
-Bootstrap/proot approach inspired by Termux-style userspace embedding.  
-Project: Nexus Studio + Embedded Runtime.
+| Phase | Status |
+|-------|--------|
+| 0 Embedded runtime (Kotlin) | Done |
+| 1 Studio shell | Done |
+| 1.5 Code workspace + path safety | Done |
+| 2 Project mount + runProject | Done (code) |
+| 2b Run guard + Runtime UI | Done |
+| CI APK with bootstrap | In progress (NDK pin + packaging) |
+| Scene / Screen / 2D engine | Not started |
+| Block editor | Not started |
+
+---
+
+## 8. Recommended next work (for any AI/dev)
+
+1. Keep CI green; verify Initialize + Python + Run on **real arm64 phone**.  
+2. Only then: scene JSON model + simple Flutter 2D loop (not proot GPU).  
+3. Optional Settings: mild thermal/battery notice (non-blocking).  
+4. More languages via `pkg install` after Python path is solid (clang, etc.).  
+5. Never reintroduce `Process.toHandle()` on Android.
+
+---
+
+## 9. Common failures
+
+| Symptom | Cause | Fix |
+|---------|--------|-----|
+| `Bootstrap asset not found` | zip not in APK assets | CI fetch step / local fetch-runtime.sh |
+| `proot binary not found` | jniLibs missing | CI proot deb extract |
+| `App not installed` | signature mismatch | uninstall old app; use repo keystore builds |
+| CI `NDK ... ZipFile unknown archive` | bad NDK 28 download | pinned NDK 27 + sdkmanager preinstall |
+| `Unresolved reference toHandle` | ProcessHandle API | use reflective pid + kill only |
+| Run does nothing useful | Python not installed | Runtime → Install Python |
+
+---
+
+## 10. License / credit
+
+Bootstrap/proot packaging inspired by Termux userspace layout.  
+Nexus Studio + Embedded Runtime — project under active development.

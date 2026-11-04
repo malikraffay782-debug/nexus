@@ -19,6 +19,24 @@ jobs:
           distribution: temurin
           java-version: '17'
 
+      - uses: android-actions/setup-android@v3
+
+      - name: Install NDK 27 (retry; avoid broken NDK 28 zip)
+        run: |
+          set -euo pipefail
+          yes | sdkmanager --licenses >/dev/null || true
+          for i in 1 2 3; do
+            if sdkmanager "ndk;27.0.12077973"; then
+              echo "NDK installed"
+              exit 0
+            fi
+            echo "sdkmanager attempt $i failed, retry..."
+            sleep 5
+          done
+          echo "NDK install failed"
+          exit 1
+        working-directory: ${{ github.workspace }}
+
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -58,6 +76,8 @@ jobs:
         run: |
           flutter --version
           java -version
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/ndk" || true
 
       - run: flutter pub get
       - run: flutter build apk --debug
