@@ -159,7 +159,7 @@ class BootstrapManager(private val context: Context) {
                             if (n <= 0) break
                             baos.write(buf, 0, n)
                         }
-                        BufferedReader(StringReader(baos.toString(Charsets.UTF_8.name()))).use { reader ->
+                        BufferedReader(StringReader(String(baos.toByteArray(), Charsets.UTF_8))).use { reader ->
                             var line = reader.readLine()
                             while (line != null) {
                                 val parts = line.split("←")

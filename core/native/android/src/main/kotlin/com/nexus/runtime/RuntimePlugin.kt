@@ -176,7 +176,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             "getPrefixPath" -> onWorker(result, "getPrefixPath") { runtime.getPrefixPath() }
             "getRuntimeRoot" -> onWorker(result, "getRuntimeRoot") { runtime.getRuntimeRoot() }
 
-                        "runProject" -> {
+            "runProject" -> {
                 val projectId = call.argument<String>("projectId")
                 if (projectId.isNullOrBlank()) {
                     result.error("bad_args", "projectId required", null)

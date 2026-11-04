@@ -1,7 +1,6 @@
 package com.nexus.runtime
 
 import android.content.Context
-import android.os.Build
 import java.io.File
 import java.nio.file.Paths
 import java.util.concurrent.Executors
@@ -254,35 +253,56 @@ class ProotExecutor(
         }
     }
 
+    /**
+     * Best-effort kill of proot and children.
+     * Avoid Process.toHandle()/ProcessHandle — not in the Android SDK stubs,
+     * so it fails compileDebugKotlin even when minSdk is 26+.
+     */
     private fun killProcessTree(process: Process) {
-        try {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                val handle = process.toHandle()
-                val kids = try {
-                    handle.descendants().toList()
-                } catch (_: Exception) {
-                    emptyList()
-                }
-                for (h in kids) {
-                    try { h.destroyForcibly() } catch (_: Exception) {}
-                }
-                val pid = handle.pid()
-                val killer = Runtime.getRuntime().exec(
+        val pid = processPid(process)
+        if (pid != null && pid > 0) {
+            var killer: Process? = null
+            try {
+                // Kill process group if any, then the pid itself.
+                killer = Runtime.getRuntime().exec(
                     arrayOf(
                         "sh", "-c",
-                        "kill -TERM $pid 2>/dev/null || true; sleep 0.15; kill -KILL $pid 2>/dev/null || true"
+                        "kill -TERM -$pid 2>/dev/null || true; " +
+                            "kill -TERM $pid 2>/dev/null || true; " +
+                            "sleep 0.15; " +
+                            "kill -KILL -$pid 2>/dev/null || true; " +
+                            "kill -KILL $pid 2>/dev/null || true"
                     )
                 )
-                try {
-                    killer.waitFor(2, TimeUnit.SECONDS)
-                } finally {
-                    try { killer.inputStream.close() } catch (_: Exception) {}
-                    try { killer.outputStream.close() } catch (_: Exception) {}
-                    try { killer.errorStream.close() } catch (_: Exception) {}
-                    try { killer.destroyForcibly() } catch (_: Exception) {}
-                }
+                killer.waitFor(2, TimeUnit.SECONDS)
+            } catch (_: Exception) {
+            } finally {
+                try { killer?.inputStream?.close() } catch (_: Exception) {}
+                try { killer?.outputStream?.close() } catch (_: Exception) {}
+                try { killer?.errorStream?.close() } catch (_: Exception) {}
+                try { killer?.destroyForcibly() } catch (_: Exception) {}
             }
-        } catch (_: Exception) {}
+        }
+        try { process.destroy() } catch (_: Exception) {}
         try { process.destroyForcibly() } catch (_: Exception) {}
     }
+
+    /** Reflective pid for Android's java.lang.Process (no public API on all levels). */
+    private fun processPid(process: Process): Long? {
+        return try {
+            val m = process.javaClass.methods.firstOrNull {
+                it.name == "pid" && it.parameterCount == 0
+            }
+            if (m != null) {
+                m.isAccessible = true
+                return (m.invoke(process) as? Number)?.toLong()
+            }
+            val f = process.javaClass.getDeclaredField("pid")
+            f.isAccessible = true
+            (f.get(process) as? Number)?.toLong()
+        } catch (_: Exception) {
+            null
+        }
+    }
 }
+
