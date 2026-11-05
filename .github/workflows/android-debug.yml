@@ -19,23 +19,36 @@ jobs:
           distribution: temurin
           java-version: '17'
 
-      - uses: android-actions/setup-android@v3
-
-      - name: Install NDK 27 (retry; avoid broken NDK 28 zip)
+      # GitHub-hosted runners already have Android SDK + cmdline-tools.
+      # Avoid android-actions/setup-android@v3 — it tries to install the
+      # obsolete "tools" package and fails on current Ubuntu 24.04 images.
+      - name: Accept Android licenses + install NDK 27
+        working-directory: ${{ github.workspace }}
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null || true
+          export ANDROID_HOME="${ANDROID_HOME:-/usr/local/lib/android/sdk}"
+          export ANDROID_SDK_ROOT="$ANDROID_HOME"
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          ls "$ANDROID_HOME/cmdline-tools" || true
+          # Find sdkmanager
+          SM=$(find "$ANDROID_HOME/cmdline-tools" -name sdkmanager -type f 2>/dev/null | head -1)
+          if [ -z "$SM" ]; then
+            SM=$(find /usr/local/lib/android -name sdkmanager -type f 2>/dev/null | head -1)
+          fi
+          echo "sdkmanager=$SM"
+          yes | "$SM" --licenses >/dev/null || true
+          # Prefer NDK 27 (avoids previous NDK 28 zip issues on some runners)
           for i in 1 2 3; do
-            if sdkmanager "ndk;27.0.12077973"; then
-              echo "NDK installed"
+            if "$SM" "ndk;27.0.12077973"; then
+              echo "NDK 27.0.12077973 installed"
+              ls "$ANDROID_HOME/ndk" || true
               exit 0
             fi
-            echo "sdkmanager attempt $i failed, retry..."
+            echo "sdkmanager NDK attempt $i failed, retry..."
             sleep 5
           done
-          echo "NDK install failed"
-          exit 1
-        working-directory: ${{ github.workspace }}
+          echo "NDK install failed — continuing; Flutter may use side-by-side or default"
+          ls "$ANDROID_HOME/ndk" || true
 
       - uses: subosito/flutter-action@v2
         with:
