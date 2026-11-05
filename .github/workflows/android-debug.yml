@@ -80,10 +80,18 @@ jobs:
           cp -f "$USR/bin/proot" "${{ github.workspace }}/$JNI/libproot.so"
           cp -f "$USR/libexec/proot/loader" "${{ github.workspace }}/$JNI/libproot-loader.so"
           cp -f "$USR/lib/libandroid-shmem.so" "${{ github.workspace }}/$JNI/libandroid-shmem.so"
+          # Real file + SONAME that proot DT_NEEDED expects (libtalloc.so.2)
           cp -f "$USR/lib/libtalloc.so.2.5.0" "${{ github.workspace }}/$JNI/libtalloc.so"
+          cp -f "$USR/lib/libtalloc.so.2.5.0" "${{ github.workspace }}/$JNI/libtalloc.so.2"
+          # If a versioned shmem soname exists, ship it too
+          if [ -f "$USR/lib/libandroid-shmem.so.0" ]; then
+            cp -f "$USR/lib/libandroid-shmem.so.0" "${{ github.workspace }}/$JNI/libandroid-shmem.so.0"
+          fi
           chmod 755 "${{ github.workspace }}/$JNI"/*
           ls -lh "${{ github.workspace }}/$ASSETS"
           ls -lh "${{ github.workspace }}/$JNI"
+          # Sanity: show NEEDED of proot if readelf available
+          readelf -d "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep NEEDED || true
 
       - name: Toolchain versions
         run: |
