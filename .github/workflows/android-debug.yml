@@ -128,13 +128,23 @@ jobs:
           ls -lh "${{ github.workspace }}/$JNI"
           echo "=== proot NEEDED ==="
           patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" || true
+          # Android extracts lib*.so; ignore docs (README.md). Reject versioned sonames.
           for f in "${{ github.workspace }}/$JNI"/*; do
             base=$(basename "$f")
             case "$base" in
+              README.md|*.txt|*.md) ;;
+              lib*.so.[0-9]*)
+                echo "ERROR: versioned soname not extractable on Android: $base" >&2
+                exit 1
+                ;;
               lib*.so) ;;
-              *) echo "ERROR: non-jni name in jniLibs: $base" >&2; exit 1 ;;
+              *)
+                echo "WARN: unexpected file in jniLibs (ignored): $base"
+                ;;
             esac
           done
+          test -f "${{ github.workspace }}/$JNI/libtalloc.so"
+          test -f "${{ github.workspace }}/$JNI/libproot.so"
 
       - name: Toolchain versions
         run: |
