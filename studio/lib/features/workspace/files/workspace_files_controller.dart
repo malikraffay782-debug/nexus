@@ -188,6 +188,24 @@ class WorkspaceFilesController extends ChangeNotifier {
     }
   }
 
+  /// Empty folders only. Refuses non-empty and top-level dirs.
+  Future<String?> deleteFolder(String relPath) async {
+    try {
+      await service.deleteFolder(relPath);
+      // If open file lived under this folder, close it.
+      final open = _openPath;
+      if (open != null && (open == relPath || open.startsWith('$relPath/'))) {
+        closeFile();
+      }
+      await refreshTree();
+      return null;
+    } on WorkspaceException catch (e) {
+      return e.message;
+    } catch (_) {
+      return 'Delete folder failed';
+    }
+  }
+
   @override
   void dispose() {
     _disposed = true;

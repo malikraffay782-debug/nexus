@@ -88,9 +88,15 @@ jobs:
             cp -f "$USR/lib/libandroid-shmem.so.0" "${{ github.workspace }}/$JNI/libandroid-shmem.so.0"
           fi
           chmod 755 "${{ github.workspace }}/$JNI"/*
+          # Prefer rewriting DT_NEEDED to unversioned name (Android-friendly).
+          # Falls back to shipping libtalloc.so.2 if patchelf is unavailable.
+          if command -v patchelf >/dev/null 2>&1 || sudo apt-get install -y patchelf >/dev/null 2>&1; then
+            if patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
+              patchelf --replace-needed libtalloc.so.2 libtalloc.so                 "${{ github.workspace }}/$JNI/libproot.so" || true
+            fi
+          fi
           ls -lh "${{ github.workspace }}/$ASSETS"
           ls -lh "${{ github.workspace }}/$JNI"
-          # Sanity: show NEEDED of proot if readelf available
           readelf -d "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep NEEDED || true
 
       - name: Toolchain versions

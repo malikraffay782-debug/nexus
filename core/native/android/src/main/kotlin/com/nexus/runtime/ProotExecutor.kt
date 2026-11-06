@@ -134,6 +134,13 @@ class ProotExecutor(
         val actualProot = actualProotFile.absolutePath
         val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
 
+        // Fail fast with a clear message if required native deps are missing.
+        // Avoids repeated cryptic "CANNOT LINK EXECUTABLE ... libtalloc.so.2" on device.
+        val missingNative = missingNativeDeps(nativeLibDir)
+        if (missingNative != null) {
+            return CommandResult(-1, "", missingNative, false)
+        }
+
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
@@ -141,7 +148,7 @@ class ProotExecutor(
         env["HOME"] = File(runtimeRoot, "home").absolutePath
         env["TMPDIR"] = File(runtimeRoot, "tmp").absolutePath
         env["PATH"] = "${prefix.absolutePath}/bin:${prefix.absolutePath}/usr/bin"
-        env["LD_LIBRARY_PATH"] = "${prefix.absolutePath}/lib:${nativeLibDir}"
+        env["LD_LIBRARY_PATH"] = "$nativeLibDir:${prefix.absolutePath}/lib"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
 
@@ -203,11 +210,17 @@ class ProotExecutor(
                 -1
             }
             val errExtra = if (timedOut) "\n[Timeout after ${effectiveTimeout}s]" else ""
+            var errText = (stderr.toString().trim() + errExtra).trim()
+            // Linker failures are common when a soname is missing from the APK.
+            if (errText.contains("CANNOT LINK EXECUTABLE") || (errText.contains("library \"") && errText.contains("not found"))) {
+                errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
+                    "Rebuild with libtalloc.so / libtalloc.so.2 and reinstall after uninstall."
+            }
 
             return CommandResult(
                 exitCode,
                 stdout.toString().trim(),
-                (stderr.toString().trim() + errExtra).trim(),
+                errText,
                 timedOut = timedOut
             )
         } catch (e: Exception) {
@@ -251,6 +264,31 @@ class ProotExecutor(
             }
         } catch (_: Exception) {
         }
+    }
+
+
+    /**
+     * Check that proot and its shared libraries are present under nativeLibraryDir.
+     * proot is linked against libtalloc.so.2; we ship both libtalloc.so and libtalloc.so.2.
+     */
+    private fun missingNativeDeps(nativeLibDir: String): String? {
+        val dir = File(nativeLibDir)
+        val required = listOf("libproot.so", "libproot-loader.so")
+        for (name in required) {
+            val f = File(dir, name)
+            if (!f.exists()) {
+                return "Missing native library: $name under $nativeLibDir. Rebuild APK with jniLibs."
+            }
+        }
+        val tallocOk = File(dir, "libtalloc.so.2").exists() || File(dir, "libtalloc.so").exists()
+        if (!tallocOk) {
+            return "Missing libtalloc (need libtalloc.so or libtalloc.so.2) under $nativeLibDir. Rebuild APK."
+        }
+        val shmem = File(dir, "libandroid-shmem.so")
+        if (!shmem.exists()) {
+            RuntimeLogger.w("libandroid-shmem.so not found in $nativeLibDir (may still work)")
+        }
+        return null
     }
 
     /**

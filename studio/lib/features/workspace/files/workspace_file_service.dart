@@ -178,4 +178,30 @@ class WorkspaceFileService {
       throw WorkspaceException('Delete failed: ${e.message}');
     }
   }
+
+  /// Deletes an empty folder only. Non-empty folders are refused (safe default).
+  Future<void> deleteFolder(String rel) async {
+    final abs = paths.resolve(rel);
+    if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.directory) {
+      throw const WorkspaceException('Not a folder');
+    }
+    // Never delete top-level project dirs (src/assets/scenes/screens)
+    final parts = rel.split('/');
+    if (parts.length == 1 && WorkspacePaths.topDirs.contains(parts.first)) {
+      throw const WorkspaceException('Cannot delete top-level project folders');
+    }
+    final dir = Directory(abs);
+    try {
+      await for (final _ in dir.list(followLinks: false)) {
+        throw const WorkspaceException(
+          'Folder is not empty. Delete files inside first.',
+        );
+      }
+      await dir.delete();
+    } on WorkspaceException {
+      rethrow;
+    } on FileSystemException catch (e) {
+      throw WorkspaceException('Delete folder failed: ${e.message}');
+    }
+  }
 }

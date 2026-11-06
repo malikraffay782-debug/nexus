@@ -121,14 +121,30 @@ class FileTreePanel extends StatelessWidget {
       title: Text(e.name, overflow: TextOverflow.ellipsis),
       trailing: e.isDir
           ? PopupMenuButton<String>(
-              tooltip: 'New',
-              icon: const Icon(Icons.add, size: 20),
-              onSelected: (v) =>
-                  _create(context, e.relPath, isFolder: v == 'folder'),
-              itemBuilder: (_) => const [
-                PopupMenuItem(value: 'file', child: Text('New file')),
-                PopupMenuItem(value: 'folder', child: Text('New folder')),
-              ],
+              tooltip: 'Folder actions',
+              icon: const Icon(Icons.more_vert, size: 20),
+              onSelected: (v) {
+                if (v == 'file') {
+                  _create(context, e.relPath, isFolder: false);
+                } else if (v == 'folder') {
+                  _create(context, e.relPath, isFolder: true);
+                } else if (v == 'delete') {
+                  _delete(context, e);
+                }
+              },
+              itemBuilder: (_) {
+                final isTop = e.depth == 0;
+                return [
+                  const PopupMenuItem(value: 'file', child: Text('New file')),
+                  const PopupMenuItem(
+                      value: 'folder', child: Text('New folder')),
+                  if (!isTop)
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Delete folder'),
+                    ),
+                ];
+              },
             )
           : IconButton(
               tooltip: 'Delete',
@@ -197,11 +213,15 @@ class FileTreePanel extends StatelessWidget {
 
   Future<void> _delete(BuildContext context, WorkspaceEntry e) async {
     final messenger = ScaffoldMessenger.of(context);
+    final title = e.isDir ? 'Delete folder?' : 'Delete file?';
+    final body = e.isDir
+        ? '"${e.name}" will be deleted only if it is empty. This cannot be undone.'
+        : '"${e.name}" will be deleted. This cannot be undone.';
     final ok = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
-        title: const Text('Delete file?'),
-        content: Text('"${e.name}" will be deleted. This cannot be undone.'),
+        title: Text(title),
+        content: Text(body),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(false),
@@ -215,7 +235,9 @@ class FileTreePanel extends StatelessWidget {
       ),
     );
     if (ok != true) return;
-    final err = await controller.deleteFile(e.relPath);
+    final err = e.isDir
+        ? await controller.deleteFolder(e.relPath)
+        : await controller.deleteFile(e.relPath);
     if (err != null) {
       messenger.showSnackBar(SnackBar(content: Text(err)));
     }
