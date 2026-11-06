@@ -268,24 +268,27 @@ class ProotExecutor(
 
 
     /**
-     * Check that proot and its shared libraries are present under nativeLibraryDir.
-     * proot is linked against libtalloc.so.2; we ship both libtalloc.so and libtalloc.so.2.
+     * Packaging contract (APK jniLibs/arm64-v8a):
+     *   libproot.so, libproot-loader.so, libtalloc.so.2, libandroid-shmem.so
+     * proot's ELF DT_NEEDED lists libtalloc.so.2 — only that SONAME satisfies the linker.
+     * libtalloc.so may also be shipped (patchelf / alias), but it does not replace .so.2.
      */
     private fun missingNativeDeps(nativeLibDir: String): String? {
         val dir = File(nativeLibDir)
-        val required = listOf("libproot.so", "libproot-loader.so")
-        for (name in required) {
+        fun regularReadable(name: String): Boolean {
             val f = File(dir, name)
-            if (!f.exists()) {
+            return f.isFile && f.canRead()
+        }
+        for (name in listOf("libproot.so", "libproot-loader.so")) {
+            if (!regularReadable(name)) {
                 return "Missing native library: $name under $nativeLibDir. Rebuild APK with jniLibs."
             }
         }
-        val tallocOk = File(dir, "libtalloc.so.2").exists() || File(dir, "libtalloc.so").exists()
-        if (!tallocOk) {
-            return "Missing libtalloc (need libtalloc.so or libtalloc.so.2) under $nativeLibDir. Rebuild APK."
+        // Exact SONAME required by packaged proot (not satisfied by libtalloc.so alone).
+        if (!regularReadable("libtalloc.so.2")) {
+            return "Missing libtalloc.so.2 (required SONAME for proot) under $nativeLibDir. Rebuild APK."
         }
-        val shmem = File(dir, "libandroid-shmem.so")
-        if (!shmem.exists()) {
+        if (!regularReadable("libandroid-shmem.so")) {
             RuntimeLogger.w("libandroid-shmem.so not found in $nativeLibDir (may still work)")
         }
         return null
@@ -312,7 +315,11 @@ class ProotExecutor(
                             "kill -KILL $pid 2>/dev/null || true"
                     )
                 )
-                killer.waitFor(2, TimeUnit.SECONDS)
+                // Best-effort: process group may not apply; force-kill killer if it hangs.
+                val killerDone = killer.waitFor(2, TimeUnit.SECONDS)
+                if (!killerDone) {
+                    try { killer.destroyForcibly() } catch (_: Exception) {}
+                }
             } catch (_: Exception) {
             } finally {
                 try { killer?.inputStream?.close() } catch (_: Exception) {}

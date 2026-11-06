@@ -2,6 +2,7 @@ package com.nexus.runtime
 
 import android.content.Context
 import java.io.File
+import java.util.concurrent.locks.ReentrantLock
 import java.util.concurrent.locks.ReentrantReadWriteLock
 import kotlin.concurrent.read
 import kotlin.concurrent.write
@@ -18,10 +19,17 @@ class NexusRuntime private constructor(context: Context) {
     private val bootstrapManager = BootstrapManager(appContext)
     private val executor = ProotExecutor(appContext, bootstrapManager)
     private val runtimeLock = ReentrantReadWriteLock()
+    /** Serializes concurrent proot runs (UI double-tap / parallel channel calls). */
+    private val runMutex = ReentrantLock()
 
     val packages = PackageManager { command, timeoutSec ->
         runtimeLock.read {
-            executor.run(command, null, timeoutSec)
+            runMutex.lock()
+            try {
+                executor.run(command, null, timeoutSec)
+            } finally {
+                runMutex.unlock()
+            }
         }
     }
 
@@ -62,7 +70,12 @@ class NexusRuntime private constructor(context: Context) {
             return ProotExecutor.CommandResult(-1, "", "empty command", false)
         }
         return runtimeLock.read {
-            executor.run(command, workingDir, timeoutSec)
+            runMutex.lock()
+            try {
+                executor.run(command, workingDir, timeoutSec)
+            } finally {
+                runMutex.unlock()
+            }
         }
     }
 
@@ -91,6 +104,7 @@ class NexusRuntime private constructor(context: Context) {
                     -1, "", "Runtime not ready. Call initialize() first.", false
                 )
             }
+            runMutex.lock()
             try {
                 // CONTRACT: must match Flutter path_provider getApplicationDocumentsDirectory()
                 // which is context.getDir("flutter", MODE_PRIVATE) on Android.
@@ -104,6 +118,8 @@ class NexusRuntime private constructor(context: Context) {
                 )
             } catch (e: ProjectMountException) {
                 ProotExecutor.CommandResult(-1, "", e.message ?: "Invalid project", false)
+            } finally {
+                runMutex.unlock()
             }
         }
     }

@@ -14,7 +14,7 @@ class WorkspaceException implements Exception {
 /// allowed top-level folders. Rejects '..', absolute paths, odd characters
 /// and symlinks.
 class WorkspacePaths {
-  WorkspacePaths(String projectPath) : root = _trimTrailingSlashes(projectPath);
+  WorkspacePaths(String projectPath) : root = _canonicalRoot(projectPath);
 
   final String root;
 
@@ -28,6 +28,16 @@ class WorkspacePaths {
       r = r.substring(0, r.length - 1);
     }
     return r;
+  }
+
+  /// Prefer the real path so symlink roots cannot slip past later segment checks.
+  static String _canonicalRoot(String projectPath) {
+    final trimmed = _trimTrailingSlashes(projectPath);
+    try {
+      return Directory(trimmed).resolveSymbolicLinksSync();
+    } on FileSystemException {
+      return trimmed;
+    }
   }
 
   /// Validates a single file/folder name. Returns the trimmed name.

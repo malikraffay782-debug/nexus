@@ -123,19 +123,23 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
   }
 
   Future<void> _run() async {
+    // Synchronous guard BEFORE any await — closes the double-tap race where
+    // two taps both pass `if (_running)` and wait on the confirm dialog.
     if (_running) return;
-    final files =
-        ref.read(workspaceFilesControllerProvider(widget.project.path));
-    if (!await confirmRunWithUnsavedChanges(context, files)) return;
-    if (!mounted) return;
-
     final gen = ++_runGeneration;
     setState(() => _running = true);
+
     try {
+      final files =
+          ref.read(workspaceFilesControllerProvider(widget.project.path));
+      final proceed = await confirmRunWithUnsavedChanges(context, files);
+      if (!proceed || !mounted || gen != _runGeneration) return;
+
       final result = await const ProjectRunner().run(widget.project);
       if (!mounted || gen != _runGeneration) return;
       if (!await Directory(widget.project.path).exists()) return;
       if (!mounted || gen != _runGeneration) return;
+
       await showDialog<void>(
         context: context,
         builder: (ctx) => AlertDialog(
