@@ -104,24 +104,37 @@ jobs:
           cp -f "$USR/bin/proot" "${{ github.workspace }}/$JNI/libproot.so"
           cp -f "$USR/libexec/proot/loader" "${{ github.workspace }}/$JNI/libproot-loader.so"
           cp -f "$USR/lib/libandroid-shmem.so" "${{ github.workspace }}/$JNI/libandroid-shmem.so"
-          # Real file + SONAME that proot DT_NEEDED expects (libtalloc.so.2)
+          # Android only extracts lib*.so — NOT libfoo.so.2. Ship unversioned name
+          # and rewrite proot DT_NEEDED (mandatory patchelf).
           cp -f "$USR/lib/libtalloc.so.2.5.0" "${{ github.workspace }}/$JNI/libtalloc.so"
-          cp -f "$USR/lib/libtalloc.so.2.5.0" "${{ github.workspace }}/$JNI/libtalloc.so.2"
-          # If a versioned shmem soname exists, ship it too
-          if [ -f "$USR/lib/libandroid-shmem.so.0" ]; then
-            cp -f "$USR/lib/libandroid-shmem.so.0" "${{ github.workspace }}/$JNI/libandroid-shmem.so.0"
-          fi
           chmod 755 "${{ github.workspace }}/$JNI"/*
-          # Prefer rewriting DT_NEEDED to unversioned name (Android-friendly).
-          # Falls back to shipping libtalloc.so.2 if patchelf is unavailable.
-          if command -v patchelf >/dev/null 2>&1 || sudo apt-get install -y patchelf >/dev/null 2>&1; then
-            if patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
-              patchelf --replace-needed libtalloc.so.2 libtalloc.so                 "${{ github.workspace }}/$JNI/libproot.so" || true
-            fi
+
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq patchelf
+          if patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
+            patchelf --replace-needed libtalloc.so.2 libtalloc.so \
+              "${{ github.workspace }}/$JNI/libproot.so"
           fi
+          if patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
+            echo "ERROR: proot still depends on libtalloc.so.2 after patchelf" >&2
+            exit 1
+          fi
+          if patchelf --print-needed "${{ github.workspace }}/$JNI/libproot-loader.so" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
+            patchelf --replace-needed libtalloc.so.2 libtalloc.so \
+              "${{ github.workspace }}/$JNI/libproot-loader.so"
+          fi
+
           ls -lh "${{ github.workspace }}/$ASSETS"
           ls -lh "${{ github.workspace }}/$JNI"
-          readelf -d "${{ github.workspace }}/$JNI/libproot.so" 2>/dev/null | grep NEEDED || true
+          echo "=== proot NEEDED ==="
+          patchelf --print-needed "${{ github.workspace }}/$JNI/libproot.so" || true
+          for f in "${{ github.workspace }}/$JNI"/*; do
+            base=$(basename "$f")
+            case "$base" in
+              lib*.so) ;;
+              *) echo "ERROR: non-jni name in jniLibs: $base" >&2; exit 1 ;;
+            esac
+          done
 
       - name: Toolchain versions
         run: |

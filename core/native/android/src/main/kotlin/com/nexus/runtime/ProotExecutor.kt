@@ -214,7 +214,7 @@ class ProotExecutor(
             // Linker failures are common when a soname is missing from the APK.
             if (errText.contains("CANNOT LINK EXECUTABLE") || (errText.contains("library \"") && errText.contains("not found"))) {
                 errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
-                    "Rebuild with libtalloc.so / libtalloc.so.2 and reinstall after uninstall."
+                    "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
             }
 
             return CommandResult(
@@ -269,9 +269,10 @@ class ProotExecutor(
 
     /**
      * Packaging contract (APK jniLibs/arm64-v8a):
-     *   libproot.so, libproot-loader.so, libtalloc.so.2, libandroid-shmem.so
-     * proot's ELF DT_NEEDED lists libtalloc.so.2 — only that SONAME satisfies the linker.
-     * libtalloc.so may also be shipped (patchelf / alias), but it does not replace .so.2.
+     *   libproot.so, libproot-loader.so, libtalloc.so, libandroid-shmem.so
+     *
+     * Android only extracts lib*.so (not libfoo.so.2). CI patchelf's proot so
+     * DT_NEEDED is libtalloc.so.
      */
     private fun missingNativeDeps(nativeLibDir: String): String? {
         val dir = File(nativeLibDir)
@@ -279,14 +280,10 @@ class ProotExecutor(
             val f = File(dir, name)
             return f.isFile && f.canRead()
         }
-        for (name in listOf("libproot.so", "libproot-loader.so")) {
+        for (name in listOf("libproot.so", "libproot-loader.so", "libtalloc.so")) {
             if (!regularReadable(name)) {
                 return "Missing native library: $name under $nativeLibDir. Rebuild APK with jniLibs."
             }
-        }
-        // Exact SONAME required by packaged proot (not satisfied by libtalloc.so alone).
-        if (!regularReadable("libtalloc.so.2")) {
-            return "Missing libtalloc.so.2 (required SONAME for proot) under $nativeLibDir. Rebuild APK."
         }
         if (!regularReadable("libandroid-shmem.so")) {
             RuntimeLogger.w("libandroid-shmem.so not found in $nativeLibDir (may still work)")
