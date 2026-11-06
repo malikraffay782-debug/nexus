@@ -24,6 +24,9 @@ class RuntimeCommandOutput {
 abstract class RuntimeFacade {
   Future<bool> isReady();
 
+  /// Cheap ready + python presence (no proot). Prefer this for tab open.
+  Future<({bool ready, bool hasPython})> probeStatus();
+
   Future<void> initialize({
     required void Function(String message, double? fraction) onProgress,
   });
@@ -43,6 +46,10 @@ class EmbeddedRuntimeFacade implements RuntimeFacade {
 
   @override
   Future<bool> isReady() => EmbeddedRuntime.isReady();
+
+  @override
+  Future<({bool ready, bool hasPython})> probeStatus() =>
+      EmbeddedRuntime.probeStatus();
 
   @override
   Future<void> initialize({

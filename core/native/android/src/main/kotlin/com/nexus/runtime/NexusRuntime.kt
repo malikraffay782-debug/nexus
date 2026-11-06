@@ -124,6 +124,20 @@ class NexusRuntime private constructor(context: Context) {
         }
     }
 
+    /** Filesystem-only; no proot. For UI status on every screen open. */
+    fun hasPythonBinary(): Boolean = bootstrapManager.hasPythonBinary()
+
+    /**
+     * Single cheap probe for UI: ready + python present, no process spawn.
+     */
+    fun probeStatus(): Map<String, Any> {
+        val ready = isReady
+        return mapOf(
+            "ready" to ready,
+            "hasPython" to if (ready) bootstrapManager.hasPythonBinary() else false
+        )
+    }
+
     fun hasBinary(name: String): Boolean {
         if (!name.matches(Regex("^[a-zA-Z0-9][a-zA-Z0-9._+-]*$"))) {
             return false

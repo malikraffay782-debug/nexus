@@ -82,18 +82,36 @@ class _RuntimeDebugScreenState extends ConsumerState<RuntimeDebugScreen> {
   // ---------- operations ----------
 
   Future<void> _checkStatus() async {
-    final ready = await _facade.isReady();
+    // probeStatus is filesystem-only (no proot). Second+ opens stay fast.
+    final probe = await _facade.probeStatus();
     if (!mounted) return;
     setState(() {
-      _ready = ready;
-      if (!ready) {
+      _ready = probe.ready;
+      if (!probe.ready) {
         _py = _Py.unknown;
+        _pythonVersion = null;
+      } else if (probe.hasPython) {
+        _py = _Py.ready;
+        // Keep last known version string if we already fetched it once;
+        // do not spawn proot just to refresh the label.
+        _pythonVersion ??= 'python3';
+      } else {
+        _py = _Py.missing;
         _pythonVersion = null;
       }
     });
-    if (ready) await _checkPython();
+    if (probe.ready) {
+      _append(
+        probe.hasPython
+            ? 'Runtime ready · python binary present'
+            : 'Runtime ready · python binary missing',
+      );
+    } else {
+      _append('Runtime not initialized');
+    }
   }
 
+  /// Optional: full proot python --version (slow). Only after install / explicit.
   Future<void> _checkPython() async {
     String? raw;
     try {

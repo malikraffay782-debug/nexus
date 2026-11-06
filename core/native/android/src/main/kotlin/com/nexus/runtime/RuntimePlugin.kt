@@ -153,6 +153,18 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 }
             }
 
+            // Cheap status for UI (no proot spawn). Use this on every tab open.
+            "probeStatus" -> {
+                onWorker(result, "probeStatus") {
+                    try {
+                        runtime.probeStatus()
+                    } catch (t: Throwable) {
+                        RuntimeLogger.e("probeStatus failed", t)
+                        mapOf("ready" to false, "hasPython" to false)
+                    }
+                }
+            }
+
             "runCommand" -> {
                 val command = call.argument<String>("command")
                 if (command.isNullOrBlank()) {

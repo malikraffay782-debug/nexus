@@ -44,30 +44,68 @@ class BootstrapManager(private val context: Context) {
     val prefixDir: File
         get() = File(runtimeRoot, PREFIX_DIR)
 
+    /**
+     * Process-lifetime cache. Once bootstrap is confirmed ready, skip repeated
+     * disk checks on every isReady() call (UI polls this often).
+     * Cleared only when we intentionally wipe / re-extract.
+     */
+    @Volatile
+    private var readyCached: Boolean = false
+
     val isReady: Boolean
-        get() = try {
-            val versionFile = File(runtimeRoot, VERSION_FILE)
-            if (!versionFile.exists()) return false
-            if (versionFile.readText().trim() != CURRENT_BOOTSTRAP_VERSION) return false
-
-            val binDir = File(prefixDir, "bin")
-            if (!binDir.isDirectory) return false
-
-            val mustExist = listOf(
-                File(prefixDir, "bin"),
-                File(prefixDir, "etc"),
-                File(prefixDir, "lib")
-            )
-            if (mustExist.any { !it.exists() }) return false
-
-            val sh = File(prefixDir, "bin/sh")
-            if (!sh.exists()) return false
-
-            true
-        } catch (t: Throwable) {
-            RuntimeLogger.e("isReady check failed", t)
-            false
+        get() {
+            if (readyCached) return true
+            return try {
+                val ok = computeIsReady()
+                if (ok) readyCached = true
+                ok
+            } catch (t: Throwable) {
+                RuntimeLogger.e("isReady check failed", t)
+                false
+            }
         }
+
+    private fun computeIsReady(): Boolean {
+        val versionFile = File(runtimeRoot, VERSION_FILE)
+        if (!versionFile.isFile) return false
+        if (versionFile.readText().trim() != CURRENT_BOOTSTRAP_VERSION) return false
+
+        val binDir = File(prefixDir, "bin")
+        if (!binDir.isDirectory) return false
+
+        // Lightweight structural checks only — no proot, no process spawn.
+        if (!File(prefixDir, "etc").exists()) return false
+        if (!File(prefixDir, "lib").exists()) return false
+        if (!File(prefixDir, "bin/sh").exists()) return false
+
+        return true
+    }
+
+    /**
+     * Cheap filesystem probe for python after pkg install.
+     * Does NOT spawn proot — safe to call on every Runtime tab open.
+     */
+    fun hasPythonBinary(): Boolean {
+        if (!isReady) return false
+        val candidates = listOf(
+            File(prefixDir, "bin/python3"),
+            File(prefixDir, "bin/python"),
+            File(prefixDir, "usr/bin/python3"),
+            File(prefixDir, "usr/bin/python")
+        )
+        return candidates.any { f ->
+            try {
+                // Follow symlink targets that live inside prefix
+                f.exists() && !f.isDirectory
+            } catch (_: Throwable) {
+                false
+            }
+        }
+    }
+
+    fun invalidateReadyCache() {
+        readyCached = false
+    }
 
     fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         return bootstrapLock.withLock {
@@ -98,6 +136,7 @@ class BootstrapManager(private val context: Context) {
 
                 if (prefixDir.exists()) {
                     onProgress?.invoke(15, "Cleaning old install...")
+                    readyCached = false
                     prefixDir.deleteRecursively()
                 }
                 prefixDir.mkdirs()
@@ -105,6 +144,7 @@ class BootstrapManager(private val context: Context) {
                 extractBootstrap(arch, onProgress)
                 createRequiredDirs()
                 writeVersionAtomic()
+                readyCached = true
 
                 onProgress?.invoke(100, "Done")
                 RuntimeLogger.i("Bootstrap extraction completed")
@@ -113,6 +153,7 @@ class BootstrapManager(private val context: Context) {
                 RuntimeLogger.e("Bootstrap failed", e)
                 // Remove partial extract so next attempt starts clean
                 try {
+                    readyCached = false
                     if (prefixDir.exists()) prefixDir.deleteRecursively()
                     File(runtimeRoot, VERSION_FILE).delete()
                 } catch (_: Exception) {}

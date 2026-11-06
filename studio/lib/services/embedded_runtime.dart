@@ -43,7 +43,7 @@ class EmbeddedRuntime {
     }
   }
 
-    static Future<bool> isReady() async {
+  static Future<bool> isReady() async {
     try {
       final raw = await _channel
           .invokeMethod<dynamic>('isReady')
@@ -54,6 +54,22 @@ class EmbeddedRuntime {
     } catch (_) {
       return false;
     }
+  }
+
+  /// Filesystem-only status. Does not start proot — use on every screen open.
+  static Future<({bool ready, bool hasPython})> probeStatus() async {
+    try {
+      final raw = await _channel
+          .invokeMethod<dynamic>('probeStatus')
+          .timeout(const Duration(seconds: 5));
+      if (raw is Map) {
+        return (
+          ready: raw['ready'] == true,
+          hasPython: raw['hasPython'] == true,
+        );
+      }
+    } catch (_) {}
+    return (ready: false, hasPython: false);
   }
 
   static Future<CommandResult> runCommand(
