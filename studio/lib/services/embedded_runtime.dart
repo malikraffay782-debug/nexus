@@ -57,7 +57,8 @@ class EmbeddedRuntime {
   }
 
   /// Filesystem-only status. Does not start proot — use on every screen open.
-  static Future<({bool ready, bool hasPython})> probeStatus() async {
+  /// [error] is set when the channel/native call fails (not the same as !ready).
+  static Future<({bool ready, bool hasPython, String? error})> probeStatus() async {
     try {
       final raw = await _channel
           .invokeMethod<dynamic>('probeStatus')
@@ -66,10 +67,13 @@ class EmbeddedRuntime {
         return (
           ready: raw['ready'] == true,
           hasPython: raw['hasPython'] == true,
+          error: null,
         );
       }
-    } catch (_) {}
-    return (ready: false, hasPython: false);
+      return (ready: false, hasPython: false, error: 'Unexpected probe response');
+    } catch (e) {
+      return (ready: false, hasPython: false, error: e.toString());
+    }
   }
 
   static Future<CommandResult> runCommand(

@@ -33,7 +33,7 @@ class BootstrapManager(private val context: Context) {
         private const val RUNTIME_DIR = "nexus-runtime"
         private const val PREFIX_DIR = "prefix"
         private const val VERSION_FILE = "version"
-        const val CURRENT_BOOTSTRAP_VERSION = "2026.10.1"
+        const val CURRENT_BOOTSTRAP_VERSION = "2026.11.01-r1"
 
         private val bootstrapLock = ReentrantLock()
     }
@@ -144,6 +144,20 @@ class BootstrapManager(private val context: Context) {
                 extractBootstrap(arch, onProgress)
                 createRequiredDirs()
                 writeVersionAtomic()
+
+                // Re-validate structure before advertising ready (cache must not
+                // hide a partial extract).
+                readyCached = false
+                if (!computeIsReady()) {
+                    val msg = "Bootstrap extract finished but runtime is incomplete (bin/sh or dirs missing)"
+                    RuntimeLogger.e(msg)
+                    try {
+                        if (prefixDir.exists()) prefixDir.deleteRecursively()
+                        File(runtimeRoot, VERSION_FILE).delete()
+                    } catch (_: Exception) {}
+                    onProgress?.invoke(0, msg)
+                    return@withLock Result.failure(IllegalStateException(msg))
+                }
                 readyCached = true
 
                 onProgress?.invoke(100, "Done")
@@ -162,19 +176,17 @@ class BootstrapManager(private val context: Context) {
         }
     }
 
-    private fun detectArch(): String {
+        private fun detectArch(): String {
         val abi = Build.SUPPORTED_ABIS.firstOrNull() ?: Build.CPU_ABI
-        return when {
-            abi.startsWith("arm64") || abi == "aarch64" -> "aarch64"
-            abi.startsWith("armeabi") || abi.startsWith("arm") -> "arm"
-            abi.startsWith("x86_64") -> "x86_64"
-            abi.startsWith("x86") -> "x86"
-            else -> {
-                RuntimeLogger.w("Unknown ABI '$abi', falling back to aarch64")
-                "aarch64"
-            }
+        // CI packages only aarch64 bootstrap + arm64-v8a jniLibs.
+        if (abi.startsWith("arm64") || abi == "aarch64") {
+            return "aarch64"
         }
+        throw IllegalStateException(
+            "Unsupported ABI '$abi'. This build only includes aarch64/arm64-v8a runtime."
+        )
     }
+
 
     private fun extractBootstrap(arch: String, onProgress: ((Int, String) -> Unit)?) {
         val assetName = "bootstrap/bootstrap-$arch.zip"

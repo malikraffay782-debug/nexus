@@ -85,6 +85,15 @@ class _RuntimeDebugScreenState extends ConsumerState<RuntimeDebugScreen> {
     // probeStatus is filesystem-only (no proot). Second+ opens stay fast.
     final probe = await _facade.probeStatus();
     if (!mounted) return;
+    if (probe.error != null) {
+      setState(() {
+        _ready = null;
+        _py = _Py.unknown;
+        _pythonVersion = null;
+      });
+      _append('Status check failed: ${probe.error}');
+      return;
+    }
     setState(() {
       _ready = probe.ready;
       if (!probe.ready) {

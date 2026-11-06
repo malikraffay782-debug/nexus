@@ -18,7 +18,8 @@ android {
         jvmTarget = "17"
     }
 
-    // Stable keystore so CI APKs install/update without signature mismatch
+    // Debug keystore is committed for CI/local debug installs only.
+    // Release must use private secrets (or explicitly opt into debug signing).
     signingConfigs {
         debug {
             storeFile file("../keystore/debug.keystore")
@@ -27,10 +28,16 @@ android {
             keyPassword "android"
         }
         release {
-            storeFile file("../keystore/debug.keystore")
-            storePassword "android"
-            keyAlias "androiddebugkey"
-            keyPassword "android"
+            def ksPath = System.getenv("NEXUS_RELEASE_STORE_FILE")
+            def ksPass = System.getenv("NEXUS_RELEASE_STORE_PASSWORD")
+            def keyAliasEnv = System.getenv("NEXUS_RELEASE_KEY_ALIAS")
+            def keyPass = System.getenv("NEXUS_RELEASE_KEY_PASSWORD")
+            if (ksPath != null && ksPass != null && keyAliasEnv != null && keyPass != null) {
+                storeFile file(ksPath)
+                storePassword ksPass
+                keyAlias keyAliasEnv
+                keyPassword keyPass
+            }
         }
     }
 
@@ -47,7 +54,13 @@ android {
             signingConfig = signingConfigs.debug
         }
         release {
-            signingConfig = signingConfigs.release
+            // Prefer real release secrets; allow debug keystore only when opted in.
+            if (System.getenv("NEXUS_RELEASE_STORE_FILE") != null) {
+                signingConfig = signingConfigs.release
+            } else if (System.getenv("NEXUS_ALLOW_DEBUG_RELEASE") == "true") {
+                signingConfig = signingConfigs.debug
+            }
+            // else: unsigned release — forces explicit choice before distribution
         }
     }
 

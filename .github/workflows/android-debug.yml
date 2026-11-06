@@ -63,13 +63,37 @@ jobs:
           ASSETS="studio/android/app/src/main/assets/bootstrap"
           JNI="studio/android/app/src/main/jniLibs/arm64-v8a"
           mkdir -p "$ASSETS" "$JNI"
+
+          # Pinned SHA-256 — refuse unexpected upstream changes.
+          BOOTSTRAP_SHA="5a1429b6c68ee3bdc17b5fd6e47ba42933ec924cd7283fe74992574e1d5badae"
+          PROOT_SHA="10a394b585c2fc2b2c8502544f4e5f1be581dc8bfff79e8ba62f16207423e030"
+          TALLOC_SHA="556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7"
+          SHMEM_SHA="0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6"
+
+          verify_sha() {
+            local file="$1" expect="$2"
+            local got
+            got=$(sha256sum "$file" | awk '{print $1}')
+            if [ "$got" != "$expect" ]; then
+              echo "SHA256 mismatch for $file" >&2
+              echo "  expected: $expect" >&2
+              echo "  got:      $got" >&2
+              exit 1
+            fi
+          }
+
           curl -fsSL -L -o "$ASSETS/bootstrap-aarch64.zip" \
             "https://github.com/termux/termux-packages/releases/download/${TAG}/bootstrap-aarch64.zip"
+          verify_sha "$ASSETS/bootstrap-aarch64.zip" "$BOOTSTRAP_SHA"
+
           BASE="https://packages.termux.dev/apt/termux-main"
           cd /tmp
           curl -fsSL -L -o proot.deb "$BASE/pool/main/p/proot/proot_5.1.107.102_aarch64.deb"
           curl -fsSL -L -o talloc.deb "$BASE/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb"
           curl -fsSL -L -o shmem.deb "$BASE/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb"
+          verify_sha proot.deb "$PROOT_SHA"
+          verify_sha talloc.deb "$TALLOC_SHA"
+          verify_sha shmem.deb "$SHMEM_SHA"
           rm -rf debroot && mkdir debroot && cd debroot
           for d in proot.deb talloc.deb shmem.deb; do
             ar x /tmp/$d
