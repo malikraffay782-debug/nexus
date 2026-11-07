@@ -58,6 +58,7 @@ class BootstrapManager(private val context: Context) {
             return try {
                 val ok = computeIsReady()
                 if (ok) readyCached = true
+                ensureTermuxPathLayout()
                 ok
             } catch (t: Throwable) {
                 RuntimeLogger.e("isReady check failed", t)
@@ -85,6 +86,46 @@ class BootstrapManager(private val context: Context) {
      * Cheap filesystem probe for python after pkg install.
      * Does NOT spawn proot — safe to call on every Runtime tab open.
      */
+    /**
+     * Termux packages expect PREFIX at /data/data/com.termux/files/usr.
+     * Under proot -r [prefixDir], create that path as a symlink to the rootfs root
+     * so $PREFIX/bin resolves to /bin without a recursive -b bind (which SIGSEGVs).
+     */
+    fun ensureTermuxPathLayout() {
+        val root = prefixDir
+        if (!root.isDirectory) return
+        // /data/data/com.termux/files/usr -> /
+        val filesDir = File(root, "data/data/com.termux/files")
+        filesDir.mkdirs()
+        val usrLink = File(filesDir, "usr")
+        if (!usrLink.exists()) {
+            try {
+                Os.symlink("/", usrLink.absolutePath)
+            } catch (e: Throwable) {
+                // Fallback: relative climb from data/data/com.termux/files/usr up to root
+                try {
+                    Os.symlink("../../../../", usrLink.absolutePath)
+                } catch (e2: Throwable) {
+                    RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e2.message}")
+                }
+            }
+        }
+        val homeLinkParent = File(root, "data/data/com.termux/files")
+        val homeLink = File(homeLinkParent, "home")
+        if (!homeLink.exists()) {
+            val homeTarget = File(runtimeRoot, "home")
+            homeTarget.mkdirs()
+            try {
+                // Point guest home at runtime home via bind preferably; symlink as fallback path
+                Os.symlink("/home", homeLink.absolutePath)
+            } catch (_: Throwable) {
+                // ignore
+            }
+        }
+        File(root, "tmp").mkdirs()
+        File(root, "var/tmp").mkdirs()
+    }
+
     fun hasPythonBinary(): Boolean {
         if (!isReady) return false
         val candidates = listOf(

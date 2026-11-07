@@ -67,15 +67,37 @@ class PackageManager(
             if (result.timedOut) outputs.append("[timed out]\n")
         }
 
+        // Prove proot+shell works before touching apt (exit 139 = segfault).
+        val probe = runLocked(
+            "echo NEXUS_OK; uname -a; command -v pkg; command -v apt-get; ls -la \"$PREFIX/bin\" 2>&1 | head -n 20",
+            30
+        )
+        appendResult("runtime probe", probe)
+        if (probe.exitCode != 0 || !probe.stdout.contains("NEXUS_OK")) {
+            val detail = listOf(probe.stdout, probe.stderr)
+                .filter { it.isNotBlank() }
+                .joinToString("\n")
+                .ifBlank { "runtime probe failed (exit ${probe.exitCode})" }
+            return InstallResult(
+                success = false,
+                output = outputs.toString(),
+                error = detail +
+                    "\n\nHint: exit 139 is SIGSEGV inside proot. Reinstall the latest APK. " +
+                    "Other codes: shell/path layout problem."
+            )
+        }
+
         // Refresh indexes first — without this, pkg install often fails on fresh bootstrap.
         val update = runLocked(
             """
-            set -e
             export DEBIAN_FRONTEND=noninteractive
             if command -v pkg >/dev/null 2>&1; then
               pkg update -y
-            else
+            elif command -v apt-get >/dev/null 2>&1; then
               apt-get update -y
+            else
+              echo "Neither pkg nor apt-get found in PATH=$PATH PREFIX=$PREFIX" >&2
+              exit 127
             fi
             """.trimIndent(),
             180
@@ -86,11 +108,14 @@ class PackageManager(
                 .filter { it.isNotBlank() }
                 .joinToString("\n")
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
+            val hint = when (update.exitCode) {
+                139, -11 -> "\n\nHint: exit 139 = crash (SIGSEGV) in proot/pkg. Not a network error."
+                else -> "\n\nHint: if you see connection/DNS errors, enable network permission and retry."
+            }
             return InstallResult(
                 success = false,
                 output = outputs.toString(),
-                error = detail +
-                    "\n\nHint: device needs network access so the runtime can reach packages.termux.dev"
+                error = detail + hint
             )
         }
 
@@ -98,7 +123,6 @@ class PackageManager(
         for (batch in deduped.chunked(batchSize)) {
             val quoted = batch.joinToString(" ") { shellQuote(it) }
             val cmd = """
-                set -e
                 export DEBIAN_FRONTEND=noninteractive
                 if command -v pkg >/dev/null 2>&1; then
                   pkg install -y $quoted
