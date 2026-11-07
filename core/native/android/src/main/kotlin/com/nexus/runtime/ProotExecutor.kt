@@ -131,28 +131,30 @@ class ProotExecutor(
         val runtimeRoot = File(bootstrapManager.getRuntimeRootPath()).canonicalFile
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
 
-        val prootCandidates = listOf(
-            File(nativeLibDir, "libproot.so"),
-            File(nativeLibDir, "proot"),
-            File(prefix, "bin/proot"),
-            File(prefix, "usr/bin/proot")
-        )
-        val actualProotFile = prootCandidates.firstOrNull { it.exists() && it.canExecute() }
-            ?: return CommandResult(-1, "", "proot binary not found or not executable", false)
+        val hostLibDir = try {
+            prepareHostTools(nativeLibDir)
+        } catch (e: Exception) {
+            return CommandResult(-1, "", "Host proot prepare failed: ${e.message}", false)
+        }
+        val actualProotFile = File(hostLibDir, "libproot.so")
+        val actualProot = if (actualProotFile.isFile) {
+            actualProotFile.absolutePath
+        } else {
+            File(nativeLibDir, "libproot.so").absolutePath
+        }
+        val loaderFile = File(hostLibDir, "libproot-loader.so").let {
+            if (it.isFile) it else File(nativeLibDir, "libproot-loader.so")
+        }
+        val loaderPath = loaderFile.absolutePath
 
-        val actualProot = actualProotFile.absolutePath
-        val loaderPath = File(nativeLibDir, "libproot-loader.so").absolutePath
-
-        // Fail fast with a clear message if required native deps are missing.
-        // Avoids repeated cryptic "CANNOT LINK EXECUTABLE ... libtalloc.so.2" on device.
         val missingNative = missingNativeDeps(nativeLibDir)
         if (missingNative != null) {
             return CommandResult(-1, "", missingNative, false)
         }
+        if (!loaderFile.isFile) {
+            return CommandResult(-1, "", "libproot-loader.so missing", false)
+        }
 
-        // Termux tools hardcode PREFIX=/data/data/com.termux/files/usr.
-        // Do NOT bind -r root onto that path (proot often SIGSEGV / exit 139).
-        // Instead BootstrapManager ensures a symlink tree inside the rootfs.
         val termuxPrefix = "/data/data/com.termux/files/usr"
         val termuxHome = "/data/data/com.termux/files/home"
         File(runtimeRoot, "tmp").mkdirs()
@@ -167,7 +169,6 @@ class ProotExecutor(
         } catch (e: Exception) {
             RuntimeLogger.w("Could not write resolv.conf: ${e.message}")
         }
-        // Keep Termux path symlinks fresh (cheap if already present).
         val layoutOk = try {
             bootstrapManager.ensureTermuxPathLayout()
         } catch (e: Exception) {
@@ -176,48 +177,37 @@ class ProotExecutor(
         }
         if (!layoutOk) {
             return CommandResult(
-                -1,
-                "",
+                -1, "",
                 "Runtime path layout incomplete (Termux PREFIX symlink). Re-run Initialize or reinstall APK.",
                 false
             )
         }
 
+        // Do NOT clear the process environment — OEM linkers on low-end devices
+        // can SIGSEGV when required Android env vars disappear.
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
-        // Guest-side Termux variables only — never host absolute paths.
+        env["PROOT_NO_SECCOMP"] = "1"
         env["PREFIX"] = termuxPrefix
         env["HOME"] = termuxHome
-        env["TMPDIR"] = "$termuxPrefix/tmp"
-        env["PATH"] = "$termuxPrefix/bin"
-        // Only host native lib dir: required so the proot *host* binary finds libtalloc.
-        // Putting guest paths here made some devices SIGSEGV inside pkg (exit 139).
-        env["LD_LIBRARY_PATH"] = nativeLibDir
+        env["TMPDIR"] = "/tmp"
+        env["PATH"] = "$termuxPrefix/bin:/bin:/usr/bin"
+        env["LD_LIBRARY_PATH"] = hostLibDir.absolutePath
         env["TERM"] = "xterm-256color"
-        env["LANG"] = "en_US.UTF-8"
+        env["LANG"] = "C.UTF-8"
 
+        // Minimal binds only — /sys /system /apex crash proot on some Vivo/MTK devices.
         val prootArgs = mutableListOf(
-            actualProot, "-0",
+            actualProot,
+            "--link2symlink",
+            "-0",
             "-r", prefix.absolutePath,
             "-b", "/dev",
             "-b", "/proc",
-            "-b", "/sys",
-            // Optional Android trees — ignore if missing on device
-        )
-        for (host in listOf("/system", "/apex", "/vendor")) {
-            if (File(host).exists()) {
-                prootArgs.add("-b")
-                prootArgs.add(host)
-            }
-        }
-        prootArgs.addAll(
-            listOf(
-                "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
-                "-b", "${runtimeRoot.absolutePath}/tmp:$termuxPrefix/tmp",
-                "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
-                "-b", "${runtimeRoot.absolutePath}/home:/home",
-            )
+            "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
+            "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
+            "-b", "${runtimeRoot.absolutePath}/home:/home",
         )
         // Project bind etc. before -w / program
         prootArgs.addAll(extraProotArgs)
@@ -238,8 +228,9 @@ class ProotExecutor(
 
         try {
             val pb = ProcessBuilder(prootArgs)
-            pb.environment().clear()
-            pb.environment().putAll(env)
+            // Merge, do not clear — preserve Android linker-related env on low-end OEMs.
+            val pbEnv = pb.environment()
+            pbEnv.putAll(env)
             pb.redirectErrorStream(false)
             stopRequested = false
             process = pb.start()
@@ -277,6 +268,14 @@ class ProotExecutor(
             if (errText.contains("CANNOT LINK EXECUTABLE") || (errText.contains("library \"") && errText.contains("not found"))) {
                 errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
                     "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
+            }
+
+
+            if (exitCode == 139 || exitCode == -11) {
+                errText = (errText + "\n\n[proot SIGSEGV] host=" + actualProot +
+                    " loader=" + loaderPath +
+                    " rootfs=" + prefix.absolutePath +
+                    " ld=" + hostLibDir.absolutePath).trim()
             }
 
             val stopped = stopRequested && !timedOut
@@ -339,6 +338,43 @@ class ProotExecutor(
      * Android only extracts lib*.so (not libfoo.so.2). CI patchelf's proot so
      * DT_NEEDED is libtalloc.so.
      */
+    /**
+     * Copy proot + deps into app filesDir and chmod +x.
+     * Some OEMs (Vivo/MediaTek) crash or block executing directly from nativeLibraryDir.
+     */
+    private fun prepareHostTools(nativeLibDir: String): File {
+        val outDir = File(context.filesDir, "nexus-runtime/host-lib")
+        if (!outDir.exists()) outDir.mkdirs()
+        val names = listOf(
+            "libproot.so",
+            "libproot-loader.so",
+            "libproot-loader32.so",
+            "libtalloc.so",
+            "libandroid-shmem.so",
+        )
+        for (name in names) {
+            val src = File(nativeLibDir, name)
+            if (!src.isFile) continue
+            val dst = File(outDir, name)
+            val needsCopy = !dst.isFile || dst.length() != src.length() ||
+                dst.lastModified() < src.lastModified()
+            if (needsCopy) {
+                src.inputStream().use { input ->
+                    dst.outputStream().use { output -> input.copyTo(output) }
+                }
+            }
+            try {
+                dst.setReadable(true)
+                dst.setExecutable(true)
+            } catch (_: Exception) {}
+        }
+        val proot = File(outDir, "libproot.so")
+        if (!proot.isFile) {
+            throw IllegalStateException("libproot.so missing after host-lib prepare under $outDir")
+        }
+        return outDir
+    }
+
     private fun missingNativeDeps(nativeLibDir: String): String? {
         val dir = File(nativeLibDir)
         fun regularReadable(name: String): Boolean {

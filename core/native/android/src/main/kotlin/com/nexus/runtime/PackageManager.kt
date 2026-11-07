@@ -69,8 +69,8 @@ class PackageManager(
 
         // Prove proot+shell works before touching apt (exit 139 = segfault).
         val probe = runLocked(
-            // ${'$'} keeps shell $PREFIX / $PATH from being treated as Kotlin refs
-            "echo NEXUS_OK; uname -a; command -v pkg; command -v apt-get; ls -la \"${'$'}PREFIX/bin\" 2>&1 | head -n 20",
+            // Keep probe minimal: a SIGSEGV here is proot itself, not apt/network.
+            "echo NEXUS_OK",
             30
         )
         appendResult("runtime probe", probe)
