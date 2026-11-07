@@ -1,6 +1,11 @@
 #!/usr/bin/env bash
 # Prepare Termux bootstrap asset + Android-legal jniLibs for Nexus Studio.
 # Intended for CI (and local reproducible builds).
+#
+# CRITICAL: We use green-green-avk static proot (talloc linked in), NOT the
+# Termux dynamically-linked proot. Termux proot + libtalloc crashes with
+# SIGSEGV (exit 139) on several Vivo / MediaTek devices even after RPATH
+# cleanup. Static proot only needs system libc/libdl.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
@@ -9,12 +14,10 @@ cd "$ROOT"
 TAG="${TARGET_TAG:-bootstrap-2026.11.01-r1+apt.android-7}"
 ASSETS="studio/android/app/src/main/assets/bootstrap"
 JNI="studio/android/app/src/main/jniLibs/arm64-v8a"
-BASE="https://packages.termux.dev/apt/termux-main"
 
 BOOTSTRAP_SHA="${BOOTSTRAP_SHA:-5a1429b6c68ee3bdc17b5fd6e47ba42933ec924cd7283fe74992574e1d5badae}"
-PROOT_SHA="${PROOT_SHA:-10a394b585c2fc2b2c8502544f4e5f1be581dc8bfff79e8ba62f16207423e030}"
-TALLOC_SHA="${TALLOC_SHA:-556591f43bb773ad8777e1a29522640866a55f95dab71914418b94a8c58ad5a7}"
-SHMEM_SHA="${SHMEM_SHA:-0da3a24d558b93c92bcf8d611e0826a99ff96e396b148e6cdf33b47c47c57ff6}"
+# green-green-avk static proot aarch64 package (content may change; we verify structure)
+STATIC_PROOT_URL="${STATIC_PROOT_URL:-https://github.com/green-green-avk/build-proot-android/raw/master/packages/proot-android-aarch64.tar.gz}"
 
 verify_sha() {
   local file="$1" expect="$2"
@@ -35,93 +38,59 @@ mkdir -p "$ASSETS" "$JNI"
 # Fresh jniLibs: keep only README (docs), remove previous .so so stale ELF never ships
 find "$JNI" -type f \( -name '*.so' -o -name '*.so.*' \) -delete
 
-echo "==> Download bootstrap"
+echo "==> Download Termux bootstrap (rootfs)"
 curl -fsSL -L -o "$ASSETS/bootstrap-aarch64.zip" \
   "https://github.com/termux/termux-packages/releases/download/${TAG}/bootstrap-aarch64.zip"
 verify_sha "$ASSETS/bootstrap-aarch64.zip" "$BOOTSTRAP_SHA"
 
-echo "==> Download proot + deps (.deb)"
+echo "==> Download static Android proot (green-green-avk, talloc linked in)"
 WORKDIR="$(mktemp -d)"
 trap 'rm -rf "$WORKDIR"' EXIT
 cd "$WORKDIR"
-curl -fsSL -L -o proot.deb  "$BASE/pool/main/p/proot/proot_5.1.107.102_aarch64.deb"
-curl -fsSL -L -o talloc.deb "$BASE/pool/main/libt/libtalloc/libtalloc_2.5.0_aarch64.deb"
-curl -fsSL -L -o shmem.deb  "$BASE/pool/main/liba/libandroid-shmem/libandroid-shmem_0.7_aarch64.deb"
-verify_sha proot.deb  "$PROOT_SHA"
-verify_sha talloc.deb "$TALLOC_SHA"
-verify_sha shmem.deb  "$SHMEM_SHA"
+curl -fsSL -L -o proot-android-aarch64.tar.gz "$STATIC_PROOT_URL"
+tar xzf proot-android-aarch64.tar.gz
+test -x root/bin/proot
+test -f root/libexec/proot/loader
 
-echo "==> Extract debs"
-mkdir debroot && cd debroot
-for d in proot.deb talloc.deb shmem.deb; do
-  ar x "../$d"
-  tar xf data.tar.* 2>/dev/null || true
-  rm -f data.tar.* control.tar.* debian-binary
-done
-USR="data/data/com.termux/files/usr"
-test -x "$USR/bin/proot"
-test -f "$USR/libexec/proot/loader"
-test -f "$USR/lib/libtalloc.so.2.5.0"
-test -f "$USR/lib/libandroid-shmem.so"
-
-echo "==> Install Android-legal jni names only (lib*.so)"
-cp -f "$USR/bin/proot"              "$ROOT/$JNI/libproot.so"
-cp -f "$USR/libexec/proot/loader"   "$ROOT/$JNI/libproot-loader.so"
-# 32-bit loader if present (some proot builds ship it)
-if [ -f "$USR/libexec/proot/loader32" ]; then
-  cp -f "$USR/libexec/proot/loader32" "$ROOT/$JNI/libproot-loader32.so"
+echo "==> Install Android-legal jni names (lib*.so only)"
+cp -f root/bin/proot                 "$ROOT/$JNI/libproot.so"
+cp -f root/libexec/proot/loader      "$ROOT/$JNI/libproot-loader.so"
+if [ -f root/libexec/proot/loader32 ]; then
+  cp -f root/libexec/proot/loader32  "$ROOT/$JNI/libproot-loader32.so"
 fi
-cp -f "$USR/lib/libandroid-shmem.so" "$ROOT/$JNI/libandroid-shmem.so"
-cp -f "$USR/lib/libtalloc.so.2.5.0"  "$ROOT/$JNI/libtalloc.so"
-chmod 755 "$ROOT/$JNI"/lib*.so
+# Optional userland variant (kept as extra, not required at runtime)
+if [ -x root/bin/proot-userland ]; then
+  cp -f root/bin/proot-userland      "$ROOT/$JNI/libproot-userland.so"
+fi
+chmod 755 "$ROOT/$JNI"/libproot*.so
 
-echo "==> patchelf: Android-legal sonames + \$ORIGIN rpath (critical for Vivo/MTK)"
+echo "==> Verify static proot has no libtalloc dependency"
 if ! command -v patchelf >/dev/null 2>&1; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq patchelf
 fi
-
-# 1. libtalloc.so.2 → libtalloc.so  (Android only extracts plain lib*.so)
-# 2. Kill the Termux absolute RUNPATH. It points at a path that does not exist
-#    inside our app process and causes SIGSEGV on several MediaTek / Vivo kernels
-#    when the linker + proot loader interact with it.
-# 3. Set RPATH=\$ORIGIN so sibling libs in nativeLibraryDir are found reliably.
-for bin in libproot.so libproot-loader.so libproot-loader32.so; do
-  f="$ROOT/$JNI/$bin"
-  [ -f "$f" ] || continue
-  if patchelf --print-needed "$f" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
-    patchelf --replace-needed libtalloc.so.2 libtalloc.so "$f"
-  fi
-  # Prefer $ORIGIN so sibling jniLibs resolve; fall back to remove-rpath.
-  if ! patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null; then
-    patchelf --remove-rpath "$f" 2>/dev/null || true
-  fi
-done
-# Loader is a tiny stub; make sure it is executable in the APK tree.
-chmod 755 "$ROOT/$JNI"/libproot*.so "$ROOT/$JNI"/libtalloc.so "$ROOT/$JNI"/libandroid-shmem.so 2>/dev/null || true
-
-echo "==> Verify ELF deps + rpath"
-NEEDED="$(patchelf --print-needed "$ROOT/$JNI/libproot.so")"
-echo "NEEDED: $NEEDED"
-if echo "$NEEDED" | grep -q 'libtalloc\.so\.2'; then
-  echo "ERROR: proot still needs libtalloc.so.2" >&2
+NEEDED="$(patchelf --print-needed "$ROOT/$JNI/libproot.so" 2>/dev/null || true)"
+echo "NEEDED: ${NEEDED:-(none)}"
+if echo "$NEEDED" | grep -qE 'talloc|android-shmem'; then
+  echo "ERROR: static proot unexpectedly needs talloc/shmem — wrong binary?" >&2
   exit 1
 fi
-echo "$NEEDED" | grep -q 'libtalloc\.so' || {
-  echo "ERROR: proot does not list libtalloc.so after patchelf" >&2
-  exit 1
-}
+# Only system libs are allowed
+for lib in $NEEDED; do
+  case "$lib" in
+    libc.so|libdl.so|libm.so|liblog.so|ld-android.so|libstdc++.so*) ;;
+    *)
+      echo "WARN: unexpected NEEDED entry: $lib" >&2
+      ;;
+  esac
+done
 RPATH="$(patchelf --print-rpath "$ROOT/$JNI/libproot.so" 2>/dev/null || true)"
-echo "RPATH:  ${RPATH:-(empty)}"
+echo "RPATH: ${RPATH:-(empty)}"
 if echo "$RPATH" | grep -q '/data/data/com.termux'; then
-  echo "ERROR: Termux absolute RUNPATH still present — this crashes on Vivo/MTK" >&2
+  echo "ERROR: Termux absolute RUNPATH present" >&2
   exit 1
 fi
 
 echo "==> Final jniLibs"
 ls -lh "$ROOT/$JNI"
-# Extra safety: show final dynamic section for the main binary
-patchelf --print-needed "$ROOT/$JNI/libproot.so" || true
-patchelf --print-rpath  "$ROOT/$JNI/libproot.so" 2>/dev/null || true
-
-echo "==> Runtime prepare done"
+echo "==> Runtime prepare done (static proot)"

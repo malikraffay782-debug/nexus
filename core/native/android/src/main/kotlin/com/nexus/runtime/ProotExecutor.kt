@@ -154,8 +154,8 @@ class ProotExecutor(
         } catch (_: Exception) {}
         val loaderPath = loaderFile.absolutePath
 
-        // Ensure sibling deps are readable for the dynamic linker
-        for (name in listOf("libtalloc.so", "libandroid-shmem.so", "libproot-loader32.so")) {
+        // Optional extras — make readable if present
+        for (name in listOf("libproot-loader32.so", "libproot-userland.so")) {
             val f = File(nativeDir, name)
             if (f.isFile) {
                 try {
@@ -170,11 +170,8 @@ class ProotExecutor(
             return CommandResult(-1, "", missingNative, false)
         }
 
-        // Staging dir for versioned soname symlinks (libtalloc.so.2 -> real lib).
-        // Android will not extract lib*.so.2 from the APK; some OEM linkers still
-        // look for the versioned name even after patchelf. Symlinks live in
-        // filesDir (readable, not executable — fine for shared libs).
-        val hostLibDir = ensureHostLibStaging(nativeDir, runtimeRoot)
+        // host-lib kept for diagnostics; static proot needs no talloc staging
+        val hostLibDir = File(runtimeRoot, "host-lib").also { it.mkdirs() }
 
         val termuxPrefix = "/data/data/com.termux/files/usr"
         val termuxHome = "/data/data/com.termux/files/home"
@@ -214,11 +211,9 @@ class ProotExecutor(
             )
         }
 
-        // Do NOT clear the process environment — OEM linkers on low-end devices
-        // can SIGSEGV when required Android env vars disappear.
-        val ldPath = listOf(hostLibDir.absolutePath, nativeLibDir)
-            .distinct()
-            .joinToString(":")
+        // Static proot (green-green-avk) only needs system libc/libdl.
+        // Green-green-avk start scripts UNSET LD_LIBRARY_PATH — keep it empty
+        // so OEM linkers don't chase missing Termux paths.
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
@@ -227,11 +222,12 @@ class ProotExecutor(
         env["HOME"] = termuxHome
         env["TMPDIR"] = "/tmp"
         env["PATH"] = "$termuxPrefix/bin:/bin:/usr/bin"
-        env["LD_LIBRARY_PATH"] = ldPath
         env["TERM"] = "xterm-256color"
         env["LANG"] = "C.UTF-8"
-        // Empty LD_PRELOAD avoids inheriting app-level preloads that crash proot.
         env["LD_PRELOAD"] = ""
+        // Explicitly clear — do not inherit app LD_LIBRARY_PATH
+        env["LD_LIBRARY_PATH"] = ""
+        val ldPath = "(cleared)"
 
         // Minimal binds. Avoid /sys /system /apex — they SIGSEGV on some Vivo/MTK.
         // -0 (fake root) is required by many Termux packages; if the first probe
@@ -283,7 +279,7 @@ class ProotExecutor(
             (errText.contains("library \"") && errText.contains("not found"))
         ) {
             errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
-                "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
+                "Rebuild APK with static proot (green-green-avk) and reinstall after uninstall."
         }
         if (last.exitCode == 139 || last.exitCode == -11) {
             errText = (errText + "\n\n[proot SIGSEGV] host=" + actualProot +
@@ -453,10 +449,10 @@ class ProotExecutor(
 
     /**
      * Packaging contract (APK jniLibs/arm64-v8a):
-     *   libproot.so, libproot-loader.so, libtalloc.so, libandroid-shmem.so
+     *   libproot.so, libproot-loader.so
      *
-     * Android only extracts lib*.so (not libfoo.so.2). CI patchelf's proot so
-     * DT_NEEDED is libtalloc.so.
+     * We ship green-green-avk static proot (talloc linked in). No libtalloc.so
+     * required — that dynamic dependency caused SIGSEGV on Vivo/MTK devices.
      */
     private fun missingNativeDeps(nativeLibDir: String): String? {
         val dir = File(nativeLibDir)
@@ -464,13 +460,10 @@ class ProotExecutor(
             val f = File(dir, name)
             return f.isFile && f.canRead()
         }
-        for (name in listOf("libproot.so", "libproot-loader.so", "libtalloc.so")) {
+        for (name in listOf("libproot.so", "libproot-loader.so")) {
             if (!regularReadable(name)) {
-                return "Missing native library: $name under $nativeLibDir. Rebuild APK with jniLibs."
+                return "Missing native library: $name under $nativeLibDir. Rebuild APK with static proot jniLibs."
             }
-        }
-        if (!regularReadable("libandroid-shmem.so")) {
-            RuntimeLogger.w("libandroid-shmem.so not found in $nativeLibDir (may still work)")
         }
         return null
     }
