@@ -131,28 +131,43 @@ class ProotExecutor(
         val runtimeRoot = File(bootstrapManager.getRuntimeRootPath()).canonicalFile
         val nativeLibDir = context.applicationInfo.nativeLibraryDir
 
-        val hostLibDir = try {
-            prepareHostTools(nativeLibDir)
-        } catch (e: Exception) {
-            return CommandResult(-1, "", "Host proot prepare failed: ${e.message}", false)
+        // Android 10+ W^X: cannot exec from filesDir (error=13). Always run from
+        // nativeLibraryDir where the system extracted jniLibs (extractNativeLibs=true).
+        val nativeDir = File(nativeLibDir)
+        val actualProotFile = File(nativeDir, "libproot.so")
+        if (!actualProotFile.isFile) {
+            return CommandResult(-1, "", "libproot.so not found under $nativeLibDir", false)
         }
-        val actualProotFile = File(hostLibDir, "libproot.so")
-        val actualProot = if (actualProotFile.isFile) {
-            actualProotFile.absolutePath
-        } else {
-            File(nativeLibDir, "libproot.so").absolutePath
+        try {
+            actualProotFile.setReadable(true)
+            actualProotFile.setExecutable(true)
+        } catch (_: Exception) {}
+        val actualProot = actualProotFile.absolutePath
+
+        val loaderFile = File(nativeDir, "libproot-loader.so")
+        if (!loaderFile.isFile) {
+            return CommandResult(-1, "", "libproot-loader.so not found under $nativeLibDir", false)
         }
-        val loaderFile = File(hostLibDir, "libproot-loader.so").let {
-            if (it.isFile) it else File(nativeLibDir, "libproot-loader.so")
-        }
+        try {
+            loaderFile.setReadable(true)
+            loaderFile.setExecutable(true)
+        } catch (_: Exception) {}
         val loaderPath = loaderFile.absolutePath
+
+        // Ensure sibling deps are readable for the dynamic linker
+        for (name in listOf("libtalloc.so", "libandroid-shmem.so", "libproot-loader32.so")) {
+            val f = File(nativeDir, name)
+            if (f.isFile) {
+                try {
+                    f.setReadable(true)
+                    f.setExecutable(true)
+                } catch (_: Exception) {}
+            }
+        }
 
         val missingNative = missingNativeDeps(nativeLibDir)
         if (missingNative != null) {
             return CommandResult(-1, "", missingNative, false)
-        }
-        if (!loaderFile.isFile) {
-            return CommandResult(-1, "", "libproot-loader.so missing", false)
         }
 
         val termuxPrefix = "/data/data/com.termux/files/usr"
@@ -193,7 +208,7 @@ class ProotExecutor(
         env["HOME"] = termuxHome
         env["TMPDIR"] = "/tmp"
         env["PATH"] = "$termuxPrefix/bin:/bin:/usr/bin"
-        env["LD_LIBRARY_PATH"] = hostLibDir.absolutePath
+        env["LD_LIBRARY_PATH"] = nativeLibDir
         env["TERM"] = "xterm-256color"
         env["LANG"] = "C.UTF-8"
 
@@ -275,7 +290,7 @@ class ProotExecutor(
                 errText = (errText + "\n\n[proot SIGSEGV] host=" + actualProot +
                     " loader=" + loaderPath +
                     " rootfs=" + prefix.absolutePath +
-                    " ld=" + hostLibDir.absolutePath).trim()
+                    " ld=" + nativeLibDir).trim()
             }
 
             val stopped = stopRequested && !timedOut
@@ -338,43 +353,6 @@ class ProotExecutor(
      * Android only extracts lib*.so (not libfoo.so.2). CI patchelf's proot so
      * DT_NEEDED is libtalloc.so.
      */
-    /**
-     * Copy proot + deps into app filesDir and chmod +x.
-     * Some OEMs (Vivo/MediaTek) crash or block executing directly from nativeLibraryDir.
-     */
-    private fun prepareHostTools(nativeLibDir: String): File {
-        val outDir = File(context.filesDir, "nexus-runtime/host-lib")
-        if (!outDir.exists()) outDir.mkdirs()
-        val names = listOf(
-            "libproot.so",
-            "libproot-loader.so",
-            "libproot-loader32.so",
-            "libtalloc.so",
-            "libandroid-shmem.so",
-        )
-        for (name in names) {
-            val src = File(nativeLibDir, name)
-            if (!src.isFile) continue
-            val dst = File(outDir, name)
-            val needsCopy = !dst.isFile || dst.length() != src.length() ||
-                dst.lastModified() < src.lastModified()
-            if (needsCopy) {
-                src.inputStream().use { input ->
-                    dst.outputStream().use { output -> input.copyTo(output) }
-                }
-            }
-            try {
-                dst.setReadable(true)
-                dst.setExecutable(true)
-            } catch (_: Exception) {}
-        }
-        val proot = File(outDir, "libproot.so")
-        if (!proot.isFile) {
-            throw IllegalStateException("libproot.so missing after host-lib prepare under $outDir")
-        }
-        return outDir
-    }
-
     private fun missingNativeDeps(nativeLibDir: String): String? {
         val dir = File(nativeLibDir)
         fun regularReadable(name: String): Boolean {

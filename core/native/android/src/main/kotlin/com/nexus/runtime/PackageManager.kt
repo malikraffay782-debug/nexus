@@ -83,8 +83,9 @@ class PackageManager(
                 success = false,
                 output = outputs.toString(),
                 error = detail +
-                    "\n\nHint: exit 139 is SIGSEGV inside proot. Reinstall the latest APK. " +
-                    "Other codes: shell/path layout problem."
+                    "\n\nHint: Permission denied (error=13) means the binary cannot be executed " +
+                    "from that path (Android W^X). SIGSEGV (139) is a proot crash. " +
+                    "Install the latest APK that runs proot from nativeLibraryDir."
             )
         }
 
