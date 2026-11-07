@@ -33,13 +33,13 @@ class RunSessionController extends ChangeNotifier {
         case RuntimeReadiness.notReady:
           _fail(
             gen,
-            'Runtime ready nahi hai. Runtime tab → Initialize karo.',
+            'Runtime is not ready. Open the Runtime tab and tap Initialize.',
           );
           return;
         case RuntimeReadiness.noPython:
           _fail(
             gen,
-            'Python install nahi hai. Runtime tab → Install Python karo.',
+            'Python is not installed. Open the Runtime tab and tap Install Python.',
           );
           return;
         case RuntimeReadiness.ready:
@@ -56,7 +56,7 @@ class RunSessionController extends ChangeNotifier {
       _finish(gen, result, started);
     } catch (e) {
       if (_isCurrent(gen)) {
-        _fail(gen, 'Run start nahi hua. $e');
+        _fail(gen, 'Could not start run. $e');
       }
     } finally {
       _launching = false;
@@ -126,7 +126,7 @@ class RunSessionController extends ChangeNotifier {
       message = r.error;
     } else if (r.exitCode == 127) {
       phase = RunPhase.failed;
-      message = 'python3 nahi mila. Runtime tab → Install Python.';
+      message = 'python3 not found. Open the Runtime tab → Install Python.';
     } else if (r.exitCode != 0) {
       phase = RunPhase.failed;
       message = 'Exit code ${r.exitCode}';

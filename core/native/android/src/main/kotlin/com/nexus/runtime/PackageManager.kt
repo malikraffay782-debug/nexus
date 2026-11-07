@@ -58,24 +58,65 @@ class PackageManager(
             }
         }
 
-        val batchSize = 8
         val outputs = StringBuilder()
+
+        fun appendResult(label: String, result: ProotExecutor.CommandResult) {
+            outputs.append("—— ").append(label).append(" ——\n")
+            if (result.stdout.isNotBlank()) outputs.append(result.stdout).append('\n')
+            if (result.stderr.isNotBlank()) outputs.append(result.stderr).append('\n')
+            if (result.timedOut) outputs.append("[timed out]\n")
+        }
+
+        // Refresh indexes first — without this, pkg install often fails on fresh bootstrap.
+        val update = runLocked(
+            """
+            set -e
+            export DEBIAN_FRONTEND=noninteractive
+            if command -v pkg >/dev/null 2>&1; then
+              pkg update -y
+            else
+              apt-get update -y
+            fi
+            """.trimIndent(),
+            180
+        )
+        appendResult("pkg update", update)
+        if (update.exitCode != 0) {
+            val detail = listOf(update.stdout, update.stderr)
+                .filter { it.isNotBlank() }
+                .joinToString("\n")
+                .ifBlank { "pkg update failed (exit ${update.exitCode})" }
+            return InstallResult(
+                success = false,
+                output = outputs.toString(),
+                error = detail +
+                    "\n\nHint: device needs network access so the runtime can reach packages.termux.dev"
+            )
+        }
+
+        val batchSize = 8
         for (batch in deduped.chunked(batchSize)) {
             val quoted = batch.joinToString(" ") { shellQuote(it) }
             val cmd = """
+                set -e
+                export DEBIAN_FRONTEND=noninteractive
                 if command -v pkg >/dev/null 2>&1; then
-                    pkg install -y $quoted
+                  pkg install -y $quoted
                 else
-                    apt-get install -y $quoted
+                  apt-get install -y $quoted
                 fi
             """.trimIndent()
             val result = runLocked(cmd, 600)
-            if (result.stdout.isNotBlank()) outputs.append(result.stdout).append('\n')
+            appendResult("pkg install ${batch.joinToString()}", result)
             if (result.exitCode != 0) {
+                val detail = listOf(result.stdout, result.stderr)
+                    .filter { it.isNotBlank() }
+                    .joinToString("\n")
+                    .ifBlank { "Install failed for: ${batch.joinToString()}" }
                 return InstallResult(
                     success = false,
                     output = outputs.toString(),
-                    error = result.stderr.ifBlank { "Install failed in batch: ${batch.joinToString()}" }
+                    error = detail
                 )
             }
         }

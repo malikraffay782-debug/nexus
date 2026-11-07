@@ -161,9 +161,10 @@ class _RuntimeDebugScreenState extends ConsumerState<RuntimeDebugScreen> {
 
   Future<void> _installPython() => _guard('Install Python', () async {
         final r = await _facade.installPackages(const ['python']);
-        _append(_tail(r.output.trim(), 4000));
+        // Show more of the log — pkg update/install failures are noisy.
+        _append(_tail(r.output.trim(), 12000));
         if (!r.ok) {
-          _append('Install failed (exit ${r.exitCode}).');
+          _append('Install failed (exit ${r.exitCode}). Check network and try again.');
           return;
         }
         _append('Install finished.');

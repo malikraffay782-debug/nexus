@@ -121,16 +121,10 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
   void initState() {
     super.initState();
     _runCtrl = RunSessionController(const DefaultRunGateway());
-    _runCtrl.addListener(_onRunChanged);
-  }
-
-  void _onRunChanged() {
-    if (mounted) setState(() {});
   }
 
   @override
   void dispose() {
-    _runCtrl.removeListener(_onRunChanged);
     // Best-effort: cancel in-flight proot when leaving workspace.
     _runCtrl.detach();
     _runCtrl.dispose();
@@ -155,8 +149,6 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
   Widget build(BuildContext context) {
     final project = widget.project;
     final files = ref.watch(workspaceFilesControllerProvider(project.path));
-    final runState = _runCtrl.state;
-    final busy = runState.phase.isBusy;
     final tabs = <({String label, IconData icon, String hint})>[
       _isGame
           ? (
@@ -185,24 +177,32 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: runState.phase == RunPhase.running ||
-                      runState.phase == RunPhase.starting
-                  ? FilledButton.tonalIcon(
+              child: ListenableBuilder(
+                listenable: _runCtrl,
+                builder: (context, _) {
+                  final runState = _runCtrl.state;
+                  final busy = runState.phase.isBusy;
+                  if (runState.phase == RunPhase.running ||
+                      runState.phase == RunPhase.starting) {
+                    return FilledButton.tonalIcon(
                       onPressed: () => _runCtrl.stop(),
                       icon: const Icon(Icons.stop),
                       label: const Text('Stop'),
-                    )
-                  : FilledButton.icon(
-                      onPressed: busy ? null : _run,
-                      icon: busy
-                          ? const SizedBox(
-                              width: 18,
-                              height: 18,
-                              child: CircularProgressIndicator(strokeWidth: 2),
-                            )
-                          : const Icon(Icons.play_arrow),
-                      label: Text(busy ? 'Running…' : 'Run'),
-                    ),
+                    );
+                  }
+                  return FilledButton.icon(
+                    onPressed: busy ? null : _run,
+                    icon: busy
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.play_arrow),
+                    label: Text(busy ? 'Running…' : 'Run'),
+                  );
+                },
+              ),
             ),
           ],
           bottom: TabBar(
@@ -222,17 +222,24 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
                 ],
               ),
             ),
-            if (runState.phase != RunPhase.idle)
-              RunOutputPanel(
-                state: runState,
-                onStop: () => _runCtrl.stop(),
-                onClose: () {
-                  // Only allow close when not busy
-                  if (!runState.phase.isBusy) {
-                    _runCtrl.detach();
-                  }
-                },
-              ),
+            ListenableBuilder(
+              listenable: _runCtrl,
+              builder: (context, _) {
+                final runState = _runCtrl.state;
+                if (runState.phase == RunPhase.idle) {
+                  return const SizedBox.shrink();
+                }
+                return RunOutputPanel(
+                  state: runState,
+                  onStop: () => _runCtrl.stop(),
+                  onClose: () {
+                    if (!runState.phase.isBusy) {
+                      _runCtrl.detach();
+                    }
+                  },
+                );
+              },
+            ),
           ],
         ),
       ),

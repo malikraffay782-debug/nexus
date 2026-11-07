@@ -150,22 +150,46 @@ class ProotExecutor(
             return CommandResult(-1, "", missingNative, false)
         }
 
+        // Termux scripts default PREFIX to /data/data/com.termux/files/usr.
+        // Bind our extracted prefix there so pkg/apt resolve the same paths.
+        val termuxPrefix = "/data/data/com.termux/files/usr"
+        val termuxHome = "/data/data/com.termux/files/home"
+        File(runtimeRoot, "tmp").mkdirs()
+        File(runtimeRoot, "home").mkdirs()
+        // DNS for pkg downloads (bootstrap may ship empty/missing resolv.conf)
+        try {
+            val resolv = File(prefix, "etc/resolv.conf")
+            resolv.parentFile?.mkdirs()
+            if (!resolv.isFile || resolv.length() < 8) {
+                resolv.writeText("nameserver 8.8.8.8\nnameserver 1.1.1.1\n")
+            }
+        } catch (e: Exception) {
+            RuntimeLogger.w("Could not write resolv.conf: ${e.message}")
+        }
+
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
-        env["PREFIX"] = prefix.absolutePath
-        env["HOME"] = File(runtimeRoot, "home").absolutePath
-        env["TMPDIR"] = File(runtimeRoot, "tmp").absolutePath
-        env["PATH"] = "${prefix.absolutePath}/bin:${prefix.absolutePath}/usr/bin"
-        env["LD_LIBRARY_PATH"] = "$nativeLibDir:${prefix.absolutePath}/lib"
+        // Guest-visible Termux layout (NOT host absolute paths)
+        env["PREFIX"] = termuxPrefix
+        env["HOME"] = termuxHome
+        env["TMPDIR"] = "$termuxPrefix/tmp"
+        env["PATH"] = "$termuxPrefix/bin:/bin:/usr/bin"
+        env["LD_LIBRARY_PATH"] = "$nativeLibDir:$termuxPrefix/lib"
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
+        env["ANDROID_DATA"] = "/data"
+        env["ANDROID_ROOT"] = "/system"
 
         val prootArgs = mutableListOf(
             actualProot, "-0",
             "-r", prefix.absolutePath,
             "-b", "/dev", "-b", "/proc", "-b", "/sys",
+            // Expose prefix at the path Termux packages hardcode
+            "-b", "${prefix.absolutePath}:$termuxPrefix",
+            "-b", "${runtimeRoot.absolutePath}/tmp:$termuxPrefix/tmp",
             "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
+            "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
             "-b", "${runtimeRoot.absolutePath}/home:/home"
         )
         // Project bind etc. before -w / program
