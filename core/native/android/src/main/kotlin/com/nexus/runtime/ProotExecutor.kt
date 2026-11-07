@@ -170,6 +170,12 @@ class ProotExecutor(
             return CommandResult(-1, "", missingNative, false)
         }
 
+        // Staging dir for versioned soname symlinks (libtalloc.so.2 -> real lib).
+        // Android will not extract lib*.so.2 from the APK; some OEM linkers still
+        // look for the versioned name even after patchelf. Symlinks live in
+        // filesDir (readable, not executable — fine for shared libs).
+        val hostLibDir = ensureHostLibStaging(nativeDir, runtimeRoot)
+
         val termuxPrefix = "/data/data/com.termux/files/usr"
         val termuxHome = "/data/data/com.termux/files/home"
         File(runtimeRoot, "tmp").mkdirs()
@@ -198,11 +204,21 @@ class ProotExecutor(
             )
         }
 
+        // Verify guest /bin/sh exists before spawning (avoids opaque SIGSEGV).
+        val guestSh = File(prefix, "bin/sh")
+        if (!guestSh.exists()) {
+            return CommandResult(
+                -1, "",
+                "Guest /bin/sh missing under ${prefix.absolutePath}. Bootstrap extract incomplete — re-Initialize.",
+                false
+            )
+        }
+
         // Do NOT clear the process environment — OEM linkers on low-end devices
         // can SIGSEGV when required Android env vars disappear.
-        // LD_LIBRARY_PATH must point at nativeLibraryDir so the (now $ORIGIN) proot
-        // + loader can still resolve libtalloc / libandroid-shmem even if rpath
-        // handling is imperfect on some OEM linkers.
+        val ldPath = listOf(hostLibDir.absolutePath, nativeLibDir)
+            .distinct()
+            .joinToString(":")
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
@@ -211,52 +227,146 @@ class ProotExecutor(
         env["HOME"] = termuxHome
         env["TMPDIR"] = "/tmp"
         env["PATH"] = "$termuxPrefix/bin:/bin:/usr/bin"
-        env["LD_LIBRARY_PATH"] = nativeLibDir
+        env["LD_LIBRARY_PATH"] = ldPath
         env["TERM"] = "xterm-256color"
         env["LANG"] = "C.UTF-8"
-        // Helps some MediaTek linkers that otherwise crash while resolving
-        // the rewritten sonames.
+        // Empty LD_PRELOAD avoids inheriting app-level preloads that crash proot.
         env["LD_PRELOAD"] = ""
 
-        // Minimal binds only — /sys /system /apex crash proot on some Vivo/MTK devices.
-        // Keep -0 (fake root); most Termux packages expect it. If a future device
-        // still SIGSEGVs we can gate it behind a probe flag.
-        val prootArgs = mutableListOf(
-            actualProot,
-            "--link2symlink",
-            "-0",
-            "-r", prefix.absolutePath,
-            "-b", "/dev",
-            "-b", "/proc",
-            "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
-            "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
-            "-b", "${runtimeRoot.absolutePath}/home:/home",
-        )
-        // Project bind etc. before -w / program
-        prootArgs.addAll(extraProotArgs)
-        if (!skipDefaultW) {
-            prootArgs.add("-w")
-            prootArgs.add(guestWorkDir)
+        // Minimal binds. Avoid /sys /system /apex — they SIGSEGV on some Vivo/MTK.
+        // -0 (fake root) is required by many Termux packages; if the first probe
+        // still crashes we retry without it below.
+        fun buildArgs(fakeRoot: Boolean): MutableList<String> {
+            val args = mutableListOf(
+                actualProot,
+                "--link2symlink",
+                "--kill-on-exit",
+            )
+            if (fakeRoot) args.add("-0")
+            args.addAll(
+                listOf(
+                    "-r", prefix.absolutePath,
+                    "-b", "/dev",
+                    "-b", "/proc",
+                    "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
+                    "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
+                    "-b", "${runtimeRoot.absolutePath}/home:/home",
+                )
+            )
+            args.addAll(extraProotArgs)
+            if (!skipDefaultW) {
+                args.add("-w")
+                args.add(guestWorkDir)
+            }
+            args.addAll(guestArgv)
+            return args
         }
-        prootArgs.addAll(guestArgv)
 
+        // Try with -0 first (Termux default). On hard SIGSEGV, one retry without -0.
+        var prootArgs = buildArgs(fakeRoot = true)
         RuntimeLogger.d(
             "Executing proot from=$actualProot loader=$loaderPath " +
-                "rootfs=${prefix.absolutePath} argv=${guestArgv.take(3)}"
+                "rootfs=${prefix.absolutePath} hostLib=${hostLibDir.absolutePath} " +
+                "argv=${guestArgv.take(3)}"
         )
 
+        // Run once with -0; on SIGSEGV, one automatic retry without -0.
+        var last = spawnOnce(prootArgs, nativeDir, env, effectiveTimeout)
+        if ((last.exitCode == 139 || last.exitCode == -11) && !last.stoppedByUser && !last.timedOut) {
+            RuntimeLogger.w("proot SIGSEGV with -0; retrying without fake-root")
+            prootArgs = buildArgs(fakeRoot = false)
+            last = spawnOnce(prootArgs, nativeDir, env, effectiveTimeout)
+        }
+
+        var errText = last.stderr
+        if (errText.contains("CANNOT LINK EXECUTABLE") ||
+            (errText.contains("library \"") && errText.contains("not found"))
+        ) {
+            errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
+                "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
+        }
+        if (last.exitCode == 139 || last.exitCode == -11) {
+            errText = (errText + "\n\n[proot SIGSEGV] host=" + actualProot +
+                " loader=" + loaderPath +
+                " rootfs=" + prefix.absolutePath +
+                " hostLib=" + hostLibDir.absolutePath +
+                " ld=" + ldPath).trim()
+        }
+        return CommandResult(
+            last.exitCode,
+            last.stdout,
+            errText,
+            timedOut = last.timedOut,
+            stoppedByUser = last.stoppedByUser
+        )
+    }
+
+    /**
+     * App-private dir with versioned soname symlinks so the dynamic linker can
+     * resolve libtalloc.so.2 even when only libtalloc.so was shipped in jniLibs.
+     */
+    private fun ensureHostLibStaging(nativeDir: File, runtimeRoot: File): File {
+        val hostLib = File(runtimeRoot, "host-lib")
+        if (!hostLib.exists()) hostLib.mkdirs()
+        val pairs = listOf(
+            "libtalloc.so.2" to "libtalloc.so",
+            "libtalloc.so.2.5.0" to "libtalloc.so",
+            "libandroid-shmem.so" to "libandroid-shmem.so",
+            "libtalloc.so" to "libtalloc.so",
+        )
+        for ((linkName, targetName) in pairs) {
+            val target = File(nativeDir, targetName)
+            if (!target.isFile) continue
+            val link = File(hostLib, linkName)
+            try {
+                if (link.exists()) {
+                    // Refresh if broken or pointing elsewhere
+                    if (link.canonicalFile != target.canonicalFile) {
+                        link.delete()
+                    } else {
+                        continue
+                    }
+                }
+                // Prefer real symlink; fall back to a byte copy if symlink blocked.
+                try {
+                    android.system.Os.symlink(target.absolutePath, link.absolutePath)
+                } catch (_: Throwable) {
+                    target.inputStream().use { input ->
+                        link.outputStream().use { output -> input.copyTo(output) }
+                    }
+                    link.setReadable(true)
+                }
+            } catch (e: Exception) {
+                RuntimeLogger.w("host-lib staging $linkName: ${e.message}")
+            }
+        }
+        return hostLib
+    }
+
+    private data class SpawnResult(
+        val exitCode: Int,
+        val stdout: String,
+        val stderr: String,
+        val timedOut: Boolean,
+        val stoppedByUser: Boolean
+    )
+
+    private fun spawnOnce(
+        prootArgs: List<String>,
+        nativeDir: File,
+        env: Map<String, String>,
+        effectiveTimeout: Long
+    ): SpawnResult {
         var process: Process? = null
         val stdout = StringBuilder()
         val stderr = StringBuilder()
         val readerExecutor = Executors.newFixedThreadPool(2) { r ->
             Thread(r, "nexus-proot-reader").apply { isDaemon = true }
         }
-
         try {
             val pb = ProcessBuilder(prootArgs)
             // Start in nativeLibraryDir so relative $ORIGIN lookups are well-defined.
             pb.directory(nativeDir)
-            // Merge, do not clear — preserve Android linker-related env on low-end OEMs.
             val pbEnv = pb.environment()
             pbEnv.putAll(env)
             pb.redirectErrorStream(false)
@@ -272,7 +382,6 @@ class ProotExecutor(
             }
 
             val finished = process!!.waitFor(effectiveTimeout, TimeUnit.SECONDS)
-
             if (!finished) {
                 killProcessTree(process!!)
             }
@@ -280,7 +389,6 @@ class ProotExecutor(
             try { process?.inputStream?.close() } catch (_: Exception) {}
             try { process?.errorStream?.close() } catch (_: Exception) {}
             try { process?.outputStream?.close() } catch (_: Exception) {}
-
             try { stdoutFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
             try { stderrFuture.get(2, TimeUnit.SECONDS) } catch (_: Exception) {}
 
@@ -291,33 +399,17 @@ class ProotExecutor(
                 -1
             }
             val errExtra = if (timedOut) "\n[Timeout after ${effectiveTimeout}s]" else ""
-            var errText = (stderr.toString().trim() + errExtra).trim()
-            // Linker failures are common when a soname is missing from the APK.
-            if (errText.contains("CANNOT LINK EXECUTABLE") || (errText.contains("library \"") && errText.contains("not found"))) {
-                errText = errText + "\n\nHint: native dependency missing from APK jniLibs. " +
-                    "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
-            }
-
-
-            if (exitCode == 139 || exitCode == -11) {
-                errText = (errText + "\n\n[proot SIGSEGV] host=" + actualProot +
-                    " loader=" + loaderPath +
-                    " rootfs=" + prefix.absolutePath +
-                    " ld=" + nativeLibDir).trim()
-            }
-
-            val stopped = stopRequested && !timedOut
-            return CommandResult(
+            return SpawnResult(
                 exitCode,
                 stdout.toString().trim(),
-                errText,
+                (stderr.toString().trim() + errExtra).trim(),
                 timedOut = timedOut,
-                stoppedByUser = stopped
+                stoppedByUser = stopRequested && !timedOut
             )
         } catch (e: Exception) {
             RuntimeLogger.e("Execution failed", e)
             process?.let { killProcessTree(it) }
-            return CommandResult(-1, "", "Execution error: ${e.message}", false)
+            return SpawnResult(-1, "", "Execution error: ${e.message}", false, false)
         } finally {
             activeProcess = null
             try { process?.inputStream?.close() } catch (_: Exception) {}

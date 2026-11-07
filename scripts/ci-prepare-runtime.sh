@@ -92,11 +92,13 @@ for bin in libproot.so libproot-loader.so libproot-loader32.so; do
   if patchelf --print-needed "$f" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
     patchelf --replace-needed libtalloc.so.2 libtalloc.so "$f"
   fi
-  # Prefer $ORIGIN; fall back to removing rpath entirely if the tool is old.
+  # Prefer $ORIGIN so sibling jniLibs resolve; fall back to remove-rpath.
   if ! patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null; then
     patchelf --remove-rpath "$f" 2>/dev/null || true
   fi
 done
+# Loader is a tiny stub; make sure it is executable in the APK tree.
+chmod 755 "$ROOT/$JNI"/libproot*.so "$ROOT/$JNI"/libtalloc.so "$ROOT/$JNI"/libandroid-shmem.so 2>/dev/null || true
 
 echo "==> Verify ELF deps + rpath"
 NEEDED="$(patchelf --print-needed "$ROOT/$JNI/libproot.so")"

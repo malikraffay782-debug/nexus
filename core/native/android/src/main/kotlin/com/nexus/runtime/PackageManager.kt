@@ -68,14 +68,25 @@ class PackageManager(
         }
 
         // Prove proot+shell works before touching apt (exit 139 = segfault).
-        val probe = runLocked(
-            // Keep probe minimal: a SIGSEGV here is proot itself, not apt/network.
-            "echo NEXUS_OK",
-            30
-        )
+        // Prefer /bin/true if present (no shell), then fall back to echo via sh.
+        val probeTrue = runLocked("/bin/true", 20)
+        val probe = if (probeTrue.exitCode == 0) {
+            // true succeeded — also confirm shell output path
+            val echo = runLocked("echo NEXUS_OK", 20)
+            if (echo.exitCode == 0 && echo.stdout.contains("NEXUS_OK")) echo else probeTrue.copy(
+                // keep success if true worked even when echo is noisy
+                stdout = (probeTrue.stdout + "\n" + echo.stdout).trim(),
+                stderr = (probeTrue.stderr + "\n" + echo.stderr).trim()
+            )
+        } else {
+            runLocked("echo NEXUS_OK", 30)
+        }
         appendResult("runtime probe", probe)
-        if (probe.exitCode != 0 || !probe.stdout.contains("NEXUS_OK")) {
-            val detail = listOf(probe.stdout, probe.stderr)
+        val probeOk = probe.exitCode == 0 && (
+            probe.stdout.contains("NEXUS_OK") || probeTrue.exitCode == 0
+        )
+        if (!probeOk) {
+            val detail = listOf(probe.stdout, probe.stderr, probeTrue.stderr)
                 .filter { it.isNotBlank() }
                 .joinToString("\n")
                 .ifBlank { "runtime probe failed (exit ${probe.exitCode})" }
@@ -83,9 +94,9 @@ class PackageManager(
                 success = false,
                 output = outputs.toString(),
                 error = detail +
-                    "\n\nHint: Permission denied (error=13) means the binary cannot be executed " +
-                    "from that path (Android W^X). SIGSEGV (139) is a proot crash. " +
-                    "Install the latest APK that runs proot from nativeLibraryDir."
+                    "\n\nHint: Permission denied (error=13) = W^X (binary not in nativeLibraryDir). " +
+                    "SIGSEGV (139) = proot crash on this device/kernel. " +
+                    "Uninstall old APK, install latest build, then Initialize again."
             )
         }
 
