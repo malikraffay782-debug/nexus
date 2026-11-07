@@ -180,7 +180,8 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                         "exitCode" to cmdResult.exitCode,
                         "stdout" to cmdResult.stdout,
                         "stderr" to cmdResult.stderr,
-                        "timedOut" to cmdResult.timedOut
+                        "timedOut" to cmdResult.timedOut,
+                        "stoppedByUser" to cmdResult.stoppedByUser
                     )
                 }
             }
@@ -250,6 +251,15 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                         "output" to updateResult.output,
                         "error" to updateResult.error
                     )
+                }
+            }
+
+            "stopRun" -> {
+                // Synchronous: only signals process; must not block on runMutex
+                try {
+                    result.success(runtime.stopRun())
+                } catch (e: Exception) {
+                    result.error("stop_failed", e.message, null)
                 }
             }
 

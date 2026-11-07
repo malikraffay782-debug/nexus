@@ -181,6 +181,7 @@ class EmbeddedRuntime {
         stdout: result['stdout'] as String? ?? '',
         stderr: result['stderr'] as String? ?? '',
         timedOut: result['timedOut'] as bool? ?? false,
+        stoppedByUser: result['stoppedByUser'] as bool? ?? false,
       );
     } on PlatformException catch (e) {
       return CommandResult(
@@ -196,6 +197,17 @@ class EmbeddedRuntime {
         stderr: e.toString(),
         timedOut: false,
       );
+    }
+  }
+
+  /// Best-effort stop of the active proot run (native TERM/KILL).
+  static Future<bool> stopRun() async {
+    try {
+      final result = await _channel.invokeMethod<Map>('stopRun')
+          .timeout(const Duration(seconds: 8));
+      return result?['stopped'] == true;
+    } catch (_) {
+      return false;
     }
   }
 
@@ -289,15 +301,17 @@ class CommandResult {
   final String stdout;
   final String stderr;
   final bool timedOut;
+  final bool stoppedByUser;
 
   CommandResult({
     required this.exitCode,
     required this.stdout,
     required this.stderr,
     required this.timedOut,
+    this.stoppedByUser = false,
   });
 
-  bool get isSuccess => exitCode == 0 && !timedOut;
+  bool get isSuccess => exitCode == 0 && !timedOut && !stoppedByUser;
 
   @override
   String toString() {

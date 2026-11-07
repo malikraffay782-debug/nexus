@@ -1,12 +1,14 @@
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 
 import '../../projects/application/projects_providers.dart';
 import '../../projects/domain/project.dart';
-import '../application/project_runner.dart';
 import '../widgets/run_guard.dart';
+import '../run/run_gateway.dart';
+import '../run/run_session.dart';
+import '../run/run_session_controller.dart';
+import '../widgets/run_output_panel.dart';
 import '../files/workspace_files_provider.dart';
 import '../widgets/workspace_code_tab.dart';
 
@@ -111,66 +113,50 @@ class _WorkspaceView extends ConsumerStatefulWidget {
 }
 
 class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
-  bool _running = false;
-  int _runGeneration = 0;
+  late final RunSessionController _runCtrl;
 
   bool get _isGame => widget.project.type == ProjectType.game;
 
   @override
+  void initState() {
+    super.initState();
+    _runCtrl = RunSessionController(const DefaultRunGateway());
+    _runCtrl.addListener(_onRunChanged);
+  }
+
+  void _onRunChanged() {
+    if (mounted) setState(() {});
+  }
+
+  @override
   void dispose() {
-    _runGeneration++;
+    _runCtrl.removeListener(_onRunChanged);
+    // Best-effort: cancel in-flight proot when leaving workspace.
+    _runCtrl.detach();
+    _runCtrl.dispose();
     super.dispose();
   }
 
   Future<void> _run() async {
-    // Synchronous guard BEFORE any await — closes the double-tap race where
-    // two taps both pass `if (_running)` and wait on the confirm dialog.
-    if (_running) return;
-    final gen = ++_runGeneration;
-    setState(() => _running = true);
+    // Sync busy check — controller also guards; this avoids opening the
+    // unsaved dialog twice on double-tap.
+    if (_runCtrl.state.phase.isBusy) return;
 
-    try {
-      final files =
-          ref.read(workspaceFilesControllerProvider(widget.project.path));
-      final proceed = await confirmRunWithUnsavedChanges(context, files);
-      if (!proceed || !mounted || gen != _runGeneration) return;
+    final files =
+        ref.read(workspaceFilesControllerProvider(widget.project.path));
+    final proceed = await confirmRunWithUnsavedChanges(context, files);
+    if (!proceed || !mounted) return;
+    if (_runCtrl.state.phase.isBusy) return;
 
-      final result = await const ProjectRunner().run(widget.project);
-      if (!mounted || gen != _runGeneration) return;
-      if (!await Directory(widget.project.path).exists()) return;
-      if (!mounted || gen != _runGeneration) return;
-
-      await showDialog<void>(
-        context: context,
-        builder: (ctx) => AlertDialog(
-          title: Text(
-            result.ok ? 'Run: ${widget.project.name}' : 'Run failed',
-          ),
-          content: SingleChildScrollView(
-            child: SelectableText(
-              result.message.isEmpty ? '(no output)' : result.message,
-              style: const TextStyle(fontFamily: 'monospace'),
-            ),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Close'),
-            ),
-          ],
-        ),
-      );
-    } finally {
-      if (mounted && gen == _runGeneration) {
-        setState(() => _running = false);
-      }
-    }
+    await _runCtrl.run(widget.project.id, timeoutSec: 60);
   }
 
   @override
   Widget build(BuildContext context) {
     final project = widget.project;
     final files = ref.watch(workspaceFilesControllerProvider(project.path));
+    final runState = _runCtrl.state;
+    final busy = runState.phase.isBusy;
     final tabs = <({String label, IconData icon, String hint})>[
       _isGame
           ? (
@@ -199,30 +185,54 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
           actions: [
             Padding(
               padding: const EdgeInsets.only(right: 12),
-              child: FilledButton.icon(
-                onPressed: _running ? null : _run,
-                icon: _running
-                    ? const SizedBox(
-                        width: 18,
-                        height: 18,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : const Icon(Icons.play_arrow),
-                label: Text(_running ? 'Running…' : 'Run'),
-              ),
+              child: runState.phase == RunPhase.running ||
+                      runState.phase == RunPhase.starting
+                  ? FilledButton.tonalIcon(
+                      onPressed: () => _runCtrl.stop(),
+                      icon: const Icon(Icons.stop),
+                      label: const Text('Stop'),
+                    )
+                  : FilledButton.icon(
+                      onPressed: busy ? null : _run,
+                      icon: busy
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(strokeWidth: 2),
+                            )
+                          : const Icon(Icons.play_arrow),
+                      label: Text(busy ? 'Running…' : 'Run'),
+                    ),
             ),
           ],
           bottom: TabBar(
             tabs: [for (final t in tabs) Tab(text: t.label)],
           ),
         ),
-        body: TabBarView(
+        body: Column(
           children: [
-            for (final t in tabs)
-              if (t.label == 'Code')
-                WorkspaceCodeTab(controller: files)
-              else
-                _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
+            Expanded(
+              child: TabBarView(
+                children: [
+                  for (final t in tabs)
+                    if (t.label == 'Code')
+                      WorkspaceCodeTab(controller: files)
+                    else
+                      _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
+                ],
+              ),
+            ),
+            if (runState.phase != RunPhase.idle)
+              RunOutputPanel(
+                state: runState,
+                onStop: () => _runCtrl.stop(),
+                onClose: () {
+                  // Only allow close when not busy
+                  if (!runState.phase.isBusy) {
+                    _runCtrl.detach();
+                  }
+                },
+              ),
           ],
         ),
       ),

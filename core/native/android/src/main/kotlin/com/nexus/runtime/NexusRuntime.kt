@@ -155,4 +155,17 @@ class NexusRuntime private constructor(context: Context) {
         val result = runCommand("uname -a")
         return if (result.exitCode == 0) result.stdout else "unknown"
     }
+
+    /**
+     * Stop the currently running proot project/command if any.
+     * Does not take runMutex — only signals the process.
+     */
+    fun stopRun(): Map<String, Any> {
+        val stopped = executor.stopActive()
+        return if (stopped) {
+            mapOf("stopped" to true)
+        } else {
+            mapOf("stopped" to false, "reason" to "idle")
+        }
+    }
 }

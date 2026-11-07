@@ -99,6 +99,14 @@ jobs:
             echo "ERROR: APK contains libtalloc.so.2 (not extractable)" >&2
             exit 1
           fi
+          # Bootstrap zip must be a real Termux bootstrap (~25MB+), not a stub
+          unzip -p "$APK" assets/bootstrap/bootstrap-aarch64.zip > /tmp/boot.zip
+          BOOT_SIZE=$(stat -c%s /tmp/boot.zip)
+          echo "embedded bootstrap bytes=$BOOT_SIZE"
+          if [ "$BOOT_SIZE" -lt 15000000 ]; then
+            echo "ERROR: embedded bootstrap too small ($BOOT_SIZE) — APK is incomplete" >&2
+            exit 1
+          fi
           echo "APK content checks passed"
 
       - name: Upload nexus-debug-apk

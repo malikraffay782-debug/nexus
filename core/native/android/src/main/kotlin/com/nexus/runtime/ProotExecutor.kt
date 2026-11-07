@@ -13,6 +13,14 @@ class ProotExecutor(
     private val context: Context,
     private val bootstrapManager: BootstrapManager
 ) {
+    /** Current proot Process; written only on the run thread, read by stopActive(). */
+    @Volatile
+    private var activeProcess: Process? = null
+
+    /** Set by stopActive(); execute() reports stoppedByUser when true. */
+    @Volatile
+    private var stopRequested: Boolean = false
+
 
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
@@ -24,7 +32,8 @@ class ProotExecutor(
         val exitCode: Int,
         val stdout: String,
         val stderr: String,
-        val timedOut: Boolean = false
+        val timedOut: Boolean = false,
+        val stoppedByUser: Boolean = false
     )
 
     private fun safeWorkingDir(raw: String?): String {
@@ -181,7 +190,9 @@ class ProotExecutor(
             pb.environment().clear()
             pb.environment().putAll(env)
             pb.redirectErrorStream(false)
+            stopRequested = false
             process = pb.start()
+            activeProcess = process
 
             val stdoutFuture = readerExecutor.submit {
                 drainCapped(process!!.inputStream, stdout)
@@ -217,17 +228,20 @@ class ProotExecutor(
                     "Rebuild APK (need libtalloc.so + patchelf proot) and reinstall after uninstall."
             }
 
+            val stopped = stopRequested && !timedOut
             return CommandResult(
                 exitCode,
                 stdout.toString().trim(),
                 errText,
-                timedOut = timedOut
+                timedOut = timedOut,
+                stoppedByUser = stopped
             )
         } catch (e: Exception) {
             RuntimeLogger.e("Execution failed", e)
             process?.let { killProcessTree(it) }
             return CommandResult(-1, "", "Execution error: ${e.message}", false)
         } finally {
+            activeProcess = null
             try { process?.inputStream?.close() } catch (_: Exception) {}
             try { process?.errorStream?.close() } catch (_: Exception) {}
             try { process?.outputStream?.close() } catch (_: Exception) {}
@@ -296,6 +310,18 @@ class ProotExecutor(
      * Avoid Process.toHandle()/ProcessHandle — not in the Android SDK stubs,
      * so it fails compileDebugKotlin even when minSdk is 26+.
      */
+    /**
+     * Best-effort stop of the active proot process (TERM then KILL via killProcessTree).
+     * Safe to call without holding runMutex; only signals the process.
+     */
+    fun stopActive(): Boolean {
+        val p = activeProcess ?: return false
+        stopRequested = true
+        if (!p.isAlive) return false
+        killProcessTree(p)
+        return true
+    }
+
     private fun killProcessTree(process: Process) {
         val pid = processPid(process)
         if (pid != null && pid > 0) {
