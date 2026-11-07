@@ -52,10 +52,10 @@ class Project {
       throw const FormatException('project.json: missing or invalid type');
     }
     final createdRaw = json['createdAt'];
+    // Prefer a real timestamp; never hide corruption as Unix epoch (sorts to 1970).
     final createdAt = createdRaw is String
-        ? (DateTime.tryParse(createdRaw)?.toLocal() ??
-            DateTime.fromMillisecondsSinceEpoch(0))
-        : DateTime.fromMillisecondsSinceEpoch(0);
+        ? (DateTime.tryParse(createdRaw)?.toLocal() ?? DateTime.now())
+        : DateTime.now();
 
     return Project(
       id: id.trim(),

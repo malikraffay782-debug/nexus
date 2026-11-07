@@ -6,6 +6,7 @@ import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
 import '../domain/project.dart';
+import '../../../services/embedded_runtime.dart';
 
 class ProjectRepository {
   static const _manifest = 'project.json';
@@ -14,8 +15,13 @@ class ProjectRepository {
     Object? lastError;
     for (var attempt = 0; attempt < 2; attempt++) {
       try {
-        final docs = await getApplicationDocumentsDirectory();
-        final dir = Directory(p.join(docs.path, 'projects'));
+        // Prefer native path so Flutter and proot always share one projects root.
+        final nativeRoot = await EmbeddedRuntime.getProjectsRoot();
+        final dir = nativeRoot != null && nativeRoot.isNotEmpty
+            ? Directory(nativeRoot)
+            : Directory(
+                p.join((await getApplicationDocumentsDirectory()).path, 'projects'),
+              );
         if (!await dir.exists()) {
           await dir.create(recursive: true);
         }
@@ -65,7 +71,14 @@ class ProjectRepository {
           return null;
         }
       }
-    } catch (_) {}
+    } catch (e, st) {
+          // Ignore unreadable entries but keep a debug trace.
+          assert(() {
+            // ignore: avoid_print
+            print('ProjectRepository.list skip: $e');
+            return true;
+          }());
+        }
     return dir;
   }
 
@@ -104,7 +117,14 @@ class ProjectRepository {
           if (await _isSymlink(entity)) continue;
           final project = await _readFrom(entity);
           if (project != null) projects.add(project);
-        } catch (_) {}
+        } catch (e, st) {
+          // Ignore unreadable entries but keep a debug trace.
+          assert(() {
+            // ignore: avoid_print
+            print('ProjectRepository.list skip: $e');
+            return true;
+          }());
+        }
       }
     } on FileSystemException catch (e) {
       throw StateError('Could not read projects: ${e.message}');
@@ -191,10 +211,24 @@ class ProjectRepository {
     } catch (e) {
       try {
         if (await staging.exists()) await staging.delete(recursive: true);
-      } catch (_) {}
+      } catch (e, st) {
+          // Ignore unreadable entries but keep a debug trace.
+          assert(() {
+            // ignore: avoid_print
+            print('ProjectRepository.list skip: $e');
+            return true;
+          }());
+        }
       try {
         if (await dir!.exists()) await dir.delete(recursive: true);
-      } catch (_) {}
+      } catch (e, st) {
+          // Ignore unreadable entries but keep a debug trace.
+          assert(() {
+            // ignore: avoid_print
+            print('ProjectRepository.list skip: $e');
+            return true;
+          }());
+        }
       rethrow;
     }
   }

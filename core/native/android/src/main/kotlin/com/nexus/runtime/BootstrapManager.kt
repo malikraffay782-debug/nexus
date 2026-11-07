@@ -91,39 +91,46 @@ class BootstrapManager(private val context: Context) {
      * Under proot -r [prefixDir], create that path as a symlink to the rootfs root
      * so $PREFIX/bin resolves to /bin without a recursive -b bind (which SIGSEGVs).
      */
-    fun ensureTermuxPathLayout() {
+    /**
+     * Termux packages expect PREFIX at /data/data/com.termux/files/usr.
+     * Under proot -r [prefixDir], create that path as a symlink to the rootfs root.
+     * @return false if the critical usr symlink could not be created.
+     */
+    fun ensureTermuxPathLayout(): Boolean {
         val root = prefixDir
-        if (!root.isDirectory) return
-        // /data/data/com.termux/files/usr -> /
+        if (!root.isDirectory) return false
         val filesDir = File(root, "data/data/com.termux/files")
-        filesDir.mkdirs()
+        if (!filesDir.exists() && !filesDir.mkdirs()) {
+            RuntimeLogger.w("Could not create Termux files dir")
+            return false
+        }
         val usrLink = File(filesDir, "usr")
         if (!usrLink.exists()) {
+            var ok = false
             try {
                 Os.symlink("/", usrLink.absolutePath)
+                ok = true
             } catch (e: Throwable) {
-                // Fallback: relative climb from data/data/com.termux/files/usr up to root
                 try {
                     Os.symlink("../../../../", usrLink.absolutePath)
+                    ok = true
                 } catch (e2: Throwable) {
                     RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e2.message}")
                 }
             }
+            if (!ok) return false
         }
-        val homeLinkParent = File(root, "data/data/com.termux/files")
-        val homeLink = File(homeLinkParent, "home")
+        val homeLink = File(filesDir, "home")
         if (!homeLink.exists()) {
-            val homeTarget = File(runtimeRoot, "home")
-            homeTarget.mkdirs()
             try {
-                // Point guest home at runtime home via bind preferably; symlink as fallback path
                 Os.symlink("/home", homeLink.absolutePath)
             } catch (_: Throwable) {
-                // ignore
+                // home bind is also applied by ProotExecutor; non-fatal
             }
         }
         File(root, "tmp").mkdirs()
         File(root, "var/tmp").mkdirs()
+        return usrLink.exists()
     }
 
     fun hasPythonBinary(): Boolean {

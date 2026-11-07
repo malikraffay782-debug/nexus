@@ -2,6 +2,7 @@ package com.nexus.runtime
 
 import java.io.File
 import java.io.IOException
+import java.nio.file.Files
 
 class ProjectMountException(message: String) : Exception(message)
 
@@ -58,7 +59,8 @@ class ProjectMount private constructor(
             } catch (e: IOException) {
                 throw ProjectMountException("Cannot resolve project folder")
             }
-            if (canon.parentFile != rootCanon || canon.name != projectId) {
+            val parent = canon.parentFile
+            if (parent == null || parent.canonicalFile != rootCanon || canon.name != projectId) {
                 throw ProjectMountException("Project is outside the projects folder")
             }
             if (canon.path.contains(':') || canon.path.contains(',')) {
@@ -110,12 +112,16 @@ class ProjectMount private constructor(
         }
 
         internal fun isSymlink(f: File): Boolean {
-            val parent = f.absoluteFile.parentFile ?: return false
-            val leaf = File(parent.canonicalFile, f.name)
             return try {
-                leaf.canonicalFile != leaf.absoluteFile
-            } catch (_: IOException) {
-                false
+                if (Files.isSymbolicLink(f.toPath())) return true
+                // Also treat a path whose parent chain differs after canonicalization
+                // as unsafe (symlink parent escape).
+                val abs = f.absoluteFile
+                val canon = f.canonicalFile
+                abs.path != canon.path && abs.name == canon.name
+            } catch (_: Exception) {
+                // Fail closed: treat unreadable paths as unsafe symlinks
+                true
             }
         }
     }

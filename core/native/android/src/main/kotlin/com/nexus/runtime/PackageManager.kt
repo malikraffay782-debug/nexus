@@ -69,7 +69,8 @@ class PackageManager(
 
         // Prove proot+shell works before touching apt (exit 139 = segfault).
         val probe = runLocked(
-            "echo NEXUS_OK; uname -a; command -v pkg; command -v apt-get; ls -la \"$PREFIX/bin\" 2>&1 | head -n 20",
+            // ${'$'} keeps shell $PREFIX / $PATH from being treated as Kotlin refs
+            "echo NEXUS_OK; uname -a; command -v pkg; command -v apt-get; ls -la \"${'$'}PREFIX/bin\" 2>&1 | head -n 20",
             30
         )
         appendResult("runtime probe", probe)
@@ -96,7 +97,7 @@ class PackageManager(
             elif command -v apt-get >/dev/null 2>&1; then
               apt-get update -y
             else
-              echo "Neither pkg nor apt-get found in PATH=$PATH PREFIX=$PREFIX" >&2
+              echo "Neither pkg nor apt-get found in PATH=${'$'}PATH PREFIX=${'$'}PREFIX" >&2
               exit 127
             fi
             """.trimIndent(),

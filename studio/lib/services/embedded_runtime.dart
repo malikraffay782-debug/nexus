@@ -201,6 +201,19 @@ class EmbeddedRuntime {
   }
 
   /// Best-effort stop of the active proot run (native TERM/KILL).
+  /// Android: same path as native `getDir("flutter")/projects`.
+  /// Other platforms: null (caller should use path_provider).
+  static Future<String?> getProjectsRoot() async {
+    try {
+      final path = await _channel.invokeMethod<String>('getProjectsRoot')
+          .timeout(const Duration(seconds: 5));
+      if (path == null || path.isEmpty) return null;
+      return path;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Future<bool> stopRun() async {
     try {
       final result = await _channel.invokeMethod<Map>('stopRun')

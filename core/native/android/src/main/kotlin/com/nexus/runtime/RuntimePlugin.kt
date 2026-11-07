@@ -254,6 +254,14 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 }
             }
 
+            "getProjectsRoot" -> {
+                try {
+                    result.success(runtime.projectsRootPath())
+                } catch (e: Exception) {
+                    result.error("projects_root", e.message, null)
+                }
+            }
+
             "stopRun" -> {
                 // Synchronous: only signals process; must not block on runMutex
                 try {

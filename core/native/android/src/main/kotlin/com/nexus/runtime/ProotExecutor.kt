@@ -168,10 +168,19 @@ class ProotExecutor(
             RuntimeLogger.w("Could not write resolv.conf: ${e.message}")
         }
         // Keep Termux path symlinks fresh (cheap if already present).
-        try {
+        val layoutOk = try {
             bootstrapManager.ensureTermuxPathLayout()
         } catch (e: Exception) {
             RuntimeLogger.w("ensureTermuxPathLayout: ${e.message}")
+            false
+        }
+        if (!layoutOk) {
+            return CommandResult(
+                -1,
+                "",
+                "Runtime path layout incomplete (Termux PREFIX symlink). Re-run Initialize or reinstall APK.",
+                false
+            )
         }
 
         val env = mutableMapOf<String, String>()
@@ -187,7 +196,6 @@ class ProotExecutor(
         env["LD_LIBRARY_PATH"] = nativeLibDir
         env["TERM"] = "xterm-256color"
         env["LANG"] = "en_US.UTF-8"
-        env["HOME"] = termuxHome
 
         val prootArgs = mutableListOf(
             actualProot, "-0",

@@ -160,6 +160,13 @@ class NexusRuntime private constructor(context: Context) {
      * Stop the currently running proot project/command if any.
      * Does not take runMutex — only signals the process.
      */
+    /** Same directory Flutter path_provider documents + /projects uses on Android. */
+    fun projectsRootPath(): String {
+        val root = File(appContext.getDir("flutter", android.content.Context.MODE_PRIVATE), "projects")
+        if (!root.exists()) root.mkdirs()
+        return root.absolutePath
+    }
+
     fun stopRun(): Map<String, Any> {
         val stopped = executor.stopActive()
         return if (stopped) {
