@@ -75,22 +75,32 @@ cp -f "$USR/lib/libandroid-shmem.so" "$ROOT/$JNI/libandroid-shmem.so"
 cp -f "$USR/lib/libtalloc.so.2.5.0"  "$ROOT/$JNI/libtalloc.so"
 chmod 755 "$ROOT/$JNI"/lib*.so
 
-echo "==> patchelf: rewrite libtalloc.so.2 → libtalloc.so (Android cannot extract .so.2)"
+echo "==> patchelf: Android-legal sonames + \$ORIGIN rpath (critical for Vivo/MTK)"
 if ! command -v patchelf >/dev/null 2>&1; then
   sudo apt-get update -qq
   sudo apt-get install -y -qq patchelf
 fi
+
+# 1. libtalloc.so.2 → libtalloc.so  (Android only extracts plain lib*.so)
+# 2. Kill the Termux absolute RUNPATH. It points at a path that does not exist
+#    inside our app process and causes SIGSEGV on several MediaTek / Vivo kernels
+#    when the linker + proot loader interact with it.
+# 3. Set RPATH=\$ORIGIN so sibling libs in nativeLibraryDir are found reliably.
 for bin in libproot.so libproot-loader.so libproot-loader32.so; do
   f="$ROOT/$JNI/$bin"
   [ -f "$f" ] || continue
   if patchelf --print-needed "$f" 2>/dev/null | grep -q 'libtalloc\.so\.2'; then
     patchelf --replace-needed libtalloc.so.2 libtalloc.so "$f"
   fi
+  # Prefer $ORIGIN; fall back to removing rpath entirely if the tool is old.
+  if ! patchelf --set-rpath '$ORIGIN' "$f" 2>/dev/null; then
+    patchelf --remove-rpath "$f" 2>/dev/null || true
+  fi
 done
 
-echo "==> Verify ELF deps"
+echo "==> Verify ELF deps + rpath"
 NEEDED="$(patchelf --print-needed "$ROOT/$JNI/libproot.so")"
-echo "$NEEDED"
+echo "NEEDED: $NEEDED"
 if echo "$NEEDED" | grep -q 'libtalloc\.so\.2'; then
   echo "ERROR: proot still needs libtalloc.so.2" >&2
   exit 1
@@ -99,8 +109,17 @@ echo "$NEEDED" | grep -q 'libtalloc\.so' || {
   echo "ERROR: proot does not list libtalloc.so after patchelf" >&2
   exit 1
 }
+RPATH="$(patchelf --print-rpath "$ROOT/$JNI/libproot.so" 2>/dev/null || true)"
+echo "RPATH:  ${RPATH:-(empty)}"
+if echo "$RPATH" | grep -q '/data/data/com.termux'; then
+  echo "ERROR: Termux absolute RUNPATH still present — this crashes on Vivo/MTK" >&2
+  exit 1
+fi
 
 echo "==> Final jniLibs"
 ls -lh "$ROOT/$JNI"
+# Extra safety: show final dynamic section for the main binary
+patchelf --print-needed "$ROOT/$JNI/libproot.so" || true
+patchelf --print-rpath  "$ROOT/$JNI/libproot.so" 2>/dev/null || true
 
 echo "==> Runtime prepare done"

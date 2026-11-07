@@ -99,6 +99,26 @@ jobs:
             echo "ERROR: APK contains libtalloc.so.2 (not extractable)" >&2
             exit 1
           fi
+          # Critical: proot must not retain the Termux absolute RUNPATH.
+          # That path does not exist inside the app and causes SIGSEGV on
+          # several Vivo / MediaTek devices during the first probe.
+          unzip -p "$APK" lib/arm64-v8a/libproot.so > /tmp/libproot.so
+          if command -v patchelf >/dev/null 2>&1; then
+            RPATH="$(patchelf --print-rpath /tmp/libproot.so 2>/dev/null || true)"
+            echo "libproot.so RPATH='$RPATH'"
+            if echo "$RPATH" | grep -q '/data/data/com.termux'; then
+              echo "ERROR: libproot.so still has Termux absolute RUNPATH — will SIGSEGV on device" >&2
+              exit 1
+            fi
+            NEEDED="$(patchelf --print-needed /tmp/libproot.so)"
+            echo "libproot.so NEEDED=$NEEDED"
+            if echo "$NEEDED" | grep -q 'libtalloc\.so\.2'; then
+              echo "ERROR: libproot.so still needs libtalloc.so.2" >&2
+              exit 1
+            fi
+          else
+            echo "WARN: patchelf not available in CI runner for final RPATH check"
+          fi
           # Bootstrap zip must be a real Termux bootstrap (~25MB+), not a stub
           unzip -p "$APK" assets/bootstrap/bootstrap-aarch64.zip > /tmp/boot.zip
           BOOT_SIZE=$(stat -c%s /tmp/boot.zip)

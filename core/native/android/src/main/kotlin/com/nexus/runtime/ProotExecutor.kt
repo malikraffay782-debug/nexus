@@ -200,6 +200,9 @@ class ProotExecutor(
 
         // Do NOT clear the process environment — OEM linkers on low-end devices
         // can SIGSEGV when required Android env vars disappear.
+        // LD_LIBRARY_PATH must point at nativeLibraryDir so the (now $ORIGIN) proot
+        // + loader can still resolve libtalloc / libandroid-shmem even if rpath
+        // handling is imperfect on some OEM linkers.
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
@@ -211,8 +214,13 @@ class ProotExecutor(
         env["LD_LIBRARY_PATH"] = nativeLibDir
         env["TERM"] = "xterm-256color"
         env["LANG"] = "C.UTF-8"
+        // Helps some MediaTek linkers that otherwise crash while resolving
+        // the rewritten sonames.
+        env["LD_PRELOAD"] = ""
 
         // Minimal binds only — /sys /system /apex crash proot on some Vivo/MTK devices.
+        // Keep -0 (fake root); most Termux packages expect it. If a future device
+        // still SIGSEGVs we can gate it behind a probe flag.
         val prootArgs = mutableListOf(
             actualProot,
             "--link2symlink",
@@ -232,7 +240,10 @@ class ProotExecutor(
         }
         prootArgs.addAll(guestArgv)
 
-        RuntimeLogger.d("Executing proot argv=${guestArgv.take(4)} extra=${extraProotArgs.size}")
+        RuntimeLogger.d(
+            "Executing proot from=$actualProot loader=$loaderPath " +
+                "rootfs=${prefix.absolutePath} argv=${guestArgv.take(3)}"
+        )
 
         var process: Process? = null
         val stdout = StringBuilder()
@@ -243,6 +254,8 @@ class ProotExecutor(
 
         try {
             val pb = ProcessBuilder(prootArgs)
+            // Start in nativeLibraryDir so relative $ORIGIN lookups are well-defined.
+            pb.directory(nativeDir)
             // Merge, do not clear — preserve Android linker-related env on low-end OEMs.
             val pbEnv = pb.environment()
             pbEnv.putAll(env)
