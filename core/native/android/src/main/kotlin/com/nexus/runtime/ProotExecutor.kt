@@ -272,6 +272,12 @@ class ProotExecutor(
                 args.add("-b")
                 args.add("/vendor")
             }
+            // Critical: Termux ELF RUNPATH is absolute
+            // /data/data/com.termux/files/usr/lib — bind rootfs there so
+            // apt methods/https, curl, etc. find libgnutls/libcurl without
+            // relying solely on the PREFIX symlink walk.
+            args.add("-b")
+            args.add("${prefix.absolutePath}:$termuxPrefix")
             args.addAll(
                 listOf(
                     "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",

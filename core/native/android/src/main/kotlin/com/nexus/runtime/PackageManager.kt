@@ -98,47 +98,79 @@ class PackageManager(
             )
         }
 
-        // Pin a known-good mirror and use apt-get only. `pkg update` runs
-        // termux-change-repo which picks random mirrors and still needs the
-        // apt https method — if that method cannot load libcurl, it dies with
-        // exit 100. Fixed sources + LD_LIBRARY_PATH (set by ProotExecutor) fix it.
+        // Prefer HTTP mirror first (apt "https" method is the same binary as
+        // "http" but SSL init often exits 100 under proot). Fall back to HTTPS CDN.
         val update = runLocked(
             """
             export DEBIAN_FRONTEND=noninteractive
             export PATH="${'$'}PREFIX/bin:/bin:/usr/bin:${'$'}PATH"
-            export LD_LIBRARY_PATH="${'$'}PREFIX/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
+            export LD_LIBRARY_PATH="${'$'}PREFIX/lib:/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
             export SSL_CERT_FILE="${'$'}PREFIX/etc/tls/cert.pem"
             export CURL_CA_BUNDLE="${'$'}PREFIX/etc/tls/cert.pem"
-            mkdir -p "${'$'}PREFIX/etc/apt/apt.conf.d" "${'$'}PREFIX/var/lib/apt/lists/partial"
-            # Force official Termux CDN — skip mirror auto-selection
-            cat > "${'$'}PREFIX/etc/apt/sources.list" << 'SRC'
-deb https://packages-cf.termux.dev/apt/termux-main stable main
-SRC
+            mkdir -p "${'$'}PREFIX/etc/apt/apt.conf.d" "${'$'}PREFIX/var/lib/apt/lists/partial" /tmp/nexus-debs
             rm -f "${'$'}PREFIX/etc/apt/sources.list.d/"*.list 2>/dev/null || true
+
+            # Quick diagnostic: can we load the apt method binary at all?
+            METH="${'$'}PREFIX/lib/apt/methods/http"
+            if [ ! -e "${'$'}METH" ]; then METH=/lib/apt/methods/http; fi
+            if [ -e "${'$'}METH" ]; then
+              echo "apt method: ${'$'}METH"
+              # method speaks a protocol on stdin; closing stdin should exit cleanly
+              timeout 3 "${'$'}METH" </dev/null 2>/tmp/nexus-meth.err || true
+              if [ -s /tmp/nexus-meth.err ]; then
+                echo "method stderr:" >&2
+                head -c 500 /tmp/nexus-meth.err >&2 || true
+              fi
+            fi
+
+            try_update() {
+              local src="${'$'}1"
+              echo "Using sources: ${'$'}src"
+              printf '%s\n' "${'$'}src" > "${'$'}PREFIX/etc/apt/sources.list"
+              apt-get update -y
+            }
+
             if ! command -v apt-get >/dev/null 2>&1; then
-              echo "apt-get not found in PATH=${'$'}PATH PREFIX=${'$'}PREFIX" >&2
+              echo "apt-get not found PATH=${'$'}PATH PREFIX=${'$'}PREFIX" >&2
               exit 127
             fi
-            # Sanity: https method must exist (symlink to http)
-            if [ ! -e "${'$'}PREFIX/lib/apt/methods/https" ] && [ ! -e /lib/apt/methods/https ]; then
-              echo "apt https method missing under PREFIX" >&2
-              ls -la "${'$'}PREFIX/lib/apt/methods/" 2>&1 || true
-              exit 127
+
+            # 1) HTTP mirror (no TLS)
+            if try_update "deb http://mirror.mephi.ru/termux/termux-main stable main"; then
+              exit 0
             fi
-            apt-get update -y
+            # 2) Official HTTPS CDN
+            if try_update "deb https://packages-cf.termux.dev/apt/termux-main stable main"; then
+              exit 0
+            fi
+            # 3) packages.termux.dev
+            if try_update "deb https://packages.termux.dev/apt/termux-main stable main"; then
+              exit 0
+            fi
+            echo "All apt-get update attempts failed" >&2
+            exit 1
             """.trimIndent(),
-            240
+            300
         )
         appendResult("pkg update", update)
         if (update.exitCode != 0) {
+            val wantsPython = deduped.any { it == "python" || it == "python3" }
+            if (wantsPython) {
+                val offline = runLocked(offlinePythonScript(), 600)
+                appendResult("offline python install", offline)
+                if (offline.exitCode == 0 &&
+                    (offline.stdout.contains("PYTHON_OK") || offline.stdout.contains("Python"))
+                ) {
+                    return InstallResult(true, outputs.toString(), "")
+                }
+                if (offline.stdout.isNotBlank()) outputs.append(offline.stdout).append('\n')
+                if (offline.stderr.isNotBlank()) outputs.append(offline.stderr).append('\n')
+            }
             val detail = listOf(update.stdout, update.stderr)
                 .filter { it.isNotBlank() }
                 .joinToString("\n")
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
-            val hint = when (update.exitCode) {
-                139, -11 -> "\n\nHint: exit 139 = crash (SIGSEGV) in proot/pkg. Not a network error."
-                else -> "\n\nHint: apt https method exit 100 usually means Termux PREFIX symlink or LD_LIBRARY_PATH is wrong. Re-Initialize after updating the app. Check network if mirrors fail."
-            }
+            val hint = "\n\nHint: apt update failed. Offline curl+dpkg fallback tried for python if requested."
             return InstallResult(
                 success = false,
                 output = outputs.toString(),
@@ -182,6 +214,51 @@ SRC
     }
 
     fun install(packageName: String): InstallResult = install(listOf(packageName))
+
+
+    private fun offlinePythonScript(): String {
+        return """
+            export PATH="${'$'}PREFIX/bin:/bin:/usr/bin:${'$'}PATH"
+            export LD_LIBRARY_PATH="${'$'}PREFIX/lib:/lib"
+            export SSL_CERT_FILE="${'$'}PREFIX/etc/tls/cert.pem"
+            export CURL_CA_BUNDLE="${'$'}PREFIX/etc/tls/cert.pem"
+            set -e
+            mkdir -p /tmp/nexus-debs
+            cd /tmp/nexus-debs
+            BASE="https://packages-cf.termux.dev/apt/termux-main"
+            echo "Fetching Packages index via curl..."
+            curl -fsSL "$BASE/dists/stable/main/binary-aarch64/Packages.gz" -o Packages.gz
+            gzip -dc Packages.gz > Packages
+            NEED="python libandroid-posix-semaphore libandroid-support libbz2 libcrypt libexpat libffi liblzma libsqlite ncurses ncurses-ui-libs openssl readline gdbm zstd"
+            for p in ${'$'}NEED; do
+              fn=${'$'}(awk -v pkg="${'$'}p" '
+                ${'$'}1=="Package:" && ${'$'}2==pkg {found=1}
+                found && ${'$'}1=="Filename:" {print ${'$'}2; exit}
+                found && ${'$'}1=="Package:" {exit}
+              ' Packages)
+              if [ -z "${'$'}fn" ]; then
+                echo "skip ${'$'}p (no Filename)"
+                continue
+              fi
+              echo "Downloading ${'$'}fn"
+              curl -fsSL "$BASE/${'$'}fn" -o "$(basename "${'$'}fn")" || {
+                echo "download failed: ${'$'}fn" >&2
+                exit 1
+              }
+            done
+            echo "Installing debs..."
+            dpkg -i /tmp/nexus-debs/*.deb 2>/tmp/dpkg.err || true
+            dpkg --configure -a 2>>/tmp/dpkg.err || true
+            if command -v python3 >/dev/null 2>&1 || command -v python >/dev/null 2>&1; then
+              echo "PYTHON_OK"
+              python3 --version 2>/dev/null || python --version
+              exit 0
+            fi
+            echo "python missing after offline install" >&2
+            tail -30 /tmp/dpkg.err 2>/dev/null >&2 || true
+            exit 1
+        """.trimIndent()
+    }
 
     fun isInstalled(packageName: String): Boolean {
         if (validateName(packageName) != null) return false
