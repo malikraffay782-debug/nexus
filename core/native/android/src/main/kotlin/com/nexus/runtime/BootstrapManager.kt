@@ -97,57 +97,69 @@ class BootstrapManager(private val context: Context) {
      * @return false if the critical usr symlink could not be created.
      */
     fun ensureTermuxPathLayout(): Boolean {
-        val root = prefixDir
+        val root = prefixDir.canonicalFile
         if (!root.isDirectory) return false
         val filesDir = File(root, "data/data/com.termux/files")
         if (!filesDir.exists() && !filesDir.mkdirs()) {
             RuntimeLogger.w("Could not create Termux files dir")
             return false
         }
-        // prefix/data/data/com.termux/files/usr -> prefix root
-        // Relative depth from usr: files, com.termux, data, data, prefix = 5 levels.
-        // Absolute "/" is WRONG under proot (escapes to host root, not rootfs).
+        // Symlink target is relative to the *parent* of the link (POSIX).
+        // Link:  {prefix}/data/data/com.termux/files/usr
+        // Parent: {prefix}/data/data/com.termux/files
+        // ../../../../ from parent => {prefix}
+        // Absolute "/" is wrong under proot (host root, not rootfs).
         val usrLink = File(filesDir, "usr")
-        val expectedTarget = "../../../../../"
+        val expectedTarget = "../../../../"
         try {
-            if (usrLink.exists()) {
-                // Recreate if not a symlink or wrong target
+            if (usrLink.exists() || Files.isSymbolicLink(usrLink.toPath())) {
                 val current = try {
                     Files.readSymbolicLink(usrLink.toPath()).toString()
                 } catch (_: Throwable) {
                     null
                 }
-                if (current != expectedTarget && current != "/") {
-                    usrLink.delete()
-                } else if (current == "/") {
-                    // Host-root symlink breaks RUNPATH resolution for Termux libs
-                    usrLink.delete()
+                if (current != expectedTarget) {
+                    // Wrong target (old builds used "/" or 5-level relative)
+                    try { usrLink.delete() } catch (_: Throwable) {}
+                    try { Files.deleteIfExists(usrLink.toPath()) } catch (_: Throwable) {}
                 }
             }
-            if (!usrLink.exists()) {
+            if (!Files.isSymbolicLink(usrLink.toPath())) {
                 Os.symlink(expectedTarget, usrLink.absolutePath)
             }
         } catch (e: Throwable) {
             RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e.message}")
             return false
         }
-        // Verify: prefix/lib should be reachable via the usr link
-        val viaLink = File(usrLink, "lib")
-        if (!viaLink.exists()) {
-            RuntimeLogger.w("PREFIX symlink does not resolve to rootfs lib/")
+        // Verify host-side: resolving the symlink must land on prefix/lib
+        val resolvedUsr = try {
+            usrLink.canonicalFile
+        } catch (_: Throwable) {
+            null
+        }
+        if (resolvedUsr == null || resolvedUsr != root) {
+            RuntimeLogger.w(
+                "PREFIX symlink resolves to ${resolvedUsr?.absolutePath} expected ${root.absolutePath}"
+            )
+            return false
+        }
+        val viaLib = File(resolvedUsr, "lib")
+        if (!viaLib.isDirectory) {
+            RuntimeLogger.w("PREFIX/lib missing after symlink resolve")
             return false
         }
         val homeLink = File(filesDir, "home")
-        if (!homeLink.exists()) {
+        if (!homeLink.exists() && !Files.isSymbolicLink(homeLink.toPath())) {
             try {
-                Os.symlink("../../../../../home", homeLink.absolutePath)
+                // parent is files/; ../../../../home => {prefix}/home
+                Os.symlink("../../../../home", homeLink.absolutePath)
             } catch (_: Throwable) {
                 // home bind is also applied by ProotExecutor; non-fatal
             }
         }
         File(root, "tmp").mkdirs()
         File(root, "var/tmp").mkdirs()
-        return usrLink.exists() && viaLink.exists()
+        return true
     }
 
     fun hasPythonBinary(): Boolean {
