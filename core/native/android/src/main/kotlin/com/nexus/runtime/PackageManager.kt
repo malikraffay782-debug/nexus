@@ -121,7 +121,7 @@ class PackageManager(
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
             val hint = when (update.exitCode) {
                 139, -11 -> "\n\nHint: exit 139 = crash (SIGSEGV) in proot/pkg. Not a network error."
-                else -> "\n\nHint: if you see connection/DNS errors, enable network permission and retry."
+                else -> "\n\nHint: if pkg says "as root", rebuild without proot -0. If connection/DNS errors, enable INTERNET permission and retry."
             }
             return InstallResult(
                 success = false,
@@ -135,10 +135,14 @@ class PackageManager(
             val quoted = batch.joinToString(" ") { shellQuote(it) }
             val cmd = """
                 export DEBIAN_FRONTEND=noninteractive
-                if command -v pkg >/dev/null 2>&1; then
+                export PATH="${'$'}PREFIX/bin:/bin:/usr/bin:${'$'}PATH"
+                if command -v apt-get >/dev/null 2>&1; then
+                  apt-get install -y --allow-downgrades $quoted
+                elif command -v pkg >/dev/null 2>&1; then
                   pkg install -y $quoted
                 else
-                  apt-get install -y $quoted
+                  echo "Neither apt-get nor pkg found" >&2
+                  exit 127
                 fi
             """.trimIndent()
             val result = runLocked(cmd, 600)

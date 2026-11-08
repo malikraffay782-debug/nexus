@@ -283,21 +283,17 @@ class ProotExecutor(
             return args
         }
 
-        // Try with -0 first (Termux default). On hard SIGSEGV, one retry without -0.
-        var prootArgs = buildArgs(fakeRoot = true)
+        // Do NOT use -0 (fake root). Termux `pkg` refuses EUID=0 with:
+        //   "Error: Cannot run 'pkg' command as root"
+        // The app UID already owns the prefix; packages install fine without -0.
+        var prootArgs = buildArgs(fakeRoot = false)
         RuntimeLogger.d(
             "Executing proot from=$actualProot loader=$loaderPath " +
                 "rootfs=${prefix.absolutePath} hostLib=${hostLibDir.absolutePath} " +
                 "argv=${guestArgv.take(3)}"
         )
 
-        // Run once with -0; on SIGSEGV, one automatic retry without -0.
         var last = spawnOnce(prootArgs, nativeDir, env, effectiveTimeout)
-        if ((last.exitCode == 139 || last.exitCode == -11) && !last.stoppedByUser && !last.timedOut) {
-            RuntimeLogger.w("proot SIGSEGV with -0; retrying without fake-root")
-            prootArgs = buildArgs(fakeRoot = false)
-            last = spawnOnce(prootArgs, nativeDir, env, effectiveTimeout)
-        }
 
         var errText = last.stderr
         if (errText.contains("CANNOT LINK EXECUTABLE") ||
