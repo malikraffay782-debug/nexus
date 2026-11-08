@@ -104,33 +104,50 @@ class BootstrapManager(private val context: Context) {
             RuntimeLogger.w("Could not create Termux files dir")
             return false
         }
+        // prefix/data/data/com.termux/files/usr -> prefix root
+        // Relative depth from usr: files, com.termux, data, data, prefix = 5 levels.
+        // Absolute "/" is WRONG under proot (escapes to host root, not rootfs).
         val usrLink = File(filesDir, "usr")
-        if (!usrLink.exists()) {
-            var ok = false
-            try {
-                Os.symlink("/", usrLink.absolutePath)
-                ok = true
-            } catch (e: Throwable) {
-                try {
-                    Os.symlink("../../../../", usrLink.absolutePath)
-                    ok = true
-                } catch (e2: Throwable) {
-                    RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e2.message}")
+        val expectedTarget = "../../../../../"
+        try {
+            if (usrLink.exists()) {
+                // Recreate if not a symlink or wrong target
+                val current = try {
+                    Files.readSymbolicLink(usrLink.toPath()).toString()
+                } catch (_: Throwable) {
+                    null
+                }
+                if (current != expectedTarget && current != "/") {
+                    usrLink.delete()
+                } else if (current == "/") {
+                    // Host-root symlink breaks RUNPATH resolution for Termux libs
+                    usrLink.delete()
                 }
             }
-            if (!ok) return false
+            if (!usrLink.exists()) {
+                Os.symlink(expectedTarget, usrLink.absolutePath)
+            }
+        } catch (e: Throwable) {
+            RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e.message}")
+            return false
+        }
+        // Verify: prefix/lib should be reachable via the usr link
+        val viaLink = File(usrLink, "lib")
+        if (!viaLink.exists()) {
+            RuntimeLogger.w("PREFIX symlink does not resolve to rootfs lib/")
+            return false
         }
         val homeLink = File(filesDir, "home")
         if (!homeLink.exists()) {
             try {
-                Os.symlink("/home", homeLink.absolutePath)
+                Os.symlink("../../../../../home", homeLink.absolutePath)
             } catch (_: Throwable) {
                 // home bind is also applied by ProotExecutor; non-fatal
             }
         }
         File(root, "tmp").mkdirs()
         File(root, "var/tmp").mkdirs()
-        return usrLink.exists()
+        return usrLink.exists() && viaLink.exists()
     }
 
     fun hasPythonBinary(): Boolean {

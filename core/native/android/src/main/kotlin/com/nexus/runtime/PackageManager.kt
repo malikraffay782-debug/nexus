@@ -98,20 +98,36 @@ class PackageManager(
             )
         }
 
-        // Refresh indexes first — without this, pkg install often fails on fresh bootstrap.
+        // Pin a known-good mirror and use apt-get only. `pkg update` runs
+        // termux-change-repo which picks random mirrors and still needs the
+        // apt https method — if that method cannot load libcurl, it dies with
+        // exit 100. Fixed sources + LD_LIBRARY_PATH (set by ProotExecutor) fix it.
         val update = runLocked(
             """
             export DEBIAN_FRONTEND=noninteractive
-            if command -v pkg >/dev/null 2>&1; then
-              pkg update -y
-            elif command -v apt-get >/dev/null 2>&1; then
-              apt-get update -y
-            else
-              echo "Neither pkg nor apt-get found in PATH=${'$'}PATH PREFIX=${'$'}PREFIX" >&2
+            export PATH="${'$'}PREFIX/bin:/bin:/usr/bin:${'$'}PATH"
+            export LD_LIBRARY_PATH="${'$'}PREFIX/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
+            export SSL_CERT_FILE="${'$'}PREFIX/etc/tls/cert.pem"
+            export CURL_CA_BUNDLE="${'$'}PREFIX/etc/tls/cert.pem"
+            mkdir -p "${'$'}PREFIX/etc/apt/apt.conf.d" "${'$'}PREFIX/var/lib/apt/lists/partial"
+            # Force official Termux CDN — skip mirror auto-selection
+            cat > "${'$'}PREFIX/etc/apt/sources.list" << 'SRC'
+deb https://packages-cf.termux.dev/apt/termux-main stable main
+SRC
+            rm -f "${'$'}PREFIX/etc/apt/sources.list.d/"*.list 2>/dev/null || true
+            if ! command -v apt-get >/dev/null 2>&1; then
+              echo "apt-get not found in PATH=${'$'}PATH PREFIX=${'$'}PREFIX" >&2
               exit 127
             fi
+            # Sanity: https method must exist (symlink to http)
+            if [ ! -e "${'$'}PREFIX/lib/apt/methods/https" ] && [ ! -e /lib/apt/methods/https ]; then
+              echo "apt https method missing under PREFIX" >&2
+              ls -la "${'$'}PREFIX/lib/apt/methods/" 2>&1 || true
+              exit 127
+            fi
+            apt-get update -y
             """.trimIndent(),
-            180
+            240
         )
         appendResult("pkg update", update)
         if (update.exitCode != 0) {
@@ -121,7 +137,7 @@ class PackageManager(
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
             val hint = when (update.exitCode) {
                 139, -11 -> "\n\nHint: exit 139 = crash (SIGSEGV) in proot/pkg. Not a network error."
-                else -> "\n\nHint: if pkg says 'as root', rebuild without proot -0. If connection/DNS errors, enable INTERNET permission and retry."
+                else -> "\n\nHint: apt https method exit 100 usually means Termux PREFIX symlink or LD_LIBRARY_PATH is wrong. Re-Initialize after updating the app. Check network if mirrors fail."
             }
             return InstallResult(
                 success = false,
@@ -136,6 +152,9 @@ class PackageManager(
             val cmd = """
                 export DEBIAN_FRONTEND=noninteractive
                 export PATH="${'$'}PREFIX/bin:/bin:/usr/bin:${'$'}PATH"
+                export LD_LIBRARY_PATH="${'$'}PREFIX/lib${'$'}{LD_LIBRARY_PATH:+:${'$'}LD_LIBRARY_PATH}"
+                export SSL_CERT_FILE="${'$'}PREFIX/etc/tls/cert.pem"
+                export CURL_CA_BUNDLE="${'$'}PREFIX/etc/tls/cert.pem"
                 if command -v apt-get >/dev/null 2>&1; then
                   apt-get install -y --allow-downgrades $quoted
                 elif command -v pkg >/dev/null 2>&1; then

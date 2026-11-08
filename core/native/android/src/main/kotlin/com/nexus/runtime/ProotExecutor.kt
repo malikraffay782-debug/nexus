@@ -234,9 +234,14 @@ class ProotExecutor(
         env["TERM"] = "xterm-256color"
         env["LANG"] = "C.UTF-8"
         env["LD_PRELOAD"] = ""
-        // Explicitly clear — do not inherit app LD_LIBRARY_PATH
-        env["LD_LIBRARY_PATH"] = ""
-        val ldPath = "(cleared)"
+        // Guest Termux libs live under PREFIX/lib (libcurl, libssl, libapt-pkg…).
+        // Without this, apt methods/https dies with exit 100 when RUNPATH
+        // resolution is incomplete under proot.
+        val guestLib = "$termuxPrefix/lib"
+        env["LD_LIBRARY_PATH"] = guestLib
+        env["SSL_CERT_FILE"] = "$termuxPrefix/etc/tls/cert.pem"
+        env["CURL_CA_BUNDLE"] = "$termuxPrefix/etc/tls/cert.pem"
+        val ldPath = guestLib
 
         // Termux aarch64 binaries use INTERP=/system/bin/linker64 and NEEDED=libc.so
         // (Android Bionic). Without binding /system (and usually /apex on API 29+),
