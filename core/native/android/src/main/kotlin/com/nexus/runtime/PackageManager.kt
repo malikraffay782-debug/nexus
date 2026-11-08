@@ -67,14 +67,12 @@ class PackageManager(
             if (result.timedOut) outputs.append("[timed out]\n")
         }
 
-        // Prove proot+shell works before touching apt (exit 139 = segfault).
-        // Prefer /bin/true if present (no shell), then fall back to echo via sh.
+        // Prove proot+shell works before touching apt.
+        // Termux /bin/sh is dash with INTERP=/system/bin/linker64 — needs /system bind.
         val probeTrue = runLocked("/bin/true", 20)
         val probe = if (probeTrue.exitCode == 0) {
-            // true succeeded — also confirm shell output path
             val echo = runLocked("echo NEXUS_OK", 20)
             if (echo.exitCode == 0 && echo.stdout.contains("NEXUS_OK")) echo else probeTrue.copy(
-                // keep success if true worked even when echo is noisy
                 stdout = (probeTrue.stdout + "\n" + echo.stdout).trim(),
                 stderr = (probeTrue.stderr + "\n" + echo.stderr).trim()
             )

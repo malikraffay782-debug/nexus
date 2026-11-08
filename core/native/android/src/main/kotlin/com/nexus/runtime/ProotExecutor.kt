@@ -175,7 +175,13 @@ class ProotExecutor(
 
         val termuxPrefix = "/data/data/com.termux/files/usr"
         val termuxHome = "/data/data/com.termux/files/home"
-        File(runtimeRoot, "tmp").mkdirs()
+        val hostTmp = File(runtimeRoot, "tmp")
+        hostTmp.mkdirs()
+        // Proot writes probe files under PROOT_TMP_DIR; must exist before spawn
+        // or chmod fails with "No such file or directory".
+        if (!hostTmp.isDirectory) {
+            return CommandResult(-1, "", "Cannot create PROOT_TMP_DIR at ${hostTmp.absolutePath}", false)
+        }
         File(runtimeRoot, "home").mkdirs()
         File(prefix, "tmp").mkdirs()
         try {
@@ -232,9 +238,10 @@ class ProotExecutor(
         env["LD_LIBRARY_PATH"] = ""
         val ldPath = "(cleared)"
 
-        // Minimal binds. Avoid /sys /system /apex — they SIGSEGV on some Vivo/MTK.
-        // -0 (fake root) is required by many Termux packages; if the first probe
-        // still crashes we retry without it below.
+        // Termux aarch64 binaries use INTERP=/system/bin/linker64 and NEEDED=libc.so
+        // (Android Bionic). Without binding /system (and usually /apex on API 29+),
+        // execve("/bin/sh") fails with ENOENT even when prefix/bin/sh exists.
+        // /sys is still avoided — it has caused SIGSEGV on some Vivo/MTK kernels.
         fun buildArgs(fakeRoot: Boolean): MutableList<String> {
             val args = mutableListOf(
                 actualProot,
@@ -247,6 +254,21 @@ class ProotExecutor(
                     "-r", prefix.absolutePath,
                     "-b", "/dev",
                     "-b", "/proc",
+                    "-b", "/system",
+                )
+            )
+            // Android 10+ puts Bionic libc/linker pieces under /apex
+            if (File("/apex").isDirectory) {
+                args.add("-b")
+                args.add("/apex")
+            }
+            // Vendor libs on some OEMs
+            if (File("/vendor").isDirectory) {
+                args.add("-b")
+                args.add("/vendor")
+            }
+            args.addAll(
+                listOf(
                     "-b", "${runtimeRoot.absolutePath}/tmp:/tmp",
                     "-b", "${runtimeRoot.absolutePath}/home:$termuxHome",
                     "-b", "${runtimeRoot.absolutePath}/home:/home",
