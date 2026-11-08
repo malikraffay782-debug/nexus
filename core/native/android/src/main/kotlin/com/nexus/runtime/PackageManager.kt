@@ -9,7 +9,8 @@ import kotlin.concurrent.withLock
  * Package mutations are mutually exclusive (separate from the runtime read lock).
  */
 class PackageManager(
-    private val runLocked: (command: String, timeoutSec: Long) -> ProotExecutor.CommandResult
+    private val runLocked: (command: String, timeoutSec: Long) -> ProotExecutor.CommandResult,
+    private val pythonInstaller: PythonInstaller? = null
 ) {
 
     data class InstallResult(
@@ -156,6 +157,22 @@ class PackageManager(
         if (update.exitCode != 0) {
             val wantsPython = deduped.any { it == "python" || it == "python3" }
             if (wantsPython) {
+                // Prefer Android HTTP download + dpkg (apt https dies under proot).
+                val host = pythonInstaller?.install()
+                if (host != null) {
+                    appendResult("host python install", ProotExecutor.CommandResult(
+                        if (host.success) 0 else 1,
+                        host.output,
+                        host.error,
+                        false
+                    ))
+                    if (host.success) {
+                        return InstallResult(true, outputs.toString(), "")
+                    }
+                    outputs.append(host.output).append('\n')
+                    if (host.error.isNotBlank()) outputs.append(host.error).append('\n')
+                }
+                // Last resort: guest curl (often fails for same SSL reason)
                 val offline = runLocked(offlinePythonScript(), 600)
                 appendResult("offline python install", offline)
                 if (offline.exitCode == 0 &&
@@ -170,7 +187,7 @@ class PackageManager(
                 .filter { it.isNotBlank() }
                 .joinToString("\n")
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
-            val hint = "\n\nHint: apt update failed. Offline curl+dpkg fallback tried for python if requested."
+            val hint = "\n\nHint: apt https broken under proot. Host-side deb download was tried for python."
             return InstallResult(
                 success = false,
                 output = outputs.toString(),

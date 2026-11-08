@@ -22,7 +22,7 @@ class NexusRuntime private constructor(context: Context) {
     /** Serializes concurrent proot runs (UI double-tap / parallel channel calls). */
     private val runMutex = ReentrantLock()
 
-    val packages = PackageManager { command, timeoutSec ->
+    private val runLockedCmd: (String, Long) -> ProotExecutor.CommandResult = { command, timeoutSec ->
         runtimeLock.read {
             runMutex.lock()
             try {
@@ -32,6 +32,11 @@ class NexusRuntime private constructor(context: Context) {
             }
         }
     }
+
+    val packages = PackageManager(
+        runLocked = runLockedCmd,
+        pythonInstaller = PythonInstaller(appContext, runLockedCmd)
+    )
 
     companion object {
         @Volatile
