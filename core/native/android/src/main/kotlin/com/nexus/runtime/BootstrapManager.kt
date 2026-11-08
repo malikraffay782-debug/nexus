@@ -56,10 +56,10 @@ class BootstrapManager(private val context: Context) {
         get() {
             if (readyCached) return true
             return try {
-                val ok = computeIsReady()
-                if (ok) readyCached = true
-                ensureTermuxPathLayout()
-                ok
+                val structurallyReady = computeIsReady()
+                val ready = structurallyReady && ensureTermuxPathLayout()
+                if (ready) readyCached = true
+                ready
             } catch (t: Throwable) {
                 RuntimeLogger.e("isReady check failed", t)
                 false

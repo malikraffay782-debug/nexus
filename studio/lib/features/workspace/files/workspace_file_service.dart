@@ -60,6 +60,8 @@ class WorkspaceFileService {
     try {
       await for (final e in Directory(absDir).list(followLinks: false)) {
         if (e is Link) continue; // never follow / show symlinks
+        // Bound memory while scanning, not only after sort.
+        if (raw.length >= _maxEntries) break;
         final name = e.path.substring(e.path.lastIndexOf('/') + 1);
         if (!WorkspacePaths.isValidSegment(name)) continue;
         raw.add(_RawChild(name, e is Directory));

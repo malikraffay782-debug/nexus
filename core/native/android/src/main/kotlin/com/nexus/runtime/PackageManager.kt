@@ -121,7 +121,7 @@ class PackageManager(
                 .ifBlank { "pkg update failed (exit ${update.exitCode})" }
             val hint = when (update.exitCode) {
                 139, -11 -> "\n\nHint: exit 139 = crash (SIGSEGV) in proot/pkg. Not a network error."
-                else -> "\n\nHint: if pkg says "as root", rebuild without proot -0. If connection/DNS errors, enable INTERNET permission and retry."
+                else -> "\n\nHint: if pkg says 'as root', rebuild without proot -0. If connection/DNS errors, enable INTERNET permission and retry."
             }
             return InstallResult(
                 success = false,

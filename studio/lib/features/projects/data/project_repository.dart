@@ -209,26 +209,13 @@ class ProjectRepository {
       await staging.rename(dir.path);
       return project.copyWithPath(dir.path);
     } catch (e) {
+      // Only clean our staging dir. Never delete [dir] — on a publish race
+      // it may belong to another concurrent create for the same id.
       try {
         if (await staging.exists()) await staging.delete(recursive: true);
-      } catch (e, st) {
-          // Ignore unreadable entries but keep a debug trace.
-          assert(() {
-            // ignore: avoid_print
-            print('ProjectRepository.list skip: $e');
-            return true;
-          }());
-        }
-      try {
-        if (await dir!.exists()) await dir.delete(recursive: true);
-      } catch (e, st) {
-          // Ignore unreadable entries but keep a debug trace.
-          assert(() {
-            // ignore: avoid_print
-            print('ProjectRepository.list skip: $e');
-            return true;
-          }());
-        }
+      } catch (_) {
+        // Preserve the original creation error.
+      }
       rethrow;
     }
   }
