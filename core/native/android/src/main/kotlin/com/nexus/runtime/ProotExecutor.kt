@@ -217,7 +217,10 @@ class ProotExecutor(
         val env = mutableMapOf<String, String>()
         env["PROOT_LOADER"] = loaderPath
         env["PROOT_TMP_DIR"] = File(runtimeRoot, "tmp").absolutePath
-        env["PROOT_NO_SECCOMP"] = "1"
+        // Do NOT set PROOT_NO_SECCOMP. On Android the zygote installs a seccomp
+        // filter that returns ENOSYS for chmod/chdir/etc. Termux proot must
+        // detect and handle SIGSYS; PROOT_NO_SECCOMP disables that path and
+        // produces "Function not implemented" on execve/chmod/chdir.
         env["PREFIX"] = termuxPrefix
         env["HOME"] = termuxHome
         env["TMPDIR"] = "/tmp"
