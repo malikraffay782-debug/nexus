@@ -204,7 +204,8 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                         "exitCode" to cmdResult.exitCode,
                         "stdout" to cmdResult.stdout,
                         "stderr" to cmdResult.stderr,
-                        "timedOut" to cmdResult.timedOut
+                        "timedOut" to cmdResult.timedOut,
+                        "stoppedByUser" to cmdResult.stoppedByUser
                     )
                 }
             }

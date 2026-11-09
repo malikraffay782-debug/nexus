@@ -187,7 +187,11 @@ class BootstrapManager(private val context: Context) {
     fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         return bootstrapLock.withLock {
             try {
-                if (isReady) {
+                // Force a fresh structural check; do not trust process-lifetime cache
+                // across intentional re-init or after external file changes.
+                readyCached = false
+                if (computeIsReady() && ensureTermuxPathLayout()) {
+                    readyCached = true
                     RuntimeLogger.i("Bootstrap already ready (v$CURRENT_BOOTSTRAP_VERSION)")
                     onProgress?.invoke(100, "Already ready")
                     return@withLock Result.success(Unit)

@@ -1,5 +1,7 @@
 import 'dart:io';
 
+import 'package:path/path.dart' as p;
+
 /// User-facing error for any workspace file problem (bad path, too large, ...).
 class WorkspaceException implements Exception {
   const WorkspaceException(this.message);
@@ -94,6 +96,10 @@ class WorkspacePaths {
       if (_isLink(current)) {
         throw const WorkspaceException('Symlinks are not allowed');
       }
+    }
+    // Final containment: resolved path must stay under the canonical project root.
+    if (!p.equals(root, current) && !p.isWithin(root, current)) {
+      throw const WorkspaceException('Resolved path escaped project root');
     }
     return current;
   }

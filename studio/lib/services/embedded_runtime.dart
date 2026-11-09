@@ -112,6 +112,7 @@ class EmbeddedRuntime {
         stdout: result['stdout'] as String? ?? '',
         stderr: result['stderr'] as String? ?? '',
         timedOut: result['timedOut'] as bool? ?? false,
+        stoppedByUser: result['stoppedByUser'] as bool? ?? false,
       );
     } on PlatformException catch (e) {
       return CommandResult(
