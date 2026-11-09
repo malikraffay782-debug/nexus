@@ -191,6 +191,17 @@ class EmbeddedRuntime {
         stderr: e.message ?? e.code,
         timedOut: false,
       );
+    } on TimeoutException {
+      // Native may still hold runMutex — request stop so the next Run is not stuck.
+      try {
+        await stopRun();
+      } catch (_) {}
+      return CommandResult(
+        exitCode: -1,
+        stdout: '',
+        stderr: 'Native call timed out',
+        timedOut: true,
+      );
     } catch (e) {
       return CommandResult(
         exitCode: -1,
@@ -201,7 +212,6 @@ class EmbeddedRuntime {
     }
   }
 
-  /// Best-effort stop of the active proot run (native TERM/KILL).
   /// Android: same path as native `getDir("flutter")/projects`.
   /// Other platforms: null (caller should use path_provider).
   static Future<String?> getProjectsRoot() async {
@@ -215,6 +225,7 @@ class EmbeddedRuntime {
     }
   }
 
+  /// Best-effort stop of the active proot run (native TERM/KILL).
   static Future<bool> stopRun() async {
     try {
       final result = await _channel.invokeMethod<Map>('stopRun')
@@ -225,7 +236,7 @@ class EmbeddedRuntime {
     }
   }
 
-static Future<String> pythonVersion() async {
+  static Future<String> pythonVersion() async {
     try {
       return await _channel
               .invokeMethod<String>('pythonVersion')

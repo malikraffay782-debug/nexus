@@ -15,7 +15,14 @@ class SceneService {
   Future<List<String>> listScenes() async {
     final abs = paths.resolve(rootRel);
     final dir = Directory(abs);
-    if (!await dir.exists()) return [];
+    if (!await dir.exists()) {
+      try {
+        await dir.create(recursive: true);
+      } catch (_) {
+        return [];
+      }
+      return [];
+    }
 
     final names = <String>[];
     await for (final e in dir.list(followLinks: false)) {
@@ -64,7 +71,9 @@ class SceneService {
       throw const WorkspaceException('A scene with that name already exists');
     }
     final doc = SceneDoc.empty(clean);
-    await File(abs).writeAsString(doc.encodePretty(), flush: true);
+    final file = File(abs);
+    await file.parent.create(recursive: true);
+    await file.writeAsString(doc.encodePretty(), flush: true);
     return fileName;
   }
 

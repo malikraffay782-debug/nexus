@@ -429,8 +429,8 @@ class ProotExecutor(
             val errExtra = if (timedOut) "\n[Timeout after ${effectiveTimeout}s]" else ""
             return SpawnResult(
                 exitCode,
-                stdout.toString().trim(),
-                (stderr.toString().trim() + errExtra).trim(),
+                stdout.toString(),
+                (stderr.toString() + errExtra),
                 timedOut = timedOut,
                 stoppedByUser = stopRequested && !timedOut
             )

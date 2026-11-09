@@ -1,4 +1,4 @@
-enum RunPhase { idle, checking, starting, running, stopping, finished, failed }
+enum RunPhase { idle, checking, starting, running, stopping, finished, failed, cancelled }
 
 extension RunPhaseX on RunPhase {
   bool get isBusy =>

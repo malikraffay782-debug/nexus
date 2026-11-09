@@ -116,7 +116,7 @@ class RunSessionController extends ChangeNotifier {
     final RunPhase phase;
 
     if (stopped) {
-      phase = RunPhase.failed;
+      phase = RunPhase.cancelled;
       message = 'Stopped by user';
     } else if (r.timedOut) {
       phase = RunPhase.failed;

@@ -23,6 +23,7 @@ class RunOutputPanel extends StatelessWidget {
         RunPhase.stopping => 'Stopping…',
         RunPhase.finished => 'Finished (exit 0)',
         RunPhase.failed => state.errorMessage ?? 'Failed',
+        RunPhase.cancelled => state.errorMessage ?? 'Stopped',
       };
 
   @override
@@ -36,7 +37,8 @@ class RunOutputPanel extends StatelessWidget {
     final dur = state.duration;
     final body = [
       if (state.errorMessage != null &&
-          state.phase == RunPhase.failed &&
+          (state.phase == RunPhase.failed ||
+              state.phase == RunPhase.cancelled) &&
           !hasOutput)
         state.errorMessage!,
       if (state.stdout.isNotEmpty) state.stdout,
@@ -87,6 +89,7 @@ class RunOutputPanel extends StatelessWidget {
                   if (onClose != null &&
                       (state.phase == RunPhase.finished ||
                           state.phase == RunPhase.failed ||
+                          state.phase == RunPhase.cancelled ||
                           state.phase == RunPhase.idle))
                     IconButton(
                       tooltip: 'Close',

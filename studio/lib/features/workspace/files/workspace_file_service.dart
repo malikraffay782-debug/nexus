@@ -170,6 +170,13 @@ class WorkspaceFileService {
   }
 
   Future<void> deleteFile(String rel) async {
+    final normalized = rel.trim();
+    // Entry point required by native ProjectMount / Run.
+    if (normalized == 'src/main.py') {
+      throw const WorkspaceException(
+        'Cannot delete src/main.py — it is the project entry script',
+      );
+    }
     final abs = paths.resolve(rel);
     if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.file) {
       throw const WorkspaceException('Only files can be deleted');

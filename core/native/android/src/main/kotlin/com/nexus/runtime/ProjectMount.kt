@@ -85,7 +85,13 @@ class ProjectMount private constructor(
             } catch (e: IOException) {
                 throw ProjectMountException("Cannot resolve src/main.py")
             }
-            if (!sc.path.startsWith(projectDir.path + File.separator)) {
+            val projectCanon = try {
+                projectDir.canonicalFile
+            } catch (e: IOException) {
+                throw ProjectMountException("Cannot resolve project folder")
+            }
+            val prefix = projectCanon.path + File.separator
+            if (sc != projectCanon && !sc.path.startsWith(prefix)) {
                 throw ProjectMountException("src/main.py is outside the project")
             }
         }
@@ -111,17 +117,24 @@ class ProjectMount private constructor(
             }
         }
 
+        /**
+         * True only for real symlinks.
+         *
+         * Do NOT compare absolute vs canonical paths: on Android
+         * /data/user/0 vs /data/data often differs without any symlink and
+         * previously caused false "Project folder is a symlink" failures.
+         * Escape resistance is handled by canonical parent checks in [resolve].
+         */
         internal fun isSymlink(f: File): Boolean {
             return try {
-                if (Files.isSymbolicLink(f.toPath())) return true
-                // Also treat a path whose parent chain differs after canonicalization
-                // as unsafe (symlink parent escape).
-                val abs = f.absoluteFile
-                val canon = f.canonicalFile
-                abs.path != canon.path && abs.name == canon.name
+                Files.isSymbolicLink(f.toPath())
             } catch (_: Exception) {
-                // Fail closed: treat unreadable paths as unsafe symlinks
-                true
+                // Unreadable existing path: fail closed. Missing path: not a link.
+                try {
+                    f.exists()
+                } catch (_: Exception) {
+                    true
+                }
             }
         }
     }
