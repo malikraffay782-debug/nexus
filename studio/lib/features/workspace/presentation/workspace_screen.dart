@@ -11,6 +11,7 @@ import '../run/run_session_controller.dart';
 import '../widgets/run_output_panel.dart';
 import '../files/workspace_files_provider.dart';
 import '../widgets/workspace_code_tab.dart';
+import '../widgets/workspace_scene_tab.dart';
 
 class WorkspaceScreen extends ConsumerStatefulWidget {
   const WorkspaceScreen({super.key, required this.projectId});
@@ -217,6 +218,8 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
                   for (final t in tabs)
                     if (t.label == 'Code')
                       WorkspaceCodeTab(controller: files)
+                    else if (t.label == 'Scene')
+                      WorkspaceSceneTab(projectPath: project.path)
                     else
                       _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
                 ],

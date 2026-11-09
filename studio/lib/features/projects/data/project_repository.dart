@@ -188,6 +188,19 @@ class ProjectRepository {
         "print('hello from nexus')\n",
       );
 
+      if (type == ProjectType.game) {
+        await File(p.join(staging.path, 'scenes', 'main.json')).writeAsString(
+          const JsonEncoder.withIndent('  ').convert({
+            'version': 1,
+            'name': 'main',
+            'width': 720,
+            'height': 1280,
+            'nodes': <dynamic>[],
+          }),
+          flush: true,
+        );
+      }
+
       final project = Project(
         id: id,
         name: name.trim(),
