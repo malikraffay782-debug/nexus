@@ -153,7 +153,7 @@ class PythonInstaller(
             if (conn.responseCode !in 200..299) {
                 throw IllegalStateException("Packages.gz HTTP ${conn.responseCode}")
             }
-            GZIPInputStream(conn.inputStream).bufferedReader().use { it.readText() }
+            return GZIPInputStream(conn.inputStream).bufferedReader().use { it.readText() }
         } finally {
             conn.disconnect()
         }

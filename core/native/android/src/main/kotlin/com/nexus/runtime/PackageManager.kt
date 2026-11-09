@@ -244,7 +244,7 @@ class PackageManager(
             cd /tmp/nexus-debs
             BASE="https://packages-cf.termux.dev/apt/termux-main"
             echo "Fetching Packages index via curl..."
-            curl -fsSL "$BASE/dists/stable/main/binary-aarch64/Packages.gz" -o Packages.gz
+            curl -fsSL "${'$'}BASE/dists/stable/main/binary-aarch64/Packages.gz" -o Packages.gz
             gzip -dc Packages.gz > Packages
             NEED="python libandroid-posix-semaphore libandroid-support libbz2 libcrypt libexpat libffi liblzma libsqlite ncurses ncurses-ui-libs openssl readline gdbm zstd"
             for p in ${'$'}NEED; do
@@ -258,7 +258,7 @@ class PackageManager(
                 continue
               fi
               echo "Downloading ${'$'}fn"
-              curl -fsSL "$BASE/${'$'}fn" -o "$(basename "${'$'}fn")" || {
+              curl -fsSL "${'$'}BASE/${'$'}fn" -o "$(basename "${'$'}fn")" || {
                 echo "download failed: ${'$'}fn" >&2
                 exit 1
               }
