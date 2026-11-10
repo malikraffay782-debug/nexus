@@ -345,17 +345,45 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     });
   }
 
-  /// Resize from bottom-right; clamps size so node stays inside stage.
-  void _resizeNode(String id, double w, double h) {
+  /// Resize with optional origin shift (for non-BR corners). Clamps inside stage.
+  void _resizeNode(
+    String id, {
+    required double w,
+    required double h,
+    double? x,
+    double? y,
+  }) {
     final doc = _doc;
     if (doc == null) return;
     final nodes = doc.nodes.map((n) {
       if (n.id != id) return n;
-      final maxW = (doc.width - n.x).clamp(24.0, 512.0);
-      final maxH = (doc.height - n.y).clamp(24.0, 512.0);
-      final nw = w.clamp(24.0, maxW);
-      final nh = h.clamp(24.0, maxH);
-      return n.copyWith(w: nw, h: nh);
+      var nx = x ?? n.x;
+      var ny = y ?? n.y;
+      var nw = w;
+      var nh = h;
+      // Min size.
+      if (nw < 24) {
+        if (x != null) nx = n.x + n.w - 24;
+        nw = 24;
+      }
+      if (nh < 24) {
+        if (y != null) ny = n.y + n.h - 24;
+        nh = 24;
+      }
+      // Keep inside stage.
+      if (nx < 0) {
+        nw += nx;
+        nx = 0;
+      }
+      if (ny < 0) {
+        nh += ny;
+        ny = 0;
+      }
+      if (nx + nw > doc.width) nw = doc.width - nx;
+      if (ny + nh > doc.height) nh = doc.height - ny;
+      nw = nw.clamp(24.0, 512.0);
+      nh = nh.clamp(24.0, 512.0);
+      return n.copyWith(x: nx, y: ny, w: nw, h: nh);
     }).toList();
     setState(() {
       _doc = doc.copyWith(nodes: nodes);
@@ -403,9 +431,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                     // Portrait / short: more height when a node is selected
                     // so type/color/size controls fit without bottom overflow.
                     final selected = _selectedNodeId != null;
-                    final frac = selected ? 0.48 : 0.30;
-                    final maxH = selected ? 280.0 : 150.0;
-                    final minH = selected ? 180.0 : 96.0;
+                    // Keep props compact so stage stays large enough for touch.
+                    final frac = selected ? 0.42 : 0.28;
+                    final maxH = selected ? 240.0 : 140.0;
+                    final minH = selected ? 160.0 : 88.0;
                     return Column(
                       children: [
                         SizedBox(
@@ -837,8 +866,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final selected = n.id == _selectedNodeId;
     final isCamera = n.type == SceneNodeTypes.camera;
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.82);
-    const handleSize = 14.0;
-    const handleHit = 22.0;
+    // Touch-friendly: ~40dp hit, visible ~20dp square.
+    const handleVisual = 20.0;
+    const handleHit = 40.0;
 
     Widget body = Container(
       width: mw,
@@ -873,52 +903,41 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         clipBehavior: Clip.none,
         children: [
           body,
-          // Visual corners (non-interactive).
-          _cornerDot(left: -3, top: -3, size: handleSize),
-          _cornerDot(right: -3, top: -3, size: handleSize),
-          _cornerDot(left: -3, bottom: -3, size: handleSize),
-          // Interactive bottom-right resize handle.
-          Positioned(
-            right: -handleHit / 2 + 2,
-            bottom: -handleHit / 2 + 2,
-            width: handleHit,
-            height: handleHit,
-            child: GestureDetector(
-              behavior: HitTestBehavior.opaque,
-              onPanUpdate: (details) {
-                SceneNode? cur;
-                final nodes = _doc?.nodes;
-                if (nodes != null) {
-                  for (final e in nodes) {
-                    if (e.id == n.id) {
-                      cur = e;
-                      break;
-                    }
-                  }
-                }
-                if (cur == null) return;
-                final newW = cur.w + details.delta.dx / scaleX;
-                final newH = cur.h + details.delta.dy / scaleY;
-                _resizeNode(n.id, newW, newH);
-              },
-              child: Center(
-                child: Container(
-                  width: handleSize,
-                  height: handleSize,
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(3),
-                    border: Border.all(color: fill, width: 1.5),
-                    boxShadow: [
-                      BoxShadow(
-                        color: Colors.black.withValues(alpha: 0.35),
-                        blurRadius: 3,
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ),
+          _resizeHandle(
+            n: n,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            fill: fill,
+            visual: handleVisual,
+            hit: handleHit,
+            corner: _ResizeCorner.tl,
+          ),
+          _resizeHandle(
+            n: n,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            fill: fill,
+            visual: handleVisual,
+            hit: handleHit,
+            corner: _ResizeCorner.tr,
+          ),
+          _resizeHandle(
+            n: n,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            fill: fill,
+            visual: handleVisual,
+            hit: handleHit,
+            corner: _ResizeCorner.bl,
+          ),
+          _resizeHandle(
+            n: n,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            fill: fill,
+            visual: handleVisual,
+            hit: handleHit,
+            corner: _ResizeCorner.br,
           ),
         ],
       );
@@ -930,7 +949,6 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       child: GestureDetector(
         onTap: () => _selectNode(n.id),
         onPanUpdate: (details) {
-          // Read latest position — closure [n] is stale mid-drag.
           SceneNode? cur;
           final nodes = _doc?.nodes;
           if (nodes != null) {
@@ -951,32 +969,111 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     );
   }
 
-  Widget _cornerDot({
-    double? left,
-    double? top,
-    double? right,
-    double? bottom,
-    required double size,
+  Widget _resizeHandle({
+    required SceneNode n,
+    required double scaleX,
+    required double scaleY,
+    required Color fill,
+    required double visual,
+    required double hit,
+    required _ResizeCorner corner,
   }) {
+    double? left, top, right, bottom;
+    switch (corner) {
+      case _ResizeCorner.tl:
+        left = -hit / 2 + 2;
+        top = -hit / 2 + 2;
+        break;
+      case _ResizeCorner.tr:
+        right = -hit / 2 + 2;
+        top = -hit / 2 + 2;
+        break;
+      case _ResizeCorner.bl:
+        left = -hit / 2 + 2;
+        bottom = -hit / 2 + 2;
+        break;
+      case _ResizeCorner.br:
+        right = -hit / 2 + 2;
+        bottom = -hit / 2 + 2;
+        break;
+    }
     return Positioned(
       left: left,
       top: top,
       right: right,
       bottom: bottom,
-      width: size,
-      height: size,
-      child: IgnorePointer(
-        child: Container(
-          decoration: BoxDecoration(
-            color: Colors.white.withValues(alpha: 0.9),
-            borderRadius: BorderRadius.circular(2),
-            border: Border.all(color: Colors.black26, width: 1),
+      width: hit,
+      height: hit,
+      child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
+        onPanUpdate: (details) {
+          SceneNode? cur;
+          final nodes = _doc?.nodes;
+          if (nodes != null) {
+            for (final e in nodes) {
+              if (e.id == n.id) {
+                cur = e;
+                break;
+              }
+            }
+          }
+          if (cur == null) return;
+          final dx = details.delta.dx / scaleX;
+          final dy = details.delta.dy / scaleY;
+          switch (corner) {
+            case _ResizeCorner.br:
+              _resizeNode(n.id, w: cur.w + dx, h: cur.h + dy);
+              break;
+            case _ResizeCorner.bl:
+              _resizeNode(
+                n.id,
+                w: cur.w - dx,
+                h: cur.h + dy,
+                x: cur.x + dx,
+              );
+              break;
+            case _ResizeCorner.tr:
+              _resizeNode(
+                n.id,
+                w: cur.w + dx,
+                h: cur.h - dy,
+                y: cur.y + dy,
+              );
+              break;
+            case _ResizeCorner.tl:
+              _resizeNode(
+                n.id,
+                w: cur.w - dx,
+                h: cur.h - dy,
+                x: cur.x + dx,
+                y: cur.y + dy,
+              );
+              break;
+          }
+        },
+        child: Center(
+          child: Container(
+            width: visual,
+            height: visual,
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(4),
+              border: Border.all(color: fill, width: 2),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withValues(alpha: 0.4),
+                  blurRadius: 4,
+                ),
+              ],
+            ),
           ),
         ),
       ),
     );
   }
 }
+
+enum _ResizeCorner { tl, tr, bl, br }
 
 /// Light grid for the 2D stage (editor only — not a game loop).
 class _StageGridPainter extends CustomPainter {
