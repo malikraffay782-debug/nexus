@@ -317,8 +317,12 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
 
   void _resizeSelected(double delta) {
     _updateSelectedNode((n) {
-      final nw = (n.w + delta).clamp(24.0, 256.0);
-      final nh = (n.h + delta).clamp(24.0, 256.0);
+      final doc = _doc;
+      if (doc == null) return n;
+      final maxW = (doc.width - n.x).clamp(24.0, 512.0);
+      final maxH = (doc.height - n.y).clamp(24.0, 512.0);
+      final nw = (n.w + delta).clamp(24.0, maxW);
+      final nh = (n.h + delta).clamp(24.0, maxH);
       return n.copyWith(w: nw, h: nh);
     });
   }
@@ -333,6 +337,25 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       final nx = x.clamp(0, maxX).toDouble();
       final ny = y.clamp(0, maxY).toDouble();
       return n.copyWith(x: nx, y: ny);
+    }).toList();
+    setState(() {
+      _doc = doc.copyWith(nodes: nodes);
+      _selectedNodeId = id;
+      _dirty = true;
+    });
+  }
+
+  /// Resize from bottom-right; clamps size so node stays inside stage.
+  void _resizeNode(String id, double w, double h) {
+    final doc = _doc;
+    if (doc == null) return;
+    final nodes = doc.nodes.map((n) {
+      if (n.id != id) return n;
+      final maxW = (doc.width - n.x).clamp(24.0, 512.0);
+      final maxH = (doc.height - n.y).clamp(24.0, 512.0);
+      final nw = w.clamp(24.0, maxW);
+      final nh = h.clamp(24.0, maxH);
+      return n.copyWith(w: nw, h: nh);
     }).toList();
     setState(() {
       _doc = doc.copyWith(nodes: nodes);
@@ -814,6 +837,93 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final selected = n.id == _selectedNodeId;
     final isCamera = n.type == SceneNodeTypes.camera;
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.82);
+    const handleSize = 14.0;
+    const handleHit = 22.0;
+
+    Widget body = Container(
+      width: mw,
+      height: mh,
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: fill,
+        borderRadius: BorderRadius.circular(isCamera ? 20 : 6),
+        border: Border.all(
+          color: selected ? Colors.white : fill.withValues(alpha: 1),
+          width: selected ? 2.5 : 1,
+        ),
+        boxShadow: selected
+            ? [
+                BoxShadow(
+                  color: fill.withValues(alpha: 0.45),
+                  blurRadius: 8,
+                  spreadRadius: 1,
+                ),
+              ]
+            : null,
+      ),
+      child: Icon(
+        isCamera ? Icons.videocam : Icons.square_rounded,
+        size: (mw < 28 || mh < 28) ? 12 : 18,
+        color: Colors.white.withValues(alpha: 0.95),
+      ),
+    );
+
+    if (selected) {
+      body = Stack(
+        clipBehavior: Clip.none,
+        children: [
+          body,
+          // Visual corners (non-interactive).
+          _cornerDot(left: -3, top: -3, size: handleSize),
+          _cornerDot(right: -3, top: -3, size: handleSize),
+          _cornerDot(left: -3, bottom: -3, size: handleSize),
+          // Interactive bottom-right resize handle.
+          Positioned(
+            right: -handleHit / 2 + 2,
+            bottom: -handleHit / 2 + 2,
+            width: handleHit,
+            height: handleHit,
+            child: GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanUpdate: (details) {
+                SceneNode? cur;
+                final nodes = _doc?.nodes;
+                if (nodes != null) {
+                  for (final e in nodes) {
+                    if (e.id == n.id) {
+                      cur = e;
+                      break;
+                    }
+                  }
+                }
+                if (cur == null) return;
+                final newW = cur.w + details.delta.dx / scaleX;
+                final newH = cur.h + details.delta.dy / scaleY;
+                _resizeNode(n.id, newW, newH);
+              },
+              child: Center(
+                child: Container(
+                  width: handleSize,
+                  height: handleSize,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(3),
+                    border: Border.all(color: fill, width: 1.5),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.35),
+                        blurRadius: 3,
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      );
+    }
+
     return Positioned(
       left: left,
       top: top,
@@ -836,31 +946,31 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           final newY = cur.y + details.delta.dy / scaleY;
           _moveNode(n.id, newX, newY);
         },
+        child: body,
+      ),
+    );
+  }
+
+  Widget _cornerDot({
+    double? left,
+    double? top,
+    double? right,
+    double? bottom,
+    required double size,
+  }) {
+    return Positioned(
+      left: left,
+      top: top,
+      right: right,
+      bottom: bottom,
+      width: size,
+      height: size,
+      child: IgnorePointer(
         child: Container(
-          width: mw,
-          height: mh,
-          alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: fill,
-            borderRadius: BorderRadius.circular(isCamera ? 20 : 6),
-            border: Border.all(
-              color: selected ? Colors.white : fill.withValues(alpha: 1),
-              width: selected ? 2.5 : 1,
-            ),
-            boxShadow: selected
-                ? [
-                    BoxShadow(
-                      color: fill.withValues(alpha: 0.45),
-                      blurRadius: 8,
-                      spreadRadius: 1,
-                    ),
-                  ]
-                : null,
-          ),
-          child: Icon(
-            isCamera ? Icons.videocam : Icons.square_rounded,
-            size: (mw < 28 || mh < 28) ? 12 : 18,
-            color: Colors.white.withValues(alpha: 0.95),
+            color: Colors.white.withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(2),
+            border: Border.all(color: Colors.black26, width: 1),
           ),
         ),
       ),
