@@ -335,14 +335,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               ? _emptyScenes(scheme)
               : LayoutBuilder(
                   builder: (context, constraints) {
-                    // Landscape / short height: stack nodes above canvas.
-                    final wide = constraints.maxWidth >= 520 &&
-                        constraints.maxHeight >= 280;
+                    // Side-by-side only when both axes have room; else stack.
+                    final wide = constraints.maxWidth >= 560 &&
+                        constraints.maxHeight >= 300;
                     if (wide) {
                       return Row(
                         children: [
                           SizedBox(
-                            width: 160,
+                            width: 200,
                             child: _nodeSidebar(scheme),
                           ),
                           const VerticalDivider(width: 1),
@@ -350,11 +350,17 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                         ],
                       );
                     }
+                    // Portrait / short: more height when a node is selected
+                    // so name + size controls fit without bottom overflow.
+                    final selected = _selectedNodeId != null;
+                    final frac = selected ? 0.42 : 0.30;
+                    final maxH = selected ? 240.0 : 150.0;
+                    final minH = selected ? 150.0 : 96.0;
                     return Column(
                       children: [
                         SizedBox(
-                          height: (constraints.maxHeight * 0.32)
-                              .clamp(100.0, 160.0),
+                          height: (constraints.maxHeight * frac)
+                              .clamp(minH, maxH),
                           child: _nodeSidebar(scheme),
                         ),
                         const Divider(height: 1),
@@ -455,10 +461,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
+          SizedBox(
+            height: 40,
             child: Row(
               children: [
+                const SizedBox(width: 10),
                 Expanded(
                   child: Text(
                     'Nodes',
@@ -468,24 +475,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                 IconButton(
                   tooltip: 'Add node',
                   icon: const Icon(Icons.add, size: 20),
+                  visualDensity: VisualDensity.compact,
                   onPressed: _addNode,
                 ),
               ],
             ),
           ),
           const Divider(height: 1),
+          // List must shrink; properties stay fixed-height below.
           Expanded(child: _nodeList(scheme)),
           if (_selectedNodeId != null) ...[
             const Divider(height: 1),
             _nodeProperties(scheme),
-            Padding(
-              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
-              child: OutlinedButton.icon(
-                onPressed: _removeSelectedNode,
-                icon: const Icon(Icons.delete_outline, size: 18),
-                label: const Text('Remove'),
-              ),
-            ),
           ],
         ],
       ),
@@ -504,60 +505,62 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       }
     }
     if (node == null) return const SizedBox.shrink();
-    // Keep name field in sync when selection changes from canvas.
-    if (_nameEditNodeId != node.id) {
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (!mounted) return;
-        _syncNameField(node);
-        setState(() {});
-      });
-    }
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
       child: Column(
+        mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text('Selected', style: Theme.of(context).textTheme.labelMedium),
-          const SizedBox(height: 4),
           TextField(
             controller: _nameCtrl,
-            style: const TextStyle(fontSize: 14),
+            style: const TextStyle(fontSize: 13),
             decoration: const InputDecoration(
               isDense: true,
               labelText: 'Name',
               border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
             ),
             textInputAction: TextInputAction.done,
             onSubmitted: _renameSelected,
             onChanged: (v) {
-              // Live rename while typing (empty ignored until done).
               if (v.trim().isNotEmpty) _renameSelected(v);
             },
           ),
-          const SizedBox(height: 8),
-          Text(
-            'Size ${node.w.toInt()}×${node.h.toInt()}',
-            style: TextStyle(fontSize: 12, color: scheme.outline),
-          ),
+          const SizedBox(height: 4),
           Row(
             children: [
+              Text(
+                'Size',
+                style: TextStyle(fontSize: 12, color: scheme.outline),
+              ),
               IconButton(
                 tooltip: 'Smaller',
-                icon: const Icon(Icons.remove, size: 20),
+                icon: const Icon(Icons.remove, size: 18),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 onPressed: () => _resizeSelected(-8),
               ),
-              Expanded(
-                child: Text(
-                  '${node.w.toInt()}',
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 13),
-                ),
+              Text(
+                '${node.w.toInt()}×${node.h.toInt()}',
+                style: const TextStyle(fontSize: 12),
               ),
               IconButton(
                 tooltip: 'Larger',
-                icon: const Icon(Icons.add, size: 20),
+                icon: const Icon(Icons.add, size: 18),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
                 onPressed: () => _resizeSelected(8),
+              ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Remove node',
+                icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: _removeSelectedNode,
               ),
             ],
           ),
@@ -581,16 +584,19 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       );
     }
     return ListView.builder(
+      padding: EdgeInsets.zero,
       itemCount: doc.nodes.length,
       itemBuilder: (context, i) {
         final n = doc.nodes[i];
         final selected = n.id == _selectedNodeId;
         return ListTile(
           dense: true,
+          visualDensity: VisualDensity.compact,
           selected: selected,
-          title: Text(n.name, overflow: TextOverflow.ellipsis),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+          title: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
           subtitle: Text(
-            '${n.type} · ${n.w.toInt()}×${n.h.toInt()} · (${n.x.toInt()}, ${n.y.toInt()})',
+            '${n.w.toInt()}×${n.h.toInt()} · (${n.x.toInt()}, ${n.y.toInt()})',
             style: TextStyle(fontSize: 11, color: scheme.outline),
           ),
           onTap: () => _selectNode(n.id),
