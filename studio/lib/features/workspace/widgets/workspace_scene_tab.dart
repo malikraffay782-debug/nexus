@@ -195,25 +195,52 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     }
   }
 
-  void _addNode() {
+  void _addNode({String type = SceneNodeTypes.sprite}) {
     final doc = _doc;
     if (doc == null) return;
     final n = doc.nodes.length;
     final col = n % 4;
     final row = n ~/ 4;
+    final t = SceneNodeTypes.normalize(type);
     final node = SceneNode(
       id: 'n_${DateTime.now().microsecondsSinceEpoch}',
-      type: 'sprite',
-      name: 'Node ${n + 1}',
+      type: t,
+      name: t == SceneNodeTypes.camera ? 'Camera ${n + 1}' : 'Sprite ${n + 1}',
       x: 80.0 + col * 120,
       y: 80.0 + row * 120,
-      w: 64,
-      h: 64,
+      w: t == SceneNodeTypes.camera ? 48 : 64,
+      h: t == SceneNodeTypes.camera ? 48 : 64,
+      color: ScenePalette.forType(t),
     );
     setState(() {
       _doc = doc.withNodeAdded(node);
       _selectedNodeId = node.id;
       _syncNameField(node);
+      _dirty = true;
+    });
+  }
+
+  void _setNodeType(String type) {
+    final t = SceneNodeTypes.normalize(type);
+    _updateSelectedNode((n) {
+      // Keep color unless switching to camera and still on a sprite default.
+      final color = t == SceneNodeTypes.camera &&
+              n.color == ScenePalette.forType(SceneNodeTypes.sprite)
+          ? ScenePalette.forType(t)
+          : n.color;
+      return n.copyWith(type: t, color: color);
+    });
+  }
+
+  void _setNodeColor(int argb) {
+    _updateSelectedNode((n) => n.copyWith(color: argb));
+  }
+
+  void _toggleGrid() {
+    final doc = _doc;
+    if (doc == null) return;
+    setState(() {
+      _doc = doc.copyWith(showGrid: !doc.showGrid);
       _dirty = true;
     });
   }
@@ -351,11 +378,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                       );
                     }
                     // Portrait / short: more height when a node is selected
-                    // so name + size controls fit without bottom overflow.
+                    // so type/color/size controls fit without bottom overflow.
                     final selected = _selectedNodeId != null;
-                    final frac = selected ? 0.42 : 0.30;
-                    final maxH = selected ? 240.0 : 150.0;
-                    final minH = selected ? 150.0 : 96.0;
+                    final frac = selected ? 0.48 : 0.30;
+                    final maxH = selected ? 280.0 : 150.0;
+                    final minH = selected ? 180.0 : 96.0;
                     return Column(
                       children: [
                         SizedBox(
@@ -472,11 +499,21 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                     style: Theme.of(context).textTheme.titleSmall,
                   ),
                 ),
-                IconButton(
+                PopupMenuButton<String>(
                   tooltip: 'Add node',
                   icon: const Icon(Icons.add, size: 20),
-                  visualDensity: VisualDensity.compact,
-                  onPressed: _addNode,
+                  padding: EdgeInsets.zero,
+                  onSelected: (t) => _addNode(type: t),
+                  itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: SceneNodeTypes.sprite,
+                      child: Text('Sprite'),
+                    ),
+                    PopupMenuItem(
+                      value: SceneNodeTypes.camera,
+                      child: Text('Camera'),
+                    ),
+                  ],
                 ),
               ],
             ),
@@ -506,7 +543,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     }
     if (node == null) return const SizedBox.shrink();
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 6, 4, 6),
+      padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -527,18 +564,44 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
             },
           ),
           const SizedBox(height: 4),
+          // Type chips + remove
           Row(
             children: [
-              Text(
-                'Size',
-                style: TextStyle(fontSize: 12, color: scheme.outline),
+              for (final t in SceneNodeTypes.all)
+                Padding(
+                  padding: const EdgeInsets.only(right: 4),
+                  child: ChoiceChip(
+                    label: Text(
+                      t,
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    selected: node.type == t,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    onSelected: (_) => _setNodeType(t),
+                  ),
+                ),
+              const Spacer(),
+              IconButton(
+                tooltip: 'Remove node',
+                icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                onPressed: _removeSelectedNode,
               ),
+            ],
+          ),
+          // Size
+          Row(
+            children: [
+              Text('Size', style: TextStyle(fontSize: 12, color: scheme.outline)),
               IconButton(
                 tooltip: 'Smaller',
                 icon: const Icon(Icons.remove, size: 18),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 onPressed: () => _resizeSelected(-8),
               ),
               Text(
@@ -550,19 +613,38 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                 icon: const Icon(Icons.add, size: 18),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
                 onPressed: () => _resizeSelected(8),
               ),
-              const Spacer(),
-              IconButton(
-                tooltip: 'Remove node',
-                icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
-                onPressed: _removeSelectedNode,
-              ),
             ],
+          ),
+          // Color palette
+          SizedBox(
+            height: 28,
+            child: ListView.separated(
+              scrollDirection: Axis.horizontal,
+              itemCount: ScenePalette.colors.length,
+              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              itemBuilder: (context, i) {
+                final c = ScenePalette.colors[i];
+                final selected = node!.color == c;
+                return GestureDetector(
+                  onTap: () => _setNodeColor(c),
+                  child: Container(
+                    width: 24,
+                    height: 24,
+                    decoration: BoxDecoration(
+                      color: Color(c),
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: selected ? scheme.onSurface : scheme.outlineVariant,
+                        width: selected ? 2.5 : 1,
+                      ),
+                    ),
+                  ),
+                );
+              },
+            ),
           ),
         ],
       ),
@@ -596,8 +678,16 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           contentPadding: const EdgeInsets.symmetric(horizontal: 10),
           title: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
           subtitle: Text(
-            '${n.w.toInt()}×${n.h.toInt()} · (${n.x.toInt()}, ${n.y.toInt()})',
+            '${n.type} · ${n.w.toInt()}×${n.h.toInt()}',
             style: TextStyle(fontSize: 11, color: scheme.outline),
+          ),
+          leading: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(
+              color: n.paintColor,
+              shape: BoxShape.circle,
+            ),
           ),
           onTap: () => _selectNode(n.id),
         );
@@ -629,29 +719,60 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Text(
-                '${doc.name}  ·  ${doc.width}×${doc.height}  ·  ${doc.nodes.length} nodes'
-                '${_dirty ? '  ·  unsaved' : ''}',
-                style: Theme.of(context).textTheme.labelMedium?.copyWith(
-                      color: scheme.outline,
+              Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 8),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        '${doc.name}  ·  ${doc.width}×${doc.height}  ·  ${doc.nodes.length}'
+                        '${_dirty ? '  ·  unsaved' : ''}',
+                        overflow: TextOverflow.ellipsis,
+                        style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                              color: scheme.outline,
+                            ),
+                      ),
                     ),
+                    IconButton(
+                      tooltip: doc.showGrid ? 'Hide grid' : 'Show grid',
+                      icon: Icon(
+                        doc.showGrid ? Icons.grid_on : Icons.grid_off,
+                        size: 18,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _toggleGrid,
+                    ),
+                  ],
+                ),
               ),
-              const SizedBox(height: 6),
               Container(
                 width: w,
                 height: h,
                 decoration: BoxDecoration(
-                  color: scheme.surfaceContainerHighest.withValues(alpha: 0.4),
+                  color: const Color(0xFF1A1A22),
                   border: Border.all(color: scheme.outlineVariant),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 clipBehavior: Clip.hardEdge,
                 child: Stack(
                   children: [
+                    if (doc.showGrid)
+                      Positioned.fill(
+                        child: CustomPaint(
+                          painter: _StageGridPainter(
+                            stageW: doc.width.toDouble(),
+                            stageH: doc.height.toDouble(),
+                            scaleX: scaleX,
+                            scaleY: scaleY,
+                            color: scheme.outlineVariant.withValues(alpha: 0.35),
+                          ),
+                        ),
+                      ),
                     if (doc.nodes.isEmpty)
                       Center(
                         child: Text(
-                          'Empty stage — add a node',
+                          'Empty stage — add a sprite or camera',
                           style: TextStyle(color: scheme.outline),
                         ),
                       ),
@@ -689,6 +810,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final top =
         (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
     final selected = n.id == _selectedNodeId;
+    final isCamera = n.type == SceneNodeTypes.camera;
+    final fill = n.paintColor.withValues(alpha: selected ? 0.95 : 0.82);
     return Positioned(
       left: left,
       top: top,
@@ -716,25 +839,71 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           height: mh,
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: selected ? scheme.primary : scheme.secondaryContainer,
-            borderRadius: BorderRadius.circular(6),
+            color: fill,
+            borderRadius: BorderRadius.circular(isCamera ? 20 : 6),
             border: Border.all(
-              color: selected ? scheme.primary : scheme.outlineVariant,
-              width: selected ? 2.5 : 1.5,
+              color: selected ? Colors.white : fill.withValues(alpha: 1),
+              width: selected ? 2.5 : 1,
             ),
+            boxShadow: selected
+                ? [
+                    BoxShadow(
+                      color: fill.withValues(alpha: 0.45),
+                      blurRadius: 8,
+                      spreadRadius: 1,
+                    ),
+                  ]
+                : null,
           ),
-          child: Text(
-            n.name.isNotEmpty ? n.name[0].toUpperCase() : '?',
-            style: TextStyle(
-              fontSize: (mw < 28 || mh < 28) ? 11 : 14,
-              fontWeight: FontWeight.w600,
-              color: selected
-                  ? scheme.onPrimary
-                  : scheme.onSecondaryContainer,
-            ),
+          child: Icon(
+            isCamera ? Icons.videocam : Icons.square_rounded,
+            size: (mw < 28 || mh < 28) ? 12 : 18,
+            color: Colors.white.withValues(alpha: 0.95),
           ),
         ),
       ),
     );
   }
+}
+
+/// Light grid for the 2D stage (editor only — not a game loop).
+class _StageGridPainter extends CustomPainter {
+  _StageGridPainter({
+    required this.stageW,
+    required this.stageH,
+    required this.scaleX,
+    required this.scaleY,
+    required this.color,
+  });
+
+  final double stageW;
+  final double stageH;
+  final double scaleX;
+  final double scaleY;
+  final Color color;
+
+  @override
+  void paint(Canvas canvas, Size size) {
+    final paint = Paint()
+      ..color = color
+      ..strokeWidth = 1;
+    // ~40px in scene space between lines.
+    const step = 40.0;
+    for (double x = 0; x <= stageW; x += step) {
+      final px = x * scaleX;
+      canvas.drawLine(Offset(px, 0), Offset(px, size.height), paint);
+    }
+    for (double y = 0; y <= stageH; y += step) {
+      final py = y * scaleY;
+      canvas.drawLine(Offset(0, py), Offset(size.width, py), paint);
+    }
+  }
+
+  @override
+  bool shouldRepaint(covariant _StageGridPainter old) =>
+      old.stageW != stageW ||
+      old.stageH != stageH ||
+      old.scaleX != scaleX ||
+      old.scaleY != scaleY ||
+      old.color != color;
 }

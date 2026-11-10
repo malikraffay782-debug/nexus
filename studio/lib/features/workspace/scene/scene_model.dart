@@ -1,6 +1,38 @@
 import 'dart:convert';
+import 'dart:ui' show Color;
 
-/// One node in a scene. Structure + size for canvas markers; no game loop yet.
+/// Known node types for the 2D stage (extensible later).
+class SceneNodeTypes {
+  static const sprite = 'sprite';
+  static const camera = 'camera';
+  static const List<String> all = [sprite, camera];
+
+  static String normalize(String? raw) {
+    final t = (raw ?? sprite).trim().toLowerCase();
+    return all.contains(t) ? t : sprite;
+  }
+}
+
+/// Default palette (ARGB). Index 0 used for new sprites.
+class ScenePalette {
+  static const List<int> colors = [
+    0xFF7C4DFF, // purple
+    0xFF42A5F5, // blue
+    0xFF66BB6A, // green
+    0xFFFFCA28, // amber
+    0xFFEF5350, // red
+    0xFF26C6DA, // cyan
+    0xFFFF7043, // deep orange
+    0xFFBDBDBD, // grey (cameras default)
+  ];
+
+  static int forType(String type) =>
+      type == SceneNodeTypes.camera ? colors.last : colors.first;
+
+  static Color toColor(int argb) => Color(argb);
+}
+
+/// One node in a scene. Painted on the 2D stage; no game loop yet.
 class SceneNode {
   const SceneNode({
     required this.id,
@@ -10,6 +42,7 @@ class SceneNode {
     required this.y,
     this.w = 64,
     this.h = 64,
+    this.color = 0xFF7C4DFF,
   });
 
   final String id;
@@ -19,6 +52,10 @@ class SceneNode {
   final double y;
   final double w;
   final double h;
+  /// ARGB packed color for stage paint.
+  final int color;
+
+  Color get paintColor => ScenePalette.toColor(color);
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -28,18 +65,29 @@ class SceneNode {
         'y': y,
         'w': w,
         'h': h,
+        'color': color,
       };
 
   factory SceneNode.fromJson(Map<String, dynamic> json) {
+    final type = SceneNodeTypes.normalize(json['type'] as String?);
+    final rawColor = json['color'];
+    int color;
+    if (rawColor is int) {
+      color = rawColor;
+    } else if (rawColor is num) {
+      color = rawColor.toInt();
+    } else {
+      color = ScenePalette.forType(type);
+    }
     return SceneNode(
       id: json['id'] as String? ?? '',
-      type: json['type'] as String? ?? 'sprite',
+      type: type,
       name: json['name'] as String? ?? 'node',
       x: (json['x'] as num?)?.toDouble() ?? 0,
       y: (json['y'] as num?)?.toDouble() ?? 0,
-      // Older scenes without w/h keep a sensible default marker size.
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
+      color: color,
     );
   }
 
@@ -51,6 +99,7 @@ class SceneNode {
     double? y,
     double? w,
     double? h,
+    int? color,
   }) {
     return SceneNode(
       id: id ?? this.id,
@@ -60,11 +109,12 @@ class SceneNode {
       y: y ?? this.y,
       w: w ?? this.w,
       h: h ?? this.h,
+      color: color ?? this.color,
     );
   }
 }
 
-/// Minimal scene document. No rendering engine yet — structure only.
+/// Scene document: stage size + nodes + editor flags.
 class SceneDoc {
   const SceneDoc({
     required this.name,
@@ -72,6 +122,7 @@ class SceneDoc {
     this.width = 720,
     this.height = 1280,
     this.nodes = const [],
+    this.showGrid = true,
   });
 
   final int version;
@@ -79,12 +130,14 @@ class SceneDoc {
   final int width;
   final int height;
   final List<SceneNode> nodes;
+  final bool showGrid;
 
   Map<String, dynamic> toJson() => {
         'version': version,
         'name': name,
         'width': width,
         'height': height,
+        'showGrid': showGrid,
         'nodes': nodes.map((n) => n.toJson()).toList(),
       };
 
@@ -103,6 +156,7 @@ class SceneDoc {
       name: json['name'] as String? ?? 'untitled',
       width: (json['width'] as num?)?.toInt() ?? 720,
       height: (json['height'] as num?)?.toInt() ?? 1280,
+      showGrid: json['showGrid'] as bool? ?? true,
       nodes: nodes,
     );
   }
@@ -115,6 +169,7 @@ class SceneDoc {
     int? width,
     int? height,
     List<SceneNode>? nodes,
+    bool? showGrid,
   }) {
     return SceneDoc(
       version: version ?? this.version,
@@ -122,6 +177,7 @@ class SceneDoc {
       width: width ?? this.width,
       height: height ?? this.height,
       nodes: nodes ?? this.nodes,
+      showGrid: showGrid ?? this.showGrid,
     );
   }
 
@@ -131,7 +187,6 @@ class SceneDoc {
   SceneDoc withNodeRemoved(String id) =>
       copyWith(nodes: nodes.where((n) => n.id != id).toList());
 
-  /// Replace one node by id (rename / resize / move).
   SceneDoc withNodeUpdated(SceneNode node) => copyWith(
         nodes: nodes.map((n) => n.id == node.id ? node : n).toList(),
       );
