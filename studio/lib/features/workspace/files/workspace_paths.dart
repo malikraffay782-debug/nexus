@@ -20,7 +20,14 @@ class WorkspacePaths {
 
   final String root;
 
-  static const List<String> topDirs = ['src', 'assets', 'scenes', 'screens'];
+  /// Allowed top-level folders. Extend deliberately; never open the project root.
+  static const List<String> topDirs = [
+    'src',
+    'assets',
+    'scenes',
+    'screens',
+    'notes',
+  ];
   static const int maxNameLength = 100;
   static final RegExp _badChars = RegExp(r'[\\/:*?"<>|\x00-\x1f]');
 
@@ -85,7 +92,7 @@ class WorkspacePaths {
     }
     if (!topDirs.contains(parts.first)) {
       throw const WorkspaceException(
-          'Files must live in src, assets, scenes or screens');
+          'Files must live in src, assets, scenes, screens or notes');
     }
     if (_isLink(root)) {
       throw const WorkspaceException('Project folder is a symlink');

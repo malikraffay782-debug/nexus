@@ -178,6 +178,7 @@ class ProjectRepository {
       for (final sub in [
         'src',
         'assets',
+        'notes',
         type == ProjectType.game ? 'scenes' : 'screens',
       ]) {
         await Directory(p.join(staging.path, sub)).create();

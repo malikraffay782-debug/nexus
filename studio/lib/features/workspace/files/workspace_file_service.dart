@@ -39,6 +39,14 @@ class WorkspaceFileService {
     final out = <WorkspaceEntry>[];
     for (final top in WorkspacePaths.topDirs) {
       final abs = '${paths.root}/$top';
+      // Ensure allowed top-level folders exist (old projects get notes, etc.).
+      if (WorkspacePaths.typeOf(abs) == FileSystemEntityType.notFound) {
+        try {
+          await Directory(abs).create();
+        } on FileSystemException {
+          continue;
+        }
+      }
       if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.directory) {
         continue;
       }
@@ -194,7 +202,7 @@ class WorkspaceFileService {
     if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.directory) {
       throw const WorkspaceException('Not a folder');
     }
-    // Never delete top-level project dirs (src/assets/scenes/screens)
+    // Never delete top-level project dirs (src/assets/scenes/screens/notes)
     final parts = rel.split('/');
     if (parts.length == 1 && WorkspacePaths.topDirs.contains(parts.first)) {
       throw const WorkspaceException('Cannot delete top-level project folders');
