@@ -36,7 +36,9 @@ class _RuntimeDebugScreenState extends ConsumerState<RuntimeDebugScreen> {
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addPostFrameCallback((_) => _recheck());
+    // IndexedStack builds this tab on cold start. Do NOT auto-hit the
+    // MethodChannel here — a native failure must not take down first frame.
+    // User taps "Recheck" / Initialize when they open Runtime.
   }
 
   // ---------- helpers ----------

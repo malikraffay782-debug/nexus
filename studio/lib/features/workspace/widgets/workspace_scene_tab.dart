@@ -544,7 +544,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     if (node == null) return const SizedBox.shrink();
     return Padding(
       padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
-      child: Column(
+      child: SingleChildScrollView(
+        child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -647,6 +648,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
             ),
           ),
         ],
+        ),
       ),
     );
   }
@@ -685,7 +687,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
             width: 12,
             height: 12,
             decoration: BoxDecoration(
-              color: n.paintColor,
+              color: Color(n.color),
               shape: BoxShape.circle,
             ),
           ),
@@ -811,7 +813,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
     final selected = n.id == _selectedNodeId;
     final isCamera = n.type == SceneNodeTypes.camera;
-    final fill = n.paintColor.withValues(alpha: selected ? 0.95 : 0.82);
+    final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.82);
     return Positioned(
       left: left,
       top: top,

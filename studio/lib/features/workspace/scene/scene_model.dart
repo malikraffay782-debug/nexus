@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:ui' show Color;
 
 /// Known node types for the 2D stage (extensible later).
 class SceneNodeTypes {
@@ -13,7 +12,7 @@ class SceneNodeTypes {
   }
 }
 
-/// Default palette (ARGB). Index 0 used for new sprites.
+/// Default palette (ARGB ints). UI uses Color(argb).
 class ScenePalette {
   static const List<int> colors = [
     0xFF7C4DFF, // purple
@@ -28,8 +27,6 @@ class ScenePalette {
 
   static int forType(String type) =>
       type == SceneNodeTypes.camera ? colors.last : colors.first;
-
-  static Color toColor(int argb) => Color(argb);
 }
 
 /// One node in a scene. Painted on the 2D stage; no game loop yet.
@@ -54,8 +51,6 @@ class SceneNode {
   final double h;
   /// ARGB packed color for stage paint.
   final int color;
-
-  Color get paintColor => ScenePalette.toColor(color);
 
   Map<String, dynamic> toJson() => {
         'id': id,
