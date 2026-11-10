@@ -4,7 +4,7 @@ import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
 import '../scene/scene_service.dart';
 
-/// Scene tab: list/create scenes + node placeholders (drag to move).
+/// Scene tab: list/create scenes + sized nodes (drag, rename, resize).
 class WorkspaceSceneTab extends StatefulWidget {
   const WorkspaceSceneTab({super.key, required this.projectPath});
 
@@ -24,12 +24,20 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
   bool _saving = false;
   bool _dirty = false;
   String? _selectedNodeId;
+  final TextEditingController _nameCtrl = TextEditingController();
+  String? _nameEditNodeId;
 
   @override
   void initState() {
     super.initState();
     _service = SceneService(widget.projectPath);
     _reload();
+  }
+
+  @override
+  void dispose() {
+    _nameCtrl.dispose();
+    super.dispose();
   }
 
   Future<void> _reload() async {
@@ -199,10 +207,13 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       name: 'Node ${n + 1}',
       x: 80.0 + col * 120,
       y: 80.0 + row * 120,
+      w: 64,
+      h: 64,
     );
     setState(() {
       _doc = doc.withNodeAdded(node);
       _selectedNodeId = node.id;
+      _syncNameField(node);
       _dirty = true;
     });
   }
@@ -214,7 +225,74 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     setState(() {
       _doc = doc.withNodeRemoved(id);
       _selectedNodeId = null;
+      _nameEditNodeId = null;
+      _nameCtrl.clear();
       _dirty = true;
+    });
+  }
+
+  void _syncNameField(SceneNode? node) {
+    if (node == null) {
+      _nameEditNodeId = null;
+      _nameCtrl.clear();
+      return;
+    }
+    if (_nameEditNodeId != node.id) {
+      _nameEditNodeId = node.id;
+      _nameCtrl.text = node.name;
+    }
+  }
+
+  void _selectNode(String id) {
+    final doc = _doc;
+    if (doc == null) return;
+    SceneNode? node;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        node = n;
+        break;
+      }
+    }
+    setState(() {
+      _selectedNodeId = id;
+      _syncNameField(node);
+    });
+  }
+
+  void _updateSelectedNode(SceneNode Function(SceneNode) fn) {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? current;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        current = n;
+        break;
+      }
+    }
+    if (current == null) return;
+    final updated = fn(current);
+    setState(() {
+      _doc = doc.withNodeUpdated(updated);
+      _selectedNodeId = id;
+      if (_nameEditNodeId == id && updated.name != _nameCtrl.text) {
+        _nameCtrl.text = updated.name;
+      }
+      _dirty = true;
+    });
+  }
+
+  void _renameSelected(String name) {
+    final trimmed = name.trim();
+    if (trimmed.isEmpty) return;
+    _updateSelectedNode((n) => n.copyWith(name: trimmed));
+  }
+
+  void _resizeSelected(double delta) {
+    _updateSelectedNode((n) {
+      final nw = (n.w + delta).clamp(24.0, 256.0);
+      final nh = (n.h + delta).clamp(24.0, 256.0);
+      return n.copyWith(w: nw, h: nh);
     });
   }
 
@@ -223,8 +301,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     if (doc == null) return;
     final nodes = doc.nodes.map((n) {
       if (n.id != id) return n;
-      final nx = x.clamp(0, doc.width.toDouble()).toDouble();
-      final ny = y.clamp(0, doc.height.toDouble()).toDouble();
+      final maxX = (doc.width - n.w).clamp(0, doc.width.toDouble()).toDouble();
+      final maxY = (doc.height - n.h).clamp(0, doc.height.toDouble()).toDouble();
+      final nx = x.clamp(0, maxX).toDouble();
+      final ny = y.clamp(0, maxY).toDouble();
       return n.copyWith(x: nx, y: ny);
     }).toList();
     setState(() {
@@ -395,15 +475,92 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           ),
           const Divider(height: 1),
           Expanded(child: _nodeList(scheme)),
-          if (_selectedNodeId != null)
+          if (_selectedNodeId != null) ...[
+            const Divider(height: 1),
+            _nodeProperties(scheme),
             Padding(
-              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+              padding: const EdgeInsets.fromLTRB(8, 0, 8, 8),
               child: OutlinedButton.icon(
                 onPressed: _removeSelectedNode,
                 icon: const Icon(Icons.delete_outline, size: 18),
                 label: const Text('Remove'),
               ),
             ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  Widget _nodeProperties(ColorScheme scheme) {
+    final doc = _doc;
+    SceneNode? node;
+    if (doc != null && _selectedNodeId != null) {
+      for (final n in doc.nodes) {
+        if (n.id == _selectedNodeId) {
+          node = n;
+          break;
+        }
+      }
+    }
+    if (node == null) return const SizedBox.shrink();
+    // Keep name field in sync when selection changes from canvas.
+    if (_nameEditNodeId != node.id) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _syncNameField(node);
+        setState(() {});
+      });
+    }
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 8, 8, 4),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text('Selected', style: Theme.of(context).textTheme.labelMedium),
+          const SizedBox(height: 4),
+          TextField(
+            controller: _nameCtrl,
+            style: const TextStyle(fontSize: 14),
+            decoration: const InputDecoration(
+              isDense: true,
+              labelText: 'Name',
+              border: OutlineInputBorder(),
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+            ),
+            textInputAction: TextInputAction.done,
+            onSubmitted: _renameSelected,
+            onChanged: (v) {
+              // Live rename while typing (empty ignored until done).
+              if (v.trim().isNotEmpty) _renameSelected(v);
+            },
+          ),
+          const SizedBox(height: 8),
+          Text(
+            'Size ${node.w.toInt()}×${node.h.toInt()}',
+            style: TextStyle(fontSize: 12, color: scheme.outline),
+          ),
+          Row(
+            children: [
+              IconButton(
+                tooltip: 'Smaller',
+                icon: const Icon(Icons.remove, size: 20),
+                onPressed: () => _resizeSelected(-8),
+              ),
+              Expanded(
+                child: Text(
+                  '${node.w.toInt()}',
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 13),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Larger',
+                icon: const Icon(Icons.add, size: 20),
+                onPressed: () => _resizeSelected(8),
+              ),
+            ],
+          ),
         ],
       ),
     );
@@ -433,10 +590,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           selected: selected,
           title: Text(n.name, overflow: TextOverflow.ellipsis),
           subtitle: Text(
-            '${n.type} · (${n.x.toInt()}, ${n.y.toInt()})',
+            '${n.type} · ${n.w.toInt()}×${n.h.toInt()} · (${n.x.toInt()}, ${n.y.toInt()})',
             style: TextStyle(fontSize: 11, color: scheme.outline),
           ),
-          onTap: () => setState(() => _selectedNodeId = n.id),
+          onTap: () => _selectNode(n.id),
         );
       },
     );
@@ -461,7 +618,6 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         }
         final scaleX = w / doc.width;
         final scaleY = h / doc.height;
-        const marker = 36.0;
 
         return Center(
           child: Column(
@@ -494,56 +650,13 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                         ),
                       ),
                     for (final n in doc.nodes)
-                      Positioned(
-                        left: (n.x * scaleX).clamp(0, (w - marker).clamp(0, w)),
-                        top: (n.y * scaleY).clamp(0, (h - marker).clamp(0, h)),
-                        child: GestureDetector(
-                          onTap: () => setState(() => _selectedNodeId = n.id),
-                          onPanUpdate: (details) {
-                            // Read latest position — closure [n] is stale mid-drag.
-                            SceneNode? cur;
-                            final nodes = _doc?.nodes;
-                            if (nodes != null) {
-                              for (final e in nodes) {
-                                if (e.id == n.id) {
-                                  cur = e;
-                                  break;
-                                }
-                              }
-                            }
-                            if (cur == null) return;
-                            final newX = cur.x + details.delta.dx / scaleX;
-                            final newY = cur.y + details.delta.dy / scaleY;
-                            _moveNode(n.id, newX, newY);
-                          },
-                          child: Container(
-                            width: marker,
-                            height: marker,
-                            alignment: Alignment.center,
-                            decoration: BoxDecoration(
-                              color: n.id == _selectedNodeId
-                                  ? scheme.primary
-                                  : scheme.secondaryContainer,
-                              borderRadius: BorderRadius.circular(6),
-                              border: Border.all(
-                                color: n.id == _selectedNodeId
-                                    ? scheme.primary
-                                    : scheme.outlineVariant,
-                                width: 2,
-                              ),
-                            ),
-                            child: Text(
-                              n.name.isNotEmpty ? n.name[0].toUpperCase() : '?',
-                              style: TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.w600,
-                                color: n.id == _selectedNodeId
-                                    ? scheme.onPrimary
-                                    : scheme.onSecondaryContainer,
-                              ),
-                            ),
-                          ),
-                        ),
+                      _nodeMarker(
+                        n,
+                        scaleX: scaleX,
+                        scaleY: scaleY,
+                        stageW: w,
+                        stageH: h,
+                        scheme: scheme,
                       ),
                   ],
                 ),
@@ -552,6 +665,70 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           ),
         );
       },
+    );
+  }
+
+  Widget _nodeMarker(
+    SceneNode n, {
+    required double scaleX,
+    required double scaleY,
+    required double stageW,
+    required double stageH,
+    required ColorScheme scheme,
+  }) {
+    final mw = (n.w * scaleX).clamp(16.0, stageW);
+    final mh = (n.h * scaleY).clamp(16.0, stageH);
+    final left =
+        (n.x * scaleX).clamp(0.0, (stageW - mw).clamp(0.0, stageW));
+    final top =
+        (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
+    final selected = n.id == _selectedNodeId;
+    return Positioned(
+      left: left,
+      top: top,
+      child: GestureDetector(
+        onTap: () => _selectNode(n.id),
+        onPanUpdate: (details) {
+          // Read latest position — closure [n] is stale mid-drag.
+          SceneNode? cur;
+          final nodes = _doc?.nodes;
+          if (nodes != null) {
+            for (final e in nodes) {
+              if (e.id == n.id) {
+                cur = e;
+                break;
+              }
+            }
+          }
+          if (cur == null) return;
+          final newX = cur.x + details.delta.dx / scaleX;
+          final newY = cur.y + details.delta.dy / scaleY;
+          _moveNode(n.id, newX, newY);
+        },
+        child: Container(
+          width: mw,
+          height: mh,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: selected ? scheme.primary : scheme.secondaryContainer,
+            borderRadius: BorderRadius.circular(6),
+            border: Border.all(
+              color: selected ? scheme.primary : scheme.outlineVariant,
+              width: selected ? 2.5 : 1.5,
+            ),
+          ),
+          child: Text(
+            n.name.isNotEmpty ? n.name[0].toUpperCase() : '?',
+            style: TextStyle(
+              fontSize: (mw < 28 || mh < 28) ? 11 : 14,
+              fontWeight: FontWeight.w600,
+              color: selected
+                  ? scheme.onPrimary
+                  : scheme.onSecondaryContainer,
+            ),
+          ),
+        ),
+      ),
     );
   }
 }

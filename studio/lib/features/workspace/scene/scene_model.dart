@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-/// One node in a scene. Placeholder only — no renderer yet.
+/// One node in a scene. Structure + size for canvas markers; no game loop yet.
 class SceneNode {
   const SceneNode({
     required this.id,
@@ -8,6 +8,8 @@ class SceneNode {
     required this.name,
     required this.x,
     required this.y,
+    this.w = 64,
+    this.h = 64,
   });
 
   final String id;
@@ -15,6 +17,8 @@ class SceneNode {
   final String name;
   final double x;
   final double y;
+  final double w;
+  final double h;
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -22,6 +26,8 @@ class SceneNode {
         'name': name,
         'x': x,
         'y': y,
+        'w': w,
+        'h': h,
       };
 
   factory SceneNode.fromJson(Map<String, dynamic> json) {
@@ -31,6 +37,9 @@ class SceneNode {
       name: json['name'] as String? ?? 'node',
       x: (json['x'] as num?)?.toDouble() ?? 0,
       y: (json['y'] as num?)?.toDouble() ?? 0,
+      // Older scenes without w/h keep a sensible default marker size.
+      w: (json['w'] as num?)?.toDouble() ?? 64,
+      h: (json['h'] as num?)?.toDouble() ?? 64,
     );
   }
 
@@ -40,6 +49,8 @@ class SceneNode {
     String? name,
     double? x,
     double? y,
+    double? w,
+    double? h,
   }) {
     return SceneNode(
       id: id ?? this.id,
@@ -47,6 +58,8 @@ class SceneNode {
       name: name ?? this.name,
       x: x ?? this.x,
       y: y ?? this.y,
+      w: w ?? this.w,
+      h: h ?? this.h,
     );
   }
 }
@@ -117,6 +130,11 @@ class SceneDoc {
 
   SceneDoc withNodeRemoved(String id) =>
       copyWith(nodes: nodes.where((n) => n.id != id).toList());
+
+  /// Replace one node by id (rename / resize / move).
+  SceneDoc withNodeUpdated(SceneNode node) => copyWith(
+        nodes: nodes.map((n) => n.id == node.id ? node : n).toList(),
+      );
 
   String encodePretty() =>
       const JsonEncoder.withIndent('  ').convert(toJson());
