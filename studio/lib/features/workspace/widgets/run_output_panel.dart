@@ -45,11 +45,16 @@ class RunOutputPanel extends StatelessWidget {
       if (state.stderr.isNotEmpty) '[stderr]\n${state.stderr}',
     ].join('\n');
 
+    // Fixed height budget so parent Column never gets bottom overflow
+    // when the soft keyboard or landscape leaves little vertical space.
+    final screenH = MediaQuery.sizeOf(context).height;
+    final panelH = screenH < 500 ? 140.0 : 200.0;
+
     return Material(
       elevation: 6,
       color: theme.colorScheme.surfaceContainerHighest,
-      child: ConstrainedBox(
-        constraints: const BoxConstraints(maxHeight: 220),
+      child: SizedBox(
+        height: panelH,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [

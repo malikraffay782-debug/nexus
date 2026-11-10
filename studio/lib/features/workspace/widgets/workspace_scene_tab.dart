@@ -4,7 +4,7 @@ import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
 import '../scene/scene_service.dart';
 
-/// Scene tab: list/create scenes + node placeholders (no engine yet).
+/// Scene tab: list/create scenes + node placeholders (drag to move).
 class WorkspaceSceneTab extends StatefulWidget {
   const WorkspaceSceneTab({super.key, required this.projectPath});
 
@@ -191,7 +191,6 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final doc = _doc;
     if (doc == null) return;
     final n = doc.nodes.length;
-    // Simple grid placement so nodes don't all stack at 0,0
     final col = n % 4;
     final row = n ~/ 4;
     final node = SceneNode(
@@ -219,6 +218,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     });
   }
 
+  void _moveNode(String id, double x, double y) {
+    final doc = _doc;
+    if (doc == null) return;
+    final nodes = doc.nodes.map((n) {
+      if (n.id != id) return n;
+      final nx = x.clamp(0, doc.width.toDouble()).toDouble();
+      final ny = y.clamp(0, doc.height.toDouble()).toDouble();
+      return n.copyWith(x: nx, y: ny);
+    }).toList();
+    setState(() {
+      _doc = doc.copyWith(nodes: nodes);
+      _selectedNodeId = id;
+      _dirty = true;
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
     final scheme = Theme.of(context).colorScheme;
@@ -229,124 +244,110 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
 
     return Column(
       children: [
-        // Scene file strip
-        Material(
-          color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
-          child: SizedBox(
-            height: 48,
-            child: Row(
-              children: [
-                const SizedBox(width: 8),
-                Expanded(
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: const EdgeInsets.symmetric(horizontal: 4),
-                    itemCount: _files.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (context, i) {
-                      final name = _files[i];
-                      final selected = name == _selected;
-                      return ChoiceChip(
-                        label: Text(name.replaceAll('.json', '')),
-                        selected: selected,
-                        onSelected: (_) => _select(name),
-                      );
-                    },
-                  ),
-                ),
-                if (_dirty)
-                  const Padding(
-                    padding: EdgeInsets.only(right: 4),
-                    child: Icon(Icons.circle, size: 10, color: Colors.orange),
-                  ),
-                IconButton(
-                  tooltip: 'Save scene',
-                  onPressed: (_dirty && !_saving) ? _save : null,
-                  icon: _saving
-                      ? const SizedBox(
-                          width: 18,
-                          height: 18,
-                          child: CircularProgressIndicator(strokeWidth: 2),
-                        )
-                      : const Icon(Icons.save_outlined),
-                ),
-                IconButton(
-                  tooltip: 'New scene',
-                  onPressed: _createScene,
-                  icon: const Icon(Icons.add),
-                ),
-                IconButton(
-                  tooltip: 'Refresh',
-                  onPressed: () async {
-                    if (_dirty) {
-                      final d = await _confirmDiscard();
-                      if (!d || !mounted) return;
-                    }
-                    await _reload();
-                  },
-                  icon: const Icon(Icons.refresh),
-                ),
-              ],
-            ),
-          ),
-        ),
+        _sceneStrip(scheme),
         if (_error != null)
           Padding(
-            padding: const EdgeInsets.all(12),
+            padding: const EdgeInsets.all(8),
             child: Text(_error!, style: TextStyle(color: scheme.error)),
           ),
         Expanded(
           child: _doc == null
               ? _emptyScenes(scheme)
-              : Row(
-                  children: [
-                    // Node list sidebar
-                    SizedBox(
-                      width: 160,
-                      child: Material(
-                        color: scheme.surfaceContainerHighest.withValues(alpha: 0.2),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.stretch,
-                          children: [
-                            Padding(
-                              padding: const EdgeInsets.fromLTRB(10, 10, 4, 4),
-                              child: Row(
-                                children: [
-                                  Expanded(
-                                    child: Text(
-                                      'Nodes',
-                                      style: Theme.of(context).textTheme.titleSmall,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    tooltip: 'Add node',
-                                    icon: const Icon(Icons.add, size: 20),
-                                    onPressed: _addNode,
-                                  ),
-                                ],
-                              ),
-                            ),
-                            const Divider(height: 1),
-                            Expanded(child: _nodeList(scheme)),
-                            if (_selectedNodeId != null)
-                              Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: OutlinedButton.icon(
-                                  onPressed: _removeSelectedNode,
-                                  icon: const Icon(Icons.delete_outline, size: 18),
-                                  label: const Text('Remove'),
-                                ),
-                              ),
-                          ],
+              : LayoutBuilder(
+                  builder: (context, constraints) {
+                    // Landscape / short height: stack nodes above canvas.
+                    final wide = constraints.maxWidth >= 520 &&
+                        constraints.maxHeight >= 280;
+                    if (wide) {
+                      return Row(
+                        children: [
+                          SizedBox(
+                            width: 160,
+                            child: _nodeSidebar(scheme),
+                          ),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: _buildCanvas(scheme)),
+                        ],
+                      );
+                    }
+                    return Column(
+                      children: [
+                        SizedBox(
+                          height: (constraints.maxHeight * 0.32)
+                              .clamp(100.0, 160.0),
+                          child: _nodeSidebar(scheme),
                         ),
-                      ),
-                    ),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: _buildCanvas(scheme)),
-                  ],
+                        const Divider(height: 1),
+                        Expanded(child: _buildCanvas(scheme)),
+                      ],
+                    );
+                  },
                 ),
         ),
       ],
+    );
+  }
+
+  Widget _sceneStrip(ColorScheme scheme) {
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
+      child: SizedBox(
+        height: 48,
+        child: Row(
+          children: [
+            const SizedBox(width: 8),
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: const EdgeInsets.symmetric(horizontal: 4),
+                itemCount: _files.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, i) {
+                  final name = _files[i];
+                  final selected = name == _selected;
+                  return ChoiceChip(
+                    label: Text(name.replaceAll('.json', '')),
+                    selected: selected,
+                    onSelected: (_) => _select(name),
+                  );
+                },
+              ),
+            ),
+            if (_dirty)
+              const Padding(
+                padding: EdgeInsets.only(right: 4),
+                child: Icon(Icons.circle, size: 10, color: Colors.orange),
+              ),
+            IconButton(
+              tooltip: 'Save scene',
+              onPressed: (_dirty && !_saving) ? _save : null,
+              icon: _saving
+                  ? const SizedBox(
+                      width: 18,
+                      height: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.save_outlined),
+            ),
+            IconButton(
+              tooltip: 'New scene',
+              onPressed: _createScene,
+              icon: const Icon(Icons.add),
+            ),
+            IconButton(
+              tooltip: 'Refresh',
+              onPressed: () async {
+                if (_dirty) {
+                  final d = await _confirmDiscard();
+                  if (!d || !mounted) return;
+                }
+                await _reload();
+              },
+              icon: const Icon(Icons.refresh),
+            ),
+          ],
+        ),
+      ),
     );
   }
 
@@ -363,6 +364,46 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
             onPressed: _createScene,
             child: const Text('Create main scene'),
           ),
+        ],
+      ),
+    );
+  }
+
+  Widget _nodeSidebar(ColorScheme scheme) {
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.2),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 4, 0),
+            child: Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    'Nodes',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                ),
+                IconButton(
+                  tooltip: 'Add node',
+                  icon: const Icon(Icons.add, size: 20),
+                  onPressed: _addNode,
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Expanded(child: _nodeList(scheme)),
+          if (_selectedNodeId != null)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+              child: OutlinedButton.icon(
+                onPressed: _removeSelectedNode,
+                icon: const Icon(Icons.delete_outline, size: 18),
+                label: const Text('Remove'),
+              ),
+            ),
         ],
       ),
     );
@@ -405,9 +446,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final doc = _doc!;
     return LayoutBuilder(
       builder: (context, constraints) {
-        const pad = 16.0;
-        final maxW = constraints.maxWidth - pad * 2;
-        final maxH = constraints.maxHeight - pad * 2 - 28;
+        const pad = 12.0;
+        final maxW = (constraints.maxWidth - pad * 2).clamp(40.0, double.infinity);
+        final maxH = (constraints.maxHeight - pad * 2 - 24).clamp(40.0, double.infinity);
         final aspect = doc.width / doc.height;
         double w = maxW;
         double h = w / aspect;
@@ -415,8 +456,12 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           h = maxH;
           w = h * aspect;
         }
+        if (w <= 0 || h <= 0) {
+          return const SizedBox.shrink();
+        }
         final scaleX = w / doc.width;
         final scaleY = h / doc.height;
+        const marker = 36.0;
 
         return Center(
           child: Column(
@@ -429,7 +474,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                       color: scheme.outline,
                     ),
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 6),
               Container(
                 width: w,
                 height: h,
@@ -450,13 +495,30 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                       ),
                     for (final n in doc.nodes)
                       Positioned(
-                        left: (n.x * scaleX).clamp(0, w - 36),
-                        top: (n.y * scaleY).clamp(0, h - 36),
+                        left: (n.x * scaleX).clamp(0, (w - marker).clamp(0, w)),
+                        top: (n.y * scaleY).clamp(0, (h - marker).clamp(0, h)),
                         child: GestureDetector(
                           onTap: () => setState(() => _selectedNodeId = n.id),
+                          onPanUpdate: (details) {
+                            // Read latest position — closure [n] is stale mid-drag.
+                            SceneNode? cur;
+                            final nodes = _doc?.nodes;
+                            if (nodes != null) {
+                              for (final e in nodes) {
+                                if (e.id == n.id) {
+                                  cur = e;
+                                  break;
+                                }
+                              }
+                            }
+                            if (cur == null) return;
+                            final newX = cur.x + details.delta.dx / scaleX;
+                            final newY = cur.y + details.delta.dy / scaleY;
+                            _moveNode(n.id, newX, newY);
+                          },
                           child: Container(
-                            width: 36,
-                            height: 36,
+                            width: marker,
+                            height: marker,
                             alignment: Alignment.center,
                             decoration: BoxDecoration(
                               color: n.id == _selectedNodeId

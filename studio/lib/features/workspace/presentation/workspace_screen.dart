@@ -173,6 +173,7 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
     return DefaultTabController(
       length: tabs.length,
       child: Scaffold(
+        resizeToAvoidBottomInset: true,
         appBar: AppBar(
           title: Text(project.name, overflow: TextOverflow.ellipsis),
           actions: [
