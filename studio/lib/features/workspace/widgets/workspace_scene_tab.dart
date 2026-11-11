@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/scheduler.dart';
 
 import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
@@ -1377,23 +1378,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       final mw = (n.w * scaleX).clamp(8.0, stageW);
       final mh = (n.h * scaleY).clamp(8.0, stageH);
 
+      // Body is drawn by SceneStagePainter; this layer is hit-targets + handles.
       final polyChildren = <Widget>[
-        if (paintBody)
-          CustomPaint(
-            size: Size(mw, mh),
-            painter: _PolygonPainter(
-              points: pts,
-              originX: n.x,
-              originY: n.y,
-              scaleX: scaleX,
-              scaleY: scaleY,
-              fill: fill,
-              stroke: selected ? Colors.white : fill.withValues(alpha: 1),
-              strokeWidth: selected ? 2.5 : 1,
-            ),
-          )
-        else
-          SizedBox(width: mw, height: mh),
+        SizedBox(width: mw, height: mh),
       ];
 
       if (selected) {
@@ -1745,45 +1732,3 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
 }
 
 enum _ResizeCorner { tl, tr, bl, br }
-
-/// Light grid for the 2D stage (editor only — not a game loop).
-class _StageGridPainter extends CustomPainter {
-  _StageGridPainter({
-    required this.stageW,
-    required this.stageH,
-    required this.scaleX,
-    required this.scaleY,
-    required this.color,
-  });
-
-  final double stageW;
-  final double stageH;
-  final double scaleX;
-  final double scaleY;
-  final Color color;
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final paint = Paint()
-      ..color = color
-      ..strokeWidth = 1;
-    // ~40px in scene space between lines.
-    const step = 40.0;
-    for (double x = 0; x <= stageW; x += step) {
-      final px = x * scaleX;
-      canvas.drawLine(Offset(px, 0), Offset(px, size.height), paint);
-    }
-    for (double y = 0; y <= stageH; y += step) {
-      final py = y * scaleY;
-      canvas.drawLine(Offset(0, py), Offset(size.width, py), paint);
-    }
-  }
-
-  @override
-  bool shouldRepaint(covariant _StageGridPainter old) =>
-      old.stageW != stageW ||
-      old.stageH != stageH ||
-      old.scaleX != scaleX ||
-      old.scaleY != scaleY ||
-      old.color != color;
-}
