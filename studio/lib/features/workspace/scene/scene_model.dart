@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:math' as math;
 
 /// Known node types for the 2D stage (extensible later).
 class SceneNodeTypes {
@@ -29,7 +30,31 @@ class ScenePalette {
       type == SceneNodeTypes.camera ? colors.last : colors.first;
 }
 
+/// One vertex in scene space (used when a node is in points/edit mode).
+class ScenePoint {
+  const ScenePoint(this.x, this.y);
+
+  final double x;
+  final double y;
+
+  Map<String, dynamic> toJson() => {'x': x, 'y': y};
+
+  factory ScenePoint.fromJson(Map<String, dynamic> json) {
+    return ScenePoint(
+      (json['x'] as num?)?.toDouble() ?? 0,
+      (json['y'] as num?)?.toDouble() ?? 0,
+    );
+  }
+
+  ScenePoint copyWith({double? x, double? y}) =>
+      ScenePoint(x ?? this.x, y ?? this.y);
+}
+
 /// One node in a scene. Painted on the 2D stage; no game loop yet.
+///
+/// When [points] is null the node is an axis-aligned rect (x,y,w,h).
+/// When [points] is set it is a freeform polygon; x/y/w/h stay the
+/// bounding box for list/sidebar and coarse drag.
 class SceneNode {
   const SceneNode({
     required this.id,
@@ -40,6 +65,7 @@ class SceneNode {
     this.w = 64,
     this.h = 64,
     this.color = 0xFF7C4DFF,
+    this.points,
   });
 
   final String id;
@@ -51,17 +77,57 @@ class SceneNode {
   final double h;
   /// ARGB packed color for stage paint.
   final int color;
+  /// Optional polygon vertices in scene space. Null = rect node.
+  final List<ScenePoint>? points;
 
-  Map<String, dynamic> toJson() => {
-        'id': id,
-        'type': type,
-        'name': name,
-        'x': x,
-        'y': y,
-        'w': w,
-        'h': h,
-        'color': color,
-      };
+  bool get hasPoints => points != null && points!.length >= 3;
+
+  /// Four corners of the current rect (scene space), TL→TR→BR→BL.
+  List<ScenePoint> rectAsPoints() {
+    return [
+      ScenePoint(x, y),
+      ScenePoint(x + w, y),
+      ScenePoint(x + w, y + h),
+      ScenePoint(x, y + h),
+    ];
+  }
+
+  /// Bounding box from points (or current rect if none).
+  static (double x, double y, double w, double h) boundsOf(
+    List<ScenePoint> pts,
+  ) {
+    if (pts.isEmpty) return (0, 0, 64, 64);
+    var minX = pts.first.x;
+    var minY = pts.first.y;
+    var maxX = pts.first.x;
+    var maxY = pts.first.y;
+    for (final p in pts) {
+      minX = math.min(minX, p.x);
+      minY = math.min(minY, p.y);
+      maxX = math.max(maxX, p.x);
+      maxY = math.max(maxY, p.y);
+    }
+    final bw = (maxX - minX).clamp(24.0, 4096.0);
+    final bh = (maxY - minY).clamp(24.0, 4096.0);
+    return (minX, minY, bw, bh);
+  }
+
+  Map<String, dynamic> toJson() {
+    final map = <String, dynamic>{
+      'id': id,
+      'type': type,
+      'name': name,
+      'x': x,
+      'y': y,
+      'w': w,
+      'h': h,
+      'color': color,
+    };
+    if (points != null && points!.isNotEmpty) {
+      map['points'] = points!.map((p) => p.toJson()).toList();
+    }
+    return map;
+  }
 
   factory SceneNode.fromJson(Map<String, dynamic> json) {
     final type = SceneNodeTypes.normalize(json['type'] as String?);
@@ -74,6 +140,17 @@ class SceneNode {
     } else {
       color = ScenePalette.forType(type);
     }
+    List<ScenePoint>? points;
+    final rawPts = json['points'];
+    if (rawPts is List && rawPts.isNotEmpty) {
+      points = [];
+      for (final e in rawPts) {
+        if (e is Map) {
+          points.add(ScenePoint.fromJson(Map<String, dynamic>.from(e)));
+        }
+      }
+      if (points.length < 3) points = null;
+    }
     return SceneNode(
       id: json['id'] as String? ?? '',
       type: type,
@@ -83,6 +160,7 @@ class SceneNode {
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,
+      points: points,
     );
   }
 
@@ -95,6 +173,8 @@ class SceneNode {
     double? w,
     double? h,
     int? color,
+    List<ScenePoint>? points,
+    bool clearPoints = false,
   }) {
     return SceneNode(
       id: id ?? this.id,
@@ -105,6 +185,7 @@ class SceneNode {
       w: w ?? this.w,
       h: h ?? this.h,
       color: color ?? this.color,
+      points: clearPoints ? null : (points ?? this.points),
     );
   }
 }

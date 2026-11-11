@@ -26,6 +26,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
   String? _selectedNodeId;
   final TextEditingController _nameCtrl = TextEditingController();
   String? _nameEditNodeId;
+  /// Index of vertex being edited when node.hasPoints.
+  int? _editPointIndex;
 
   @override
   void initState() {
@@ -252,6 +254,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     setState(() {
       _doc = doc.withNodeRemoved(id);
       _selectedNodeId = null;
+      _editPointIndex = null;
       _nameEditNodeId = null;
       _nameCtrl.clear();
       _dirty = true;
@@ -282,6 +285,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     }
     setState(() {
       _selectedNodeId = id;
+      _editPointIndex = null;
       _syncNameField(node);
     });
   }
@@ -387,11 +391,90 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       final maxY = (doc.height - n.h).clamp(0, doc.height.toDouble()).toDouble();
       final nx = x.clamp(0, maxX).toDouble();
       final ny = y.clamp(0, maxY).toDouble();
+      final dx = nx - n.x;
+      final dy = ny - n.y;
+      if (n.hasPoints) {
+        final shifted = n.points!
+            .map((p) => ScenePoint(p.x + dx, p.y + dy))
+            .toList();
+        final b = SceneNode.boundsOf(shifted);
+        return n.copyWith(
+          x: b.$1,
+          y: b.$2,
+          w: b.$3,
+          h: b.$4,
+          points: shifted,
+        );
+      }
       return n.copyWith(x: nx, y: ny);
     }).toList();
     setState(() {
       _doc = doc.copyWith(nodes: nodes);
       _selectedNodeId = id;
+      _dirty = true;
+    });
+  }
+
+  void _enablePointsOnSelected() {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? cur;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        cur = n;
+        break;
+      }
+    }
+    if (cur == null || cur.hasPoints) return;
+    // Cameras stay rect for now.
+    if (cur.type == SceneNodeTypes.camera) return;
+    final pts = cur.rectAsPoints();
+    setState(() {
+      _doc = doc.withNodeUpdated(cur!.copyWith(points: pts));
+      _selectedNodeId = id;
+      _editPointIndex = null;
+      _dirty = true;
+    });
+  }
+
+  void _clearPointsOnSelected() {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? cur;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        cur = n;
+        break;
+      }
+    }
+    if (cur == null || !cur.hasPoints) return;
+    setState(() {
+      _doc = doc.withNodeUpdated(cur!.copyWith(clearPoints: true));
+      _selectedNodeId = id;
+      _editPointIndex = null;
+      _dirty = true;
+    });
+  }
+
+  void _movePoint(String id, int index, double sceneX, double sceneY) {
+    final doc = _doc;
+    if (doc == null) return;
+    final nodes = doc.nodes.map((n) {
+      if (n.id != id || !n.hasPoints) return n;
+      if (index < 0 || index >= n.points!.length) return n;
+      final sx = sceneX.clamp(0.0, doc.width.toDouble());
+      final sy = sceneY.clamp(0.0, doc.height.toDouble());
+      final pts = List<ScenePoint>.from(n.points!);
+      pts[index] = ScenePoint(sx, sy);
+      final b = SceneNode.boundsOf(pts);
+      return n.copyWith(x: b.$1, y: b.$2, w: b.$3, h: b.$4, points: pts);
+    }).toList();
+    setState(() {
+      _doc = doc.copyWith(nodes: nodes);
+      _selectedNodeId = id;
+      _editPointIndex = index;
       _dirty = true;
     });
   }
@@ -718,6 +801,48 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               ),
             ],
           ),
+          // Edit points (sprites only)
+          if (node.type != SceneNodeTypes.camera)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 2),
+              child: Row(
+                children: [
+                  Text(
+                    node.hasPoints ? 'Points' : 'Rect',
+                    style: TextStyle(fontSize: 11, color: scheme.outline),
+                  ),
+                  const SizedBox(width: 6),
+                  if (!node.hasPoints)
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: _enablePointsOnSelected,
+                      child: const Text('Edit points', style: TextStyle(fontSize: 12)),
+                    )
+                  else ...[
+                    Text(
+                      '${node.points!.length} verts',
+                      style: const TextStyle(fontSize: 11),
+                    ),
+                    const Spacer(),
+                    TextButton(
+                      style: TextButton.styleFrom(
+                        visualDensity: VisualDensity.compact,
+                        padding: const EdgeInsets.symmetric(horizontal: 8),
+                        minimumSize: const Size(0, 28),
+                        tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      ),
+                      onPressed: _clearPointsOnSelected,
+                      child: const Text('Back to rect', style: TextStyle(fontSize: 12)),
+                    ),
+                  ],
+                ],
+              ),
+            ),
           // Transform: X Y
           Row(
             children: [
@@ -917,18 +1042,126 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     required double stageH,
     required ColorScheme scheme,
   }) {
+    final selected = n.id == _selectedNodeId;
+    final isCamera = n.type == SceneNodeTypes.camera;
+    final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.82);
+    // Touch-friendly: ~40dp hit, visible ~20dp.
+    const handleVisual = 20.0;
+    const handleHit = 40.0;
+
+    // --- Polygon (edit-points) mode ---
+    if (n.hasPoints) {
+      final pts = n.points!;
+      // Bounding box in stage pixels for the Positioned host.
+      final left = (n.x * scaleX).clamp(0.0, stageW);
+      final top = (n.y * scaleY).clamp(0.0, stageH);
+      final mw = (n.w * scaleX).clamp(8.0, stageW);
+      final mh = (n.h * scaleY).clamp(8.0, stageH);
+
+      final polyChildren = <Widget>[
+        CustomPaint(
+          size: Size(mw, mh),
+          painter: _PolygonPainter(
+            points: pts,
+            originX: n.x,
+            originY: n.y,
+            scaleX: scaleX,
+            scaleY: scaleY,
+            fill: fill,
+            stroke: selected ? Colors.white : fill.withValues(alpha: 1),
+            strokeWidth: selected ? 2.5 : 1,
+          ),
+        ),
+      ];
+
+      if (selected) {
+        for (var i = 0; i < pts.length; i++) {
+          final p = pts[i];
+          final px = (p.x - n.x) * scaleX;
+          final py = (p.y - n.y) * scaleY;
+          final active = _editPointIndex == i;
+          polyChildren.add(
+            Positioned(
+              left: px - handleHit / 2,
+              top: py - handleHit / 2,
+              width: handleHit,
+              height: handleHit,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onPanStart: (_) {
+                  setState(() => _editPointIndex = i);
+                },
+                onPanUpdate: (details) {
+                  final nx = p.x + details.delta.dx / scaleX;
+                  final ny = p.y + details.delta.dy / scaleY;
+                  _movePoint(n.id, i, nx, ny);
+                },
+                child: Center(
+                  child: Container(
+                    width: handleVisual,
+                    height: handleVisual,
+                    decoration: BoxDecoration(
+                      color: active ? const Color(0xFF69F0AE) : Colors.white,
+                      shape: BoxShape.circle,
+                      border: Border.all(
+                        color: fill,
+                        width: 2,
+                      ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.black.withValues(alpha: 0.4),
+                          blurRadius: 4,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+      }
+
+      return Positioned(
+        left: left,
+        top: top,
+        child: GestureDetector(
+          onTap: () => _selectNode(n.id),
+          onPanUpdate: (details) {
+            SceneNode? cur;
+            final nodes = _doc?.nodes;
+            if (nodes != null) {
+              for (final e in nodes) {
+                if (e.id == n.id) {
+                  cur = e;
+                  break;
+                }
+              }
+            }
+            if (cur == null) return;
+            final newX = cur.x + details.delta.dx / scaleX;
+            final newY = cur.y + details.delta.dy / scaleY;
+            _moveNode(n.id, newX, newY);
+          },
+          child: SizedBox(
+            width: mw,
+            height: mh,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: polyChildren,
+            ),
+          ),
+        ),
+      );
+    }
+
+    // --- Rect mode (default) ---
     final mw = (n.w * scaleX).clamp(16.0, stageW);
     final mh = (n.h * scaleY).clamp(16.0, stageH);
     final left =
         (n.x * scaleX).clamp(0.0, (stageW - mw).clamp(0.0, stageW));
     final top =
         (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
-    final selected = n.id == _selectedNodeId;
-    final isCamera = n.type == SceneNodeTypes.camera;
-    final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.82);
-    // Touch-friendly: ~40dp hit, visible ~20dp square.
-    const handleVisual = 20.0;
-    const handleHit = 40.0;
 
     Widget body = Container(
       width: mw,
