@@ -67,6 +67,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         _doc = doc;
         _dirty = false;
         _selectedNodeId = null;
+        _editPointIndex = null;
         _loading = false;
       });
     } catch (e) {
@@ -349,6 +350,68 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       }
     }
     if (current == null) return;
+
+    // Points mode: shift or scale vertices, then refresh bounds.
+    if (current.hasPoints) {
+      var pts = List<ScenePoint>.from(current.points!);
+      if (dx != 0 || dy != 0) {
+        pts = pts
+            .map((p) => ScenePoint(p.x + dx, p.y + dy))
+            .toList();
+      }
+      if (dw != 0 || dh != 0) {
+        final b = SceneNode.boundsOf(pts);
+        final ox = b.$1;
+        final oy = b.$2;
+        final ow = b.$3 <= 0 ? 1.0 : b.$3;
+        final oh = b.$4 <= 0 ? 1.0 : b.$4;
+        final nw = (ow + dw).clamp(24.0, 512.0);
+        final nh = (oh + dh).clamp(24.0, 512.0);
+        final sx = nw / ow;
+        final sy = nh / oh;
+        pts = pts
+            .map(
+              (p) => ScenePoint(
+                ox + (p.x - ox) * sx,
+                oy + (p.y - oy) * sy,
+              ),
+            )
+            .toList();
+      }
+      // Keep inside stage after nudge.
+      final b2 = SceneNode.boundsOf(pts);
+      var shiftX = 0.0;
+      var shiftY = 0.0;
+      if (b2.$1 < 0) shiftX = -b2.$1;
+      if (b2.$2 < 0) shiftY = -b2.$2;
+      if (b2.$1 + b2.$3 > doc.width) {
+        shiftX = doc.width - (b2.$1 + b2.$3);
+      }
+      if (b2.$2 + b2.$4 > doc.height) {
+        shiftY = doc.height - (b2.$2 + b2.$4);
+      }
+      if (shiftX != 0 || shiftY != 0) {
+        pts = pts
+            .map((p) => ScenePoint(p.x + shiftX, p.y + shiftY))
+            .toList();
+      }
+      final b3 = SceneNode.boundsOf(pts);
+      setState(() {
+        _doc = doc.withNodeUpdated(
+          current!.copyWith(
+            x: b3.$1,
+            y: b3.$2,
+            w: b3.$3,
+            h: b3.$4,
+            points: pts,
+          ),
+        );
+        _selectedNodeId = id;
+        _dirty = true;
+      });
+      return;
+    }
+
     var nx = current.x + dx;
     var ny = current.y + dy;
     var nw = current.w + dw;
@@ -1092,8 +1155,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                   setState(() => _editPointIndex = i);
                 },
                 onPanUpdate: (details) {
-                  final nx = p.x + details.delta.dx / scaleX;
-                  final ny = p.y + details.delta.dy / scaleY;
+                  // Read current point from doc (avoid stale build closure).
+                  double cx = p.x;
+                  double cy = p.y;
+                  final nodes = _doc?.nodes;
+                  if (nodes != null) {
+                    for (final e in nodes) {
+                      if (e.id == n.id && e.hasPoints &&
+                          i < e.points!.length) {
+                        cx = e.points![i].x;
+                        cy = e.points![i].y;
+                        break;
+                      }
+                    }
+                  }
+                  final nx = cx + details.delta.dx / scaleX;
+                  final ny = cy + details.delta.dy / scaleY;
                   _movePoint(n.id, i, nx, ny);
                 },
                 child: Center(
