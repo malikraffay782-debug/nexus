@@ -280,6 +280,24 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     });
   }
 
+  /// delta -1 = send backward (earlier paint), +1 = bring forward (later paint).
+  void _reorderNode(String id, int delta) {
+    final doc = _doc;
+    if (doc == null || delta == 0) return;
+    final list = List<SceneNode>.from(doc.nodes);
+    final i = list.indexWhere((n) => n.id == id);
+    if (i < 0) return;
+    final j = (i + delta).clamp(0, list.length - 1);
+    if (j == i) return;
+    final node = list.removeAt(i);
+    list.insert(j, node);
+    setState(() {
+      _doc = doc.copyWith(nodes: list);
+      _selectedNodeId = id;
+      _dirty = true;
+    });
+  }
+
   void _syncNameField(SceneNode? node) {
     if (node == null) {
       _nameEditNodeId = null;
@@ -1127,14 +1145,16 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       itemBuilder: (context, i) {
         final n = doc.nodes[i];
         final selected = n.id == _selectedNodeId;
+        final last = i == doc.nodes.length - 1;
         return ListTile(
           dense: true,
           visualDensity: VisualDensity.compact,
           selected: selected,
-          contentPadding: const EdgeInsets.symmetric(horizontal: 10),
+          contentPadding: const EdgeInsets.symmetric(horizontal: 6),
           title: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
           subtitle: Text(
-            '${n.type} · ${n.w.toInt()}×${n.h.toInt()}',
+            '${n.type} · ${n.w.toInt()}×${n.h.toInt()}'
+            '${n.hasPoints ? ' · poly' : ''}',
             style: TextStyle(fontSize: 11, color: scheme.outline),
           ),
           leading: Container(
@@ -1144,6 +1164,27 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               color: Color(n.color),
               shape: BoxShape.circle,
             ),
+          ),
+          trailing: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              IconButton(
+                tooltip: 'Send backward',
+                icon: const Icon(Icons.arrow_downward, size: 16),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: i == 0 ? null : () => _reorderNode(n.id, -1),
+              ),
+              IconButton(
+                tooltip: 'Bring forward',
+                icon: const Icon(Icons.arrow_upward, size: 16),
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+                onPressed: last ? null : () => _reorderNode(n.id, 1),
+              ),
+            ],
           ),
           onTap: () => _selectNode(n.id),
         );

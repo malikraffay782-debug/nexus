@@ -183,22 +183,28 @@ class ProjectRepository {
       ]) {
         await Directory(p.join(staging.path, sub)).create();
       }
-      // Default entry script for future real Run
-      await File(p.join(staging.path, 'src', 'main.py')).writeAsString(
-        "# Nexus project: will run via embedded runtime later\n"
-        "print('hello from nexus')\n",
-      );
-
       if (type == ProjectType.game) {
+        await File(p.join(staging.path, 'src', 'scene_draw.py')).writeAsString(
+          _kSceneDrawPy,
+        );
+        await File(p.join(staging.path, 'src', 'main.py')).writeAsString(
+          _kGameMainPy,
+        );
         await File(p.join(staging.path, 'scenes', 'main.json')).writeAsString(
           const JsonEncoder.withIndent('  ').convert({
             'version': 1,
             'name': 'main',
             'width': 720,
             'height': 1280,
+            'showGrid': true,
             'nodes': <dynamic>[],
           }),
           flush: true,
+        );
+      } else {
+        await File(p.join(staging.path, 'src', 'main.py')).writeAsString(
+          "# Nexus project\n"
+          "print('hello from nexus')\n",
         );
       }
 
@@ -257,3 +263,98 @@ class ProjectRepository {
     return File(p.join(dir.path, _manifest)).exists();
   }
 }
+
+/// Default game entry: load scenes/main.json and text-draw nodes.
+const String _kGameMainPy = r'''
+import sys
+from pathlib import Path
+
+# Ensure src/ is importable when run as /home/project/src/main.py
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+
+from scene_draw import load_scene, draw_scene
+
+def main():
+    scene = load_scene("scenes/main.json")
+    draw_scene(scene)
+
+if __name__ == "__main__":
+    main()
+''';
+
+/// Minimal scene JSON reader + ASCII stage for embedded runtime.
+const String _kSceneDrawPy = r'''
+"""Load Nexus scene JSON and print a simple text stage (no GUI yet)."""
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+
+def load_scene(rel_path: str = "scenes/main.json") -> dict:
+    path = Path(rel_path)
+    if not path.is_file():
+        raise FileNotFoundError(f"Scene not found: {path}")
+    with path.open("r", encoding="utf-8") as f:
+        data = json.load(f)
+    if not isinstance(data, dict):
+        raise ValueError("Scene root must be an object")
+    return data
+
+
+def _node_label(node: dict) -> str:
+    name = str(node.get("name") or "node")
+    ntype = str(node.get("type") or "sprite")
+    x = int(float(node.get("x") or 0))
+    y = int(float(node.get("y") or 0))
+    w = int(float(node.get("w") or 0))
+    h = int(float(node.get("h") or 0))
+    pts = node.get("points")
+    extra = f" poly:{len(pts)}" if isinstance(pts, list) and len(pts) >= 3 else ""
+    return f"{name} [{ntype}] @({x},{y}) {w}x{h}{extra}"
+
+
+def draw_scene(scene: dict) -> None:
+    width = int(scene.get("width") or 720)
+    height = int(scene.get("height") or 1280)
+    name = str(scene.get("name") or "scene")
+    nodes = scene.get("nodes") or []
+    if not isinstance(nodes, list):
+        nodes = []
+
+    print(f"Nexus scene: {name}  {width}x{height}")
+    print(f"nodes: {len(nodes)} (paint order = list order, last on top)")
+    if not nodes:
+        print("(empty stage)")
+        return
+
+    cols, rows = 24, 12
+    grid = [["." for _ in range(cols)] for _ in range(rows)]
+    for idx, node in enumerate(nodes):
+        if not isinstance(node, dict):
+            continue
+        x = float(node.get("x") or 0)
+        y = float(node.get("y") or 0)
+        w = max(float(node.get("w") or 1), 1.0)
+        h = max(float(node.get("h") or 1), 1.0)
+        c0 = int(x / width * (cols - 1)) if width > 0 else 0
+        r0 = int(y / height * (rows - 1)) if height > 0 else 0
+        c1 = int((x + w) / width * (cols - 1)) if width > 0 else c0
+        r1 = int((y + h) / height * (rows - 1)) if height > 0 else r0
+        c0 = max(0, min(cols - 1, c0))
+        c1 = max(0, min(cols - 1, c1))
+        r0 = max(0, min(rows - 1, r0))
+        r1 = max(0, min(rows - 1, r1))
+        ch = str(idx % 10)
+        for r in range(r0, r1 + 1):
+            for c in range(c0, c1 + 1):
+                grid[r][c] = ch
+
+    print("+" + "-" * cols + "+")
+    for row in grid:
+        print("|" + "".join(row) + "|")
+    print("+" + "-" * cols + "+")
+    for i, node in enumerate(nodes):
+        if isinstance(node, dict):
+            print(f"  {i}: {_node_label(node)}")
+''';
