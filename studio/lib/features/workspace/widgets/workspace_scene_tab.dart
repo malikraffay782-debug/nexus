@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
+import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
 
 /// Scene tab: list/create scenes + sized nodes (drag, rename, resize).
@@ -14,7 +15,8 @@ class WorkspaceSceneTab extends StatefulWidget {
   State<WorkspaceSceneTab> createState() => _WorkspaceSceneTabState();
 }
 
-class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
+class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
+    with SingleTickerProviderStateMixin {
   late final SceneService _service;
   List<String> _files = [];
   String? _selected;
@@ -29,6 +31,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
   /// Index of vertex being edited when node.hasPoints.
   int? _editPointIndex;
 
+  /// Graphical 2D preview loop (Flutter ticker — not proot).
+  bool _playing = false;
+  double _playTime = 0.0;
+  Ticker? _playTicker;
+
   @override
   void initState() {
     super.initState();
@@ -38,8 +45,38 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
 
   @override
   void dispose() {
+    _stopPlayLoop();
     _nameCtrl.dispose();
     super.dispose();
+  }
+
+  void _stopPlayLoop() {
+    _playTicker?.dispose();
+    _playTicker = null;
+    _playing = false;
+  }
+
+  void _togglePlay() {
+    if (_doc == null) return;
+    if (_playing) {
+      _playTicker?.dispose();
+      _playTicker = null;
+      setState(() {
+        _playing = false;
+      });
+      return;
+    }
+    _playTime = 0;
+    _playTicker = createTicker((elapsed) {
+      if (!mounted) return;
+      setState(() {
+        _playTime = elapsed.inMicroseconds / 1e6;
+      });
+    })..start();
+    setState(() {
+      _playing = true;
+      _editPointIndex = null;
+    });
   }
 
   Future<void> _reload() async {
@@ -61,6 +98,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         doc = await _service.load(sel);
       }
       if (!mounted) return;
+      _stopPlayLoop();
       setState(() {
         _files = list;
         _selected = sel;
@@ -69,6 +107,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         _selectedNodeId = null;
         _editPointIndex = null;
         _loading = false;
+        _playTime = 0;
       });
     } catch (e) {
       if (!mounted) return;
@@ -1232,13 +1271,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                       ),
                     ),
                     IconButton(
+                      tooltip: _playing ? 'Stop preview' : 'Play 2D preview',
+                      icon: Icon(
+                        _playing ? Icons.stop : Icons.play_arrow,
+                        size: 20,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _togglePlay,
+                    ),
+                    IconButton(
                       tooltip: doc.showGrid ? 'Hide grid' : 'Show grid',
                       icon: Icon(
                         doc.showGrid ? Icons.grid_on : Icons.grid_off,
                         size: 18,
                       ),
                       visualDensity: VisualDensity.compact,
-                      onPressed: _toggleGrid,
+                      onPressed: _playing ? null : _toggleGrid,
                     ),
                   ],
                 ),
@@ -1254,18 +1302,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                 clipBehavior: Clip.hardEdge,
                 child: Stack(
                   children: [
-                    if (doc.showGrid)
-                      Positioned.fill(
-                        child: CustomPaint(
-                          painter: _StageGridPainter(
-                            stageW: doc.width.toDouble(),
-                            stageH: doc.height.toDouble(),
-                            scaleX: scaleX,
-                            scaleY: scaleY,
-                            color: scheme.outlineVariant.withValues(alpha: 0.35),
-                          ),
+                    // Graphical 2D stage (always painted).
+                    Positioned.fill(
+                      child: CustomPaint(
+                        painter: SceneStagePainter(
+                          doc: doc,
+                          selectedId: _playing ? null : _selectedNodeId,
+                          editPointIndex: _playing ? null : _editPointIndex,
+                          showGrid: doc.showGrid,
+                          playTime: _playTime,
                         ),
                       ),
+                    ),
                     if (doc.nodes.isEmpty)
                       Center(
                         child: Text(
@@ -1273,15 +1321,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                           style: TextStyle(color: scheme.outline),
                         ),
                       ),
-                    for (final n in doc.nodes)
-                      _nodeMarker(
-                        n,
-                        scaleX: scaleX,
-                        scaleY: scaleY,
-                        stageW: w,
-                        stageH: h,
-                        scheme: scheme,
-                      ),
+                    // Interactive edit handles only when not in play loop.
+                    if (!_playing)
+                      for (final n in doc.nodes)
+                        _nodeMarker(
+                          n,
+                          scaleX: scaleX,
+                          scaleY: scaleY,
+                          stageW: w,
+                          stageH: h,
+                          scheme: scheme,
+                          paintBody: false,
+                        ),
                   ],
                 ),
               ),
@@ -1299,6 +1350,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     required double stageW,
     required double stageH,
     required ColorScheme scheme,
+    bool paintBody = true,
   }) {
     final selected = n.id == _selectedNodeId;
     final isCamera = n.type == SceneNodeTypes.camera;
@@ -1317,19 +1369,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       final mh = (n.h * scaleY).clamp(8.0, stageH);
 
       final polyChildren = <Widget>[
-        CustomPaint(
-          size: Size(mw, mh),
-          painter: _PolygonPainter(
-            points: pts,
-            originX: n.x,
-            originY: n.y,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            fill: fill,
-            stroke: selected ? Colors.white : fill.withValues(alpha: 1),
-            strokeWidth: selected ? 2.5 : 1,
-          ),
-        ),
+        if (paintBody)
+          CustomPaint(
+            size: Size(mw, mh),
+            painter: _PolygonPainter(
+              points: pts,
+              originX: n.x,
+              originY: n.y,
+              scaleX: scaleX,
+              scaleY: scaleY,
+              fill: fill,
+              stroke: selected ? Colors.white : fill.withValues(alpha: 1),
+              strokeWidth: selected ? 2.5 : 1,
+            ),
+          )
+        else
+          SizedBox(width: mw, height: mh),
       ];
 
       if (selected) {
@@ -1398,6 +1453,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
         left: left,
         top: top,
         child: GestureDetector(
+          behavior: HitTestBehavior.opaque,
           onTap: () => _selectNode(n.id),
           onPanUpdate: (details) {
             SceneNode? cur;
@@ -1435,33 +1491,35 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     final top =
         (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
 
-    Widget body = Container(
-      width: mw,
-      height: mh,
-      alignment: Alignment.center,
-      decoration: BoxDecoration(
-        color: fill,
-        borderRadius: BorderRadius.circular(isCamera ? 20 : 6),
-        border: Border.all(
-          color: selected ? Colors.white : fill.withValues(alpha: 1),
-          width: selected ? 2.5 : 1,
-        ),
-        boxShadow: selected
-            ? [
-                BoxShadow(
-                  color: fill.withValues(alpha: 0.45),
-                  blurRadius: 8,
-                  spreadRadius: 1,
-                ),
-              ]
-            : null,
-      ),
-      child: Icon(
-        isCamera ? Icons.videocam : Icons.square_rounded,
-        size: (mw < 28 || mh < 28) ? 12 : 18,
-        color: Colors.white.withValues(alpha: 0.95),
-      ),
-    );
+    Widget body = paintBody
+        ? Container(
+            width: mw,
+            height: mh,
+            alignment: Alignment.center,
+            decoration: BoxDecoration(
+              color: fill,
+              borderRadius: BorderRadius.circular(isCamera ? 20 : 6),
+              border: Border.all(
+                color: selected ? Colors.white : fill.withValues(alpha: 1),
+                width: selected ? 2.5 : 1,
+              ),
+              boxShadow: selected
+                  ? [
+                      BoxShadow(
+                        color: fill.withValues(alpha: 0.45),
+                        blurRadius: 8,
+                        spreadRadius: 1,
+                      ),
+                    ]
+                  : null,
+            ),
+            child: Icon(
+              isCamera ? Icons.videocam : Icons.square_rounded,
+              size: (mw < 28 || mh < 28) ? 12 : 18,
+              color: Colors.white.withValues(alpha: 0.95),
+            ),
+          )
+        : SizedBox(width: mw, height: mh);
 
     if (selected) {
       body = Stack(
@@ -1512,6 +1570,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       left: left,
       top: top,
       child: GestureDetector(
+        behavior: HitTestBehavior.opaque,
         onTap: () => _selectNode(n.id),
         onPanUpdate: (details) {
           SceneNode? cur;
