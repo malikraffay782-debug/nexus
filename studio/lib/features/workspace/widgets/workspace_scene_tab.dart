@@ -542,6 +542,79 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     });
   }
 
+  /// Insert a vertex after the selected point (or last). Midpoint of that edge.
+  void _addPointOnSelected() {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? cur;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        cur = n;
+        break;
+      }
+    }
+    if (cur == null || !cur.hasPoints) return;
+    final pts = List<ScenePoint>.from(cur.points!);
+    final n = pts.length;
+    final i = (_editPointIndex ?? (n - 1)).clamp(0, n - 1);
+    final a = pts[i];
+    final b = pts[(i + 1) % n];
+    final mid = ScenePoint((a.x + b.x) / 2, (a.y + b.y) / 2);
+    pts.insert(i + 1, mid);
+    final box = SceneNode.boundsOf(pts);
+    setState(() {
+      _doc = doc.withNodeUpdated(
+        cur!.copyWith(
+          x: box.$1,
+          y: box.$2,
+          w: box.$3,
+          h: box.$4,
+          points: pts,
+        ),
+      );
+      _selectedNodeId = id;
+      _editPointIndex = i + 1;
+      _dirty = true;
+    });
+  }
+
+  /// Remove selected vertex; keep at least 3.
+  void _removePointOnSelected() {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? cur;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        cur = n;
+        break;
+      }
+    }
+    if (cur == null || !cur.hasPoints) return;
+    final pts = List<ScenePoint>.from(cur.points!);
+    if (pts.length <= 3) return;
+    final i = _editPointIndex;
+    if (i == null || i < 0 || i >= pts.length) return;
+    pts.removeAt(i);
+    final box = SceneNode.boundsOf(pts);
+    final nextIdx = i >= pts.length ? pts.length - 1 : i;
+    setState(() {
+      _doc = doc.withNodeUpdated(
+        cur!.copyWith(
+          x: box.$1,
+          y: box.$2,
+          w: box.$3,
+          h: box.$4,
+          points: pts,
+        ),
+      );
+      _selectedNodeId = id;
+      _editPointIndex = nextIdx;
+      _dirty = true;
+    });
+  }
+
   /// Resize with optional origin shift (for non-BR corners). Clamps inside stage.
   void _resizeNode(
     String id, {
@@ -890,6 +963,24 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                     Text(
                       '${node.points!.length} verts',
                       style: const TextStyle(fontSize: 11),
+                    ),
+                    IconButton(
+                      tooltip: 'Add vertex',
+                      icon: const Icon(Icons.add, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                      onPressed: _addPointOnSelected,
+                    ),
+                    IconButton(
+                      tooltip: 'Remove vertex',
+                      icon: const Icon(Icons.remove, size: 18),
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
+                      onPressed: node.points!.length > 3
+                          ? _removePointOnSelected
+                          : null,
                     ),
                     const Spacer(),
                     TextButton(
