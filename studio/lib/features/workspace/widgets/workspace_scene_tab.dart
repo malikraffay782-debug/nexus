@@ -225,13 +225,31 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
 
   void _setNodeType(String type) {
     final t = SceneNodeTypes.normalize(type);
-    _updateSelectedNode((n) {
-      // Keep color unless switching to camera and still on a sprite default.
-      final color = t == SceneNodeTypes.camera &&
-              n.color == ScenePalette.forType(SceneNodeTypes.sprite)
-          ? ScenePalette.forType(t)
-          : n.color;
-      return n.copyWith(type: t, color: color);
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? current;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        current = n;
+        break;
+      }
+    }
+    if (current == null) return;
+    // Keep color unless switching to camera and still on a sprite default.
+    final color = t == SceneNodeTypes.camera &&
+            current.color == ScenePalette.forType(SceneNodeTypes.sprite)
+        ? ScenePalette.forType(t)
+        : current.color;
+    // Cameras stay axis-aligned rects — drop polygon verts.
+    final updated = t == SceneNodeTypes.camera
+        ? current.copyWith(type: t, color: color, clearPoints: true)
+        : current.copyWith(type: t, color: color);
+    setState(() {
+      _doc = doc.withNodeUpdated(updated);
+      _selectedNodeId = id;
+      if (t == SceneNodeTypes.camera) _editPointIndex = null;
+      _dirty = true;
     });
   }
 
@@ -540,6 +558,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       _editPointIndex = index;
       _dirty = true;
     });
+  }
+
+  /// Nudge the active vertex from live _doc state (no build-time closure).
+  void _nudgeSelectedPoint({double dx = 0, double dy = 0}) {
+    final id = _selectedNodeId;
+    final i = _editPointIndex;
+    if (id == null || i == null) return;
+    final nodes = _doc?.nodes;
+    if (nodes == null) return;
+    for (final e in nodes) {
+      if (e.id == id && e.hasPoints && i >= 0 && i < e.points!.length) {
+        final p = e.points![i];
+        _movePoint(id, i, p.x + dx, p.y + dy);
+        return;
+      }
+    }
   }
 
   /// Insert a vertex after the selected point (or last). Midpoint of that edge.
@@ -1015,26 +1049,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                 stepper(
                   'X',
                   node.points![_editPointIndex!].x.round(),
-                  () {
-                    final p = node!.points![_editPointIndex!];
-                    _movePoint(node.id, _editPointIndex!, p.x - 8, p.y);
-                  },
-                  () {
-                    final p = node!.points![_editPointIndex!];
-                    _movePoint(node.id, _editPointIndex!, p.x + 8, p.y);
-                  },
+                  () => _nudgeSelectedPoint(dx: -8),
+                  () => _nudgeSelectedPoint(dx: 8),
                 ),
                 stepper(
                   'Y',
                   node.points![_editPointIndex!].y.round(),
-                  () {
-                    final p = node!.points![_editPointIndex!];
-                    _movePoint(node.id, _editPointIndex!, p.x, p.y - 8);
-                  },
-                  () {
-                    final p = node!.points![_editPointIndex!];
-                    _movePoint(node.id, _editPointIndex!, p.x, p.y + 8);
-                  },
+                  () => _nudgeSelectedPoint(dy: -8),
+                  () => _nudgeSelectedPoint(dy: 8),
                 ),
               ],
             ),
