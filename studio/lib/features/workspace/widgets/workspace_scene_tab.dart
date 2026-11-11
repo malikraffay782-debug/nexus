@@ -1000,14 +1000,52 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                 ],
               ),
             ),
-          // Transform: X Y
-          Row(
-            children: [
-              stepper('X', node.x.round(), () => _nudgeSelected(dx: -8), () => _nudgeSelected(dx: 8)),
-              stepper('Y', node.y.round(), () => _nudgeSelected(dy: -8), () => _nudgeSelected(dy: 8)),
-            ],
-          ),
-          // Size: W H
+          // Transform: node X/Y or selected vertex Px/Py (YOKOSO-style point coords)
+          if (node.hasPoints &&
+              _editPointIndex != null &&
+              _editPointIndex! >= 0 &&
+              _editPointIndex! < node.points!.length) ...[
+            Row(
+              children: [
+                Text(
+                  'P${_editPointIndex! + 1}',
+                  style: TextStyle(fontSize: 11, color: scheme.outline),
+                ),
+                const SizedBox(width: 4),
+                stepper(
+                  'X',
+                  node.points![_editPointIndex!].x.round(),
+                  () {
+                    final p = node!.points![_editPointIndex!];
+                    _movePoint(node.id, _editPointIndex!, p.x - 8, p.y);
+                  },
+                  () {
+                    final p = node!.points![_editPointIndex!];
+                    _movePoint(node.id, _editPointIndex!, p.x + 8, p.y);
+                  },
+                ),
+                stepper(
+                  'Y',
+                  node.points![_editPointIndex!].y.round(),
+                  () {
+                    final p = node!.points![_editPointIndex!];
+                    _movePoint(node.id, _editPointIndex!, p.x, p.y - 8);
+                  },
+                  () {
+                    final p = node!.points![_editPointIndex!];
+                    _movePoint(node.id, _editPointIndex!, p.x, p.y + 8);
+                  },
+                ),
+              ],
+            ),
+          ] else
+            Row(
+              children: [
+                stepper('X', node.x.round(), () => _nudgeSelected(dx: -8), () => _nudgeSelected(dx: 8)),
+                stepper('Y', node.y.round(), () => _nudgeSelected(dy: -8), () => _nudgeSelected(dy: 8)),
+              ],
+            ),
+          // Size: W H (bbox; scales verts when in points mode)
           Row(
             children: [
               stepper('W', node.w.round(), () => _nudgeSelected(dw: -8), () => _nudgeSelected(dw: 8)),
