@@ -1,9 +1,13 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 
 import 'scene_model.dart';
 
 /// Graphical 2D stage painter — draws scene nodes (sprites / cameras / polys).
 /// Used by the editor canvas and the play/preview loop.
+///
+/// [playTime] > 0 enables a non-destructive preview motion (does not mutate [doc]).
 class SceneStagePainter extends CustomPainter {
   SceneStagePainter({
     required this.doc,
@@ -19,13 +23,24 @@ class SceneStagePainter extends CustomPainter {
   final bool showGrid;
   final double playTime;
 
+  /// Preview-only offset in scene space (sprites / polys; cameras fixed).
+  Offset _previewOffset(SceneNode n) {
+    if (playTime <= 0 || n.type == SceneNodeTypes.camera) {
+      return Offset.zero;
+    }
+    // Gentle bob — proves the 2D tick is running without writing the model.
+    final phase = playTime * 2.4 + n.x * 0.02 + n.y * 0.015;
+    final dy = math.sin(phase) * 10.0;
+    final dx = math.cos(phase * 0.7) * 4.0;
+    return Offset(dx, dy);
+  }
+
   @override
   void paint(Canvas canvas, Size size) {
     if (doc.width <= 0 || doc.height <= 0) return;
     final scaleX = size.width / doc.width;
     final scaleY = size.height / doc.height;
 
-    // Stage background
     canvas.drawRect(
       Offset.zero & size,
       Paint()..color = const Color(0xFF1A1A22),
@@ -65,13 +80,20 @@ class SceneStagePainter extends CustomPainter {
     final selected = n.id == selectedId;
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.85);
     final stroke = selected ? Colors.white : fill.withValues(alpha: 1);
+    final off = _previewOffset(n);
 
     if (n.hasPoints) {
       final path = Path();
       final pts = n.points!;
-      path.moveTo(pts.first.x * scaleX, pts.first.y * scaleY);
+      path.moveTo(
+        (pts.first.x + off.dx) * scaleX,
+        (pts.first.y + off.dy) * scaleY,
+      );
       for (var i = 1; i < pts.length; i++) {
-        path.lineTo(pts[i].x * scaleX, pts[i].y * scaleY);
+        path.lineTo(
+          (pts[i].x + off.dx) * scaleX,
+          (pts[i].y + off.dy) * scaleY,
+        );
       }
       path.close();
       canvas.drawPath(path, Paint()..color = fill);
@@ -86,7 +108,10 @@ class SceneStagePainter extends CustomPainter {
         for (var i = 0; i < pts.length; i++) {
           final active = editPointIndex == i;
           canvas.drawCircle(
-            Offset(pts[i].x * scaleX, pts[i].y * scaleY),
+            Offset(
+              (pts[i].x + off.dx) * scaleX,
+              (pts[i].y + off.dy) * scaleY,
+            ),
             active ? 7 : 5,
             Paint()
               ..color = active ? const Color(0xFF69F0AE) : Colors.white,
@@ -97,8 +122,8 @@ class SceneStagePainter extends CustomPainter {
     }
 
     final rect = Rect.fromLTWH(
-      n.x * scaleX,
-      n.y * scaleY,
+      (n.x + off.dx) * scaleX,
+      (n.y + off.dy) * scaleY,
       n.w * scaleX,
       n.h * scaleY,
     );
@@ -116,7 +141,6 @@ class SceneStagePainter extends CustomPainter {
         ..strokeWidth = selected ? 2.5 : 1.2,
     );
 
-    // Simple type glyph (camera / sprite) at center.
     final cx = rect.center.dx;
     final cy = rect.center.dy;
     final glyph = Paint()

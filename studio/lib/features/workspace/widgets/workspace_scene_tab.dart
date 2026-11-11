@@ -54,6 +54,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _playTicker?.dispose();
     _playTicker = null;
     _playing = false;
+    _playTime = 0;
   }
 
   void _togglePlay() {
@@ -63,6 +64,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       _playTicker = null;
       setState(() {
         _playing = false;
+        _playTime = 0;
       });
       return;
     }
