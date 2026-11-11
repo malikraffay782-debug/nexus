@@ -327,6 +327,57 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     });
   }
 
+  /// Nudge position or size by small steps (bottom transform strip).
+  void _nudgeSelected({
+    double dx = 0,
+    double dy = 0,
+    double dw = 0,
+    double dh = 0,
+  }) {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return;
+    SceneNode? current;
+    for (final n in doc.nodes) {
+      if (n.id == id) {
+        current = n;
+        break;
+      }
+    }
+    if (current == null) return;
+    var nx = current.x + dx;
+    var ny = current.y + dy;
+    var nw = current.w + dw;
+    var nh = current.h + dh;
+    if (nw < 24) nw = 24;
+    if (nh < 24) nh = 24;
+    if (nx < 0) nx = 0;
+    if (ny < 0) ny = 0;
+    if (nx + nw > doc.width) {
+      if (dw != 0) {
+        nw = doc.width - nx;
+      } else {
+        nx = doc.width - nw;
+      }
+    }
+    if (ny + nh > doc.height) {
+      if (dh != 0) {
+        nh = doc.height - ny;
+      } else {
+        ny = doc.height - nh;
+      }
+    }
+    nw = nw.clamp(24.0, 512.0);
+    nh = nh.clamp(24.0, 512.0);
+    setState(() {
+      _doc = doc.withNodeUpdated(
+        current!.copyWith(x: nx, y: ny, w: nw, h: nh),
+      );
+      _selectedNodeId = id;
+      _dirty = true;
+    });
+  }
+
   void _moveNode(String id, double x, double y) {
     final doc = _doc;
     if (doc == null) return;
@@ -431,10 +482,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                     // Portrait / short: more height when a node is selected
                     // so type/color/size controls fit without bottom overflow.
                     final selected = _selectedNodeId != null;
-                    // Keep props compact so stage stays large enough for touch.
-                    final frac = selected ? 0.42 : 0.28;
-                    final maxH = selected ? 240.0 : 140.0;
-                    final minH = selected ? 160.0 : 88.0;
+                    // Compact transform strip — keep stage large on phone.
+                    final frac = selected ? 0.36 : 0.26;
+                    final maxH = selected ? 200.0 : 130.0;
+                    final minH = selected ? 148.0 : 84.0;
                     return Column(
                       children: [
                         SizedBox(
@@ -594,21 +645,47 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
       }
     }
     if (node == null) return const SizedBox.shrink();
+
+    Widget stepper(String label, int value, VoidCallback onMinus, VoidCallback onPlus) {
+      return Expanded(
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(label, style: TextStyle(fontSize: 11, color: scheme.outline)),
+            IconButton(
+              icon: const Icon(Icons.remove, size: 16),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              onPressed: onMinus,
+            ),
+            Text('$value', style: const TextStyle(fontSize: 12)),
+            IconButton(
+              icon: const Icon(Icons.add, size: 16),
+              visualDensity: VisualDensity.compact,
+              padding: EdgeInsets.zero,
+              constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
+              onPressed: onPlus,
+            ),
+          ],
+        ),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 4, 4, 4),
-      child: SingleChildScrollView(
-        child: Column(
+      padding: const EdgeInsets.fromLTRB(6, 2, 4, 2),
+      child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           TextField(
             controller: _nameCtrl,
-            style: const TextStyle(fontSize: 13),
+            style: const TextStyle(fontSize: 12),
             decoration: const InputDecoration(
               isDense: true,
               labelText: 'Name',
               border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
             ),
             textInputAction: TextInputAction.done,
             onSubmitted: _renameSelected,
@@ -616,18 +693,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               if (v.trim().isNotEmpty) _renameSelected(v);
             },
           ),
-          const SizedBox(height: 4),
-          // Type chips + remove
+          const SizedBox(height: 2),
           Row(
             children: [
               for (final t in SceneNodeTypes.all)
                 Padding(
                   padding: const EdgeInsets.only(right: 4),
                   child: ChoiceChip(
-                    label: Text(
-                      t,
-                      style: const TextStyle(fontSize: 11),
-                    ),
+                    label: Text(t, style: const TextStyle(fontSize: 11)),
                     selected: node.type == t,
                     visualDensity: VisualDensity.compact,
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -637,61 +710,49 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               const Spacer(),
               IconButton(
                 tooltip: 'Remove node',
-                icon: Icon(Icons.delete_outline, size: 20, color: scheme.error),
+                icon: Icon(Icons.delete_outline, size: 18, color: scheme.error),
                 visualDensity: VisualDensity.compact,
                 padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 32, minHeight: 32),
+                constraints: const BoxConstraints(minWidth: 30, minHeight: 30),
                 onPressed: _removeSelectedNode,
               ),
             ],
           ),
-          // Size
+          // Transform: X Y
           Row(
             children: [
-              Text('Size', style: TextStyle(fontSize: 12, color: scheme.outline)),
-              IconButton(
-                tooltip: 'Smaller',
-                icon: const Icon(Icons.remove, size: 18),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: () => _resizeSelected(-8),
-              ),
-              Text(
-                '${node.w.toInt()}×${node.h.toInt()}',
-                style: const TextStyle(fontSize: 12),
-              ),
-              IconButton(
-                tooltip: 'Larger',
-                icon: const Icon(Icons.add, size: 18),
-                visualDensity: VisualDensity.compact,
-                padding: EdgeInsets.zero,
-                constraints: const BoxConstraints(minWidth: 28, minHeight: 28),
-                onPressed: () => _resizeSelected(8),
-              ),
+              stepper('X', node.x.round(), () => _nudgeSelected(dx: -8), () => _nudgeSelected(dx: 8)),
+              stepper('Y', node.y.round(), () => _nudgeSelected(dy: -8), () => _nudgeSelected(dy: 8)),
             ],
           ),
-          // Color palette
+          // Size: W H
+          Row(
+            children: [
+              stepper('W', node.w.round(), () => _nudgeSelected(dw: -8), () => _nudgeSelected(dw: 8)),
+              stepper('H', node.h.round(), () => _nudgeSelected(dh: -8), () => _nudgeSelected(dh: 8)),
+            ],
+          ),
+          // Color
           SizedBox(
-            height: 28,
+            height: 26,
             child: ListView.separated(
               scrollDirection: Axis.horizontal,
               itemCount: ScenePalette.colors.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 6),
+              separatorBuilder: (_, __) => const SizedBox(width: 5),
               itemBuilder: (context, i) {
                 final c = ScenePalette.colors[i];
                 final selected = node!.color == c;
                 return GestureDetector(
                   onTap: () => _setNodeColor(c),
                   child: Container(
-                    width: 24,
-                    height: 24,
+                    width: 22,
+                    height: 22,
                     decoration: BoxDecoration(
                       color: Color(c),
                       shape: BoxShape.circle,
                       border: Border.all(
                         color: selected ? scheme.onSurface : scheme.outlineVariant,
-                        width: selected ? 2.5 : 1,
+                        width: selected ? 2.2 : 1,
                       ),
                     ),
                   ),
@@ -700,7 +761,6 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
             ),
           ),
         ],
-        ),
       ),
     );
   }
