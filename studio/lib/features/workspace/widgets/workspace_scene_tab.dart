@@ -580,6 +580,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
   }
 
   /// Remove selected vertex; keep at least 3.
+  /// If no vertex is selected, removes the last one.
   void _removePointOnSelected() {
     final doc = _doc;
     final id = _selectedNodeId;
@@ -594,8 +595,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     if (cur == null || !cur.hasPoints) return;
     final pts = List<ScenePoint>.from(cur.points!);
     if (pts.length <= 3) return;
-    final i = _editPointIndex;
-    if (i == null || i < 0 || i >= pts.length) return;
+    var i = _editPointIndex;
+    if (i == null || i < 0 || i >= pts.length) {
+      i = pts.length - 1;
+    }
     pts.removeAt(i);
     final box = SceneNode.boundsOf(pts);
     final nextIdx = i >= pts.length ? pts.length - 1 : i;
@@ -702,9 +705,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
                     // so type/color/size controls fit without bottom overflow.
                     final selected = _selectedNodeId != null;
                     // Compact transform strip — keep stage large on phone.
-                    final frac = selected ? 0.36 : 0.26;
-                    final maxH = selected ? 200.0 : 130.0;
-                    final minH = selected ? 148.0 : 84.0;
+                    final frac = selected ? 0.34 : 0.26;
+                    final maxH = selected ? 188.0 : 130.0;
+                    final minH = selected ? 140.0 : 84.0;
                     return Column(
                       children: [
                         SizedBox(
@@ -892,7 +895,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
     }
 
     return Padding(
-      padding: const EdgeInsets.fromLTRB(6, 2, 4, 2),
+      padding: const EdgeInsets.fromLTRB(6, 1, 4, 1),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -904,7 +907,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
               isDense: true,
               labelText: 'Name',
               border: OutlineInputBorder(),
-              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 3),
             ),
             textInputAction: TextInputAction.done,
             onSubmitted: _renameSelected,
@@ -940,7 +943,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab> {
           // Edit points (sprites only)
           if (node.type != SceneNodeTypes.camera)
             Padding(
-              padding: const EdgeInsets.only(bottom: 2),
+              padding: const EdgeInsets.only(bottom: 0),
               child: Row(
                 children: [
                   Text(
