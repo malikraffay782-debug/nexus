@@ -33,7 +33,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
 
   /// Graphical 2D preview loop (Flutter ticker — not proot).
   bool _playing = false;
-  double _playTime = 0.0;
+  final ValueNotifier<double> _playTime = ValueNotifier(0.0);
   Ticker? _playTicker;
 
   @override
@@ -46,6 +46,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   @override
   void dispose() {
     _stopPlayLoop();
+    _playTime.dispose();
     _nameCtrl.dispose();
     super.dispose();
   }
@@ -54,7 +55,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _playTicker?.dispose();
     _playTicker = null;
     _playing = false;
-    _playTime = 0;
+    _playTime.value = 0;
   }
 
   void _togglePlay() {
@@ -64,16 +65,15 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       _playTicker = null;
       setState(() {
         _playing = false;
-        _playTime = 0;
       });
+      _playTime.value = 0;
       return;
     }
-    _playTime = 0;
+    _playTime.value = 0;
     _playTicker = createTicker((elapsed) {
       if (!mounted) return;
-      setState(() {
-        _playTime = elapsed.inMicroseconds / 1e6;
-      });
+      // Only the stage ListenableBuilder rebuilds — not the whole tab.
+      _playTime.value = elapsed.inMicroseconds / 1e6;
     })..start();
     setState(() {
       _playing = true;
@@ -109,8 +109,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         _selectedNodeId = null;
         _editPointIndex = null;
         _loading = false;
-        _playTime = 0;
       });
+      _playTime.value = 0;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -1304,16 +1304,23 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 clipBehavior: Clip.hardEdge,
                 child: Stack(
                   children: [
-                    // Graphical 2D stage (always painted).
+                    // Graphical 2D stage (play ticker only rebuilds this layer).
                     Positioned.fill(
-                      child: CustomPaint(
-                        painter: SceneStagePainter(
-                          doc: doc,
-                          selectedId: _playing ? null : _selectedNodeId,
-                          editPointIndex: _playing ? null : _editPointIndex,
-                          showGrid: doc.showGrid,
-                          playTime: _playTime,
-                        ),
+                      child: ListenableBuilder(
+                        listenable: _playTime,
+                        builder: (context, _) {
+                          return CustomPaint(
+                            painter: SceneStagePainter(
+                              doc: doc,
+                              selectedId:
+                                  _playing ? null : _selectedNodeId,
+                              editPointIndex:
+                                  _playing ? null : _editPointIndex,
+                              showGrid: doc.showGrid,
+                              playTime: _playing ? _playTime.value : 0.0,
+                            ),
+                          );
+                        },
                       ),
                     ),
                     if (doc.nodes.isEmpty)
@@ -1443,6 +1450,44 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                         ),
                       ],
                     ),
+                  ),
+                ),
+              ),
+            ),
+          );
+        }
+        // Edge midpoints — tap to insert a vertex on that edge.
+        for (var i = 0; i < pts.length; i++) {
+          final a = pts[i];
+          final b = pts[(i + 1) % pts.length];
+          final mx = ((a.x + b.x) / 2 - n.x) * scaleX;
+          final my = ((a.y + b.y) / 2 - n.y) * scaleY;
+          const midHit = 28.0;
+          const midVisual = 14.0;
+          final edgeIndex = i;
+          polyChildren.add(
+            Positioned(
+              left: mx - midHit / 2,
+              top: my - midHit / 2,
+              width: midHit,
+              height: midHit,
+              child: GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: () {
+                  setState(() => _editPointIndex = edgeIndex);
+                  _addPointOnSelected();
+                },
+                child: Center(
+                  child: Container(
+                    width: midVisual,
+                    height: midVisual,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: scheme.surface.withValues(alpha: 0.9),
+                      shape: BoxShape.circle,
+                      border: Border.all(color: fill, width: 1.5),
+                    ),
+                    child: Icon(Icons.add, size: 10, color: fill),
                   ),
                 ),
               ),
