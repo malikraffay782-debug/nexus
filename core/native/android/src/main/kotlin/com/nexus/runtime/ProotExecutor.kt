@@ -548,6 +548,8 @@ class ProotExecutor(
         }
         try { process.destroy() } catch (_: Exception) {}
         try { process.destroyForcibly() } catch (_: Exception) {}
+        // Give the process a moment to exit so the runMutex holder can finish.
+        try { process.waitFor(2, TimeUnit.SECONDS) } catch (_: Exception) {}
     }
 
     /** Reflective pid for Android's java.lang.Process (no public API on all levels). */

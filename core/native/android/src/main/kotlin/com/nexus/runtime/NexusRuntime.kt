@@ -159,7 +159,7 @@ class NexusRuntime private constructor(context: Context) {
     }
 
     fun hasBinary(name: String): Boolean {
-        if (!name.matches(Regex("^[a-zA-Z0-9][a-zA-Z0-9._+-]*$"))) {
+        if (!name.matches(Regex("^[a-zA-Z0-9][a-zA-Z0-9+._-]*$"))) {
             return false
         }
         val result = runCommand("command -v '$name' >/dev/null 2>&1 && echo yes || echo no")
@@ -186,6 +186,25 @@ class NexusRuntime private constructor(context: Context) {
         if (!root.exists()) root.mkdirs()
         return root.absolutePath
     }
+
+    /**
+     * Recovery: stop active run, delete prefix + version marker, clear ready cache.
+     * Next initialize() will re-extract bootstrap.
+     */
+    fun wipeRuntime(): WipeResult {
+        return try {
+            executor.stopActive()
+            runtimeLock.write {
+                bootstrapManager.wipeRuntimeData()
+            }
+            WipeResult(success = true, error = null)
+        } catch (e: Exception) {
+            RuntimeLogger.e("wipeRuntime failed", e)
+            WipeResult(success = false, error = e.message ?: "wipe failed")
+        }
+    }
+
+    data class WipeResult(val success: Boolean, val error: String?)
 
     fun stopRun(): Map<String, Any> {
         val stopped = executor.stopActive()

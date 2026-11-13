@@ -202,6 +202,29 @@ class BootstrapManager(private val context: Context) {
         readyCached = false
     }
 
+    /**
+     * Delete extracted prefix and version marker so the next ensureBootstrap re-downloads/extracts.
+     * Best-effort; caller holds runtime write lock.
+     */
+    fun wipeRuntimeData() {
+        readyCached = false
+        try {
+            if (prefixDir.exists()) prefixDir.deleteRecursively()
+        } catch (e: Exception) {
+            RuntimeLogger.w("wipe prefix: ${e.message}")
+        }
+        try {
+            File(runtimeRoot, VERSION_FILE).delete()
+        } catch (e: Exception) {
+            RuntimeLogger.w("wipe version: ${e.message}")
+        }
+        try {
+            File(runtimeRoot, "tmp").listFiles()?.forEach { f ->
+                try { f.deleteRecursively() } catch (_: Exception) {}
+            }
+        } catch (_: Exception) {}
+    }
+
     fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {
         return bootstrapLock.withLock {
             try {

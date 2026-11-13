@@ -337,6 +337,28 @@ class EmbeddedRuntime {
     }
   }
 
+  /// Recovery: wipe extracted runtime so the next initialize re-bootstraps.
+  static Future<({bool success, String? error})> wipeRuntime() async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('wipeRuntime')
+          .timeout(const Duration(seconds: 60));
+      if (result == null) {
+        return (success: false, error: 'Null response');
+      }
+      return (
+        success: result['success'] == true,
+        error: (result['error'] as String?)?.isEmpty == true
+            ? null
+            : result['error'] as String?,
+      );
+    } on PlatformException catch (e) {
+      return (success: false, error: '${e.code}: ${e.message}');
+    } catch (e) {
+      return (success: false, error: e.toString());
+    }
+  }
+
   static Future<String> exec(String command) async {
     final result = await runCommand(command);
     if (result.exitCode == 0) return result.stdout;

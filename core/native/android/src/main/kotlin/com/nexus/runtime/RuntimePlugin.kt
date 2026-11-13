@@ -27,7 +27,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     private val executor = java.util.concurrent.ThreadPoolExecutor(
         2, 4,
         30L, java.util.concurrent.TimeUnit.SECONDS,
-        java.util.concurrent.ArrayBlockingQueue(8),
+        java.util.concurrent.ArrayBlockingQueue(32),
         { r -> Thread(r, "nexus-runtime-worker").apply { isDaemon = true } },
         java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
@@ -195,9 +195,17 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     result.error("bad_args", "projectId required", null)
                     return
                 }
-                val timeoutSec = (call.argument<Number>("timeoutSec")?.toLong()
-                    ?: ((call.argument<Number>("timeoutMs")?.toLong() ?: 30000L) / 1000L))
-                    .coerceIn(1L, 120L)
+                // Prefer timeoutSec. Legacy timeoutMs only if value looks like milliseconds (>= 1000).
+                val timeoutSec = run {
+                    val secArg = call.argument<Number>("timeoutSec")?.toLong()
+                    if (secArg != null) return@run secArg.coerceIn(1L, 120L)
+                    val msArg = call.argument<Number>("timeoutMs")?.toLong()
+                    if (msArg != null) {
+                        val sec = if (msArg >= 1000L) msArg / 1000L else msArg
+                        return@run sec.coerceIn(1L, 120L)
+                    }
+                    30L
+                }
                 onWorker(result, "runProject") {
                     val cmdResult = runtime.runProject(projectId, timeoutSec)
                     mapOf(
@@ -286,6 +294,17 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     result.success(runtime.stopRun())
                 } catch (e: Exception) {
                     result.error("stop_failed", e.message, null)
+                }
+            }
+
+
+            "wipeRuntime" -> {
+                onWorker(result, "wipeRuntime") {
+                    val wipe = runtime.wipeRuntime()
+                    mapOf(
+                        "success" to wipe.success,
+                        "error" to (wipe.error ?: "")
+                    )
                 }
             }
 

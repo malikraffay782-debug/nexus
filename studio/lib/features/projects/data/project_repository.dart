@@ -71,14 +71,15 @@ class ProjectRepository {
           return null;
         }
       }
-    } catch (e, st) {
-          // Ignore unreadable entries but keep a debug trace.
-          assert(() {
-            // ignore: avoid_print
-            print('ProjectRepository.list skip: $e');
-            return true;
-          }());
-        }
+    } catch (e) {
+      // Path resolution failed — treat as unavailable id.
+      assert(() {
+        // ignore: avoid_print
+        print('ProjectRepository._dirFor skip: $e');
+        return true;
+      }());
+      return null;
+    }
     return dir;
   }
 
@@ -91,17 +92,23 @@ class ProjectRepository {
       final project = Project.fromJson(json, path: dir.path);
       final dirId = p.basename(dir.path);
       if (project.id != dirId) {
-        // ignore: avoid_print
-        print(
-          'Nexus: skip project with id mismatch at ${dir.path}: '
-          'manifest=${project.id} dir=$dirId',
-        );
+        assert(() {
+          // ignore: avoid_print
+          print(
+            'Nexus: skip project with id mismatch at ${dir.path}: '
+            'manifest=${project.id} dir=$dirId',
+          );
+          return true;
+        }());
         return null;
       }
       return project;
     } catch (e) {
-      // ignore: avoid_print
-      print('Nexus: skip corrupt project at ${dir.path}: $e');
+      assert(() {
+        // ignore: avoid_print
+        print('Nexus: skip corrupt project at ${dir.path}: $e');
+        return true;
+      }());
       return null;
     }
   }
@@ -109,6 +116,7 @@ class ProjectRepository {
   Future<List<Project>> list() async {
     // Let storage failure bubble so UI can show AsyncError (not fake empty list)
     final root = await _root();
+    await _sweepStaleStaging(root);
     final projects = <Project>[];
     try {
       await for (final entity in root.list(followLinks: false)) {
@@ -117,8 +125,7 @@ class ProjectRepository {
           if (await _isSymlink(entity)) continue;
           final project = await _readFrom(entity);
           if (project != null) projects.add(project);
-        } catch (e, st) {
-          // Ignore unreadable entries but keep a debug trace.
+        } catch (e) {
           assert(() {
             // ignore: avoid_print
             print('ProjectRepository.list skip: $e');
