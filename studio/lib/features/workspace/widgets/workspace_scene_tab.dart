@@ -856,22 +856,27 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.35),
       child: SizedBox(
-        height: 48,
+        height: 42,
         child: Row(
           children: [
             const SizedBox(width: 8),
             Expanded(
               child: ListView.separated(
                 scrollDirection: Axis.horizontal,
-                padding: const EdgeInsets.symmetric(horizontal: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 2),
                 itemCount: _files.length,
                 separatorBuilder: (_, __) => const SizedBox(width: 6),
                 itemBuilder: (context, i) {
                   final name = _files[i];
                   final selected = name == _selected;
                   return ChoiceChip(
-                    label: Text(name.replaceAll('.json', '')),
+                    label: Text(
+                      name.replaceAll('.json', ''),
+                      style: const TextStyle(fontSize: 12),
+                    ),
                     selected: selected,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     onSelected: (_) => _select(name),
                   );
                 },
@@ -879,35 +884,92 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             ),
             if (_dirty)
               const Padding(
-                padding: EdgeInsets.only(right: 4),
-                child: Icon(Icons.circle, size: 10, color: Colors.orange),
+                padding: EdgeInsets.only(right: 2),
+                child: Icon(Icons.circle, size: 9, color: Colors.orange),
               ),
-            IconButton(
-              tooltip: 'Save scene',
-              onPressed: (_dirty && !_saving) ? _save : null,
-              icon: _saving
-                  ? const SizedBox(
-                      width: 18,
-                      height: 18,
-                      child: CircularProgressIndicator(strokeWidth: 2),
-                    )
-                  : const Icon(Icons.save_outlined),
-            ),
-            IconButton(
-              tooltip: 'New scene',
-              onPressed: _createScene,
-              icon: const Icon(Icons.add),
-            ),
-            IconButton(
-              tooltip: 'Refresh',
-              onPressed: () async {
-                if (_dirty) {
-                  final d = await _confirmDiscard();
-                  if (!d || !mounted) return;
+            // Overflow menu — strip stays free as features grow.
+            PopupMenuButton<String>(
+              tooltip: 'Scene menu',
+              icon: const Icon(Icons.more_vert, size: 22),
+              padding: EdgeInsets.zero,
+              onSelected: (v) async {
+                switch (v) {
+                  case 'save':
+                    if (_dirty && !_saving) await _save();
+                    return;
+                  case 'new':
+                    await _createScene();
+                    return;
+                  case 'reload':
+                    if (_dirty) {
+                      final d = await _confirmDiscard();
+                      if (!d || !mounted) return;
+                    }
+                    await _reload();
+                    return;
+                  case 'add_sprite':
+                    _addNode(type: SceneNodeTypes.sprite);
+                    return;
+                  case 'add_camera':
+                    _addNode(type: SceneNodeTypes.camera);
+                    return;
                 }
-                await _reload();
               },
-              icon: const Icon(Icons.refresh),
+              itemBuilder: (_) => [
+                PopupMenuItem(
+                  value: 'save',
+                  enabled: _dirty && !_saving,
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: _saving
+                        ? const SizedBox(
+                            width: 20,
+                            height: 20,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.save_outlined, size: 20),
+                    title: const Text('Save scene'),
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'new',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.note_add_outlined, size: 20),
+                    title: Text('New scene'),
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'reload',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.refresh, size: 20),
+                    title: Text('Reload'),
+                  ),
+                ),
+                const PopupMenuDivider(),
+                const PopupMenuItem(
+                  value: 'add_sprite',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.crop_square, size: 20),
+                    title: Text('Add sprite'),
+                  ),
+                ),
+                const PopupMenuItem(
+                  value: 'add_camera',
+                  child: ListTile(
+                    dense: true,
+                    contentPadding: EdgeInsets.zero,
+                    leading: Icon(Icons.videocam_outlined, size: 20),
+                    title: Text('Add camera'),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
@@ -940,11 +1002,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
       child: SizedBox(
-        height: 44,
+        height: 40,
         child: Row(
           children: [
-            const SizedBox(width: 8),
-            Text('Nodes', style: Theme.of(context).textTheme.labelLarge),
             const SizedBox(width: 8),
             Expanded(
               child: ListView.separated(
@@ -971,21 +1031,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 },
               ),
             ),
-            PopupMenuButton<String>(
-              tooltip: 'Add node',
-              icon: const Icon(Icons.add, size: 20),
-              padding: EdgeInsets.zero,
-              onSelected: (t) => _addNode(type: t),
-              itemBuilder: (_) => const [
-                PopupMenuItem(
-                  value: SceneNodeTypes.sprite,
-                  child: Text('Sprite'),
-                ),
-                PopupMenuItem(
-                  value: SceneNodeTypes.camera,
-                  child: Text('Camera'),
-                ),
-              ],
+            // Quick add still here; full scene actions live in ⋮ menu.
+            IconButton(
+              tooltip: 'Add sprite',
+              icon: const Icon(Icons.add, size: 22),
+              onPressed: () => _addNode(type: SceneNodeTypes.sprite),
             ),
           ],
         ),
@@ -1013,9 +1063,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 96,
+          // Slightly taller + 44dp targets for thumb-friendly taps.
+          height: 118,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
             child: Column(
               children: [
                 Row(
@@ -1026,22 +1077,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 13,
+                          fontSize: 14,
                           fontWeight: FontWeight.w600,
                         ),
                       ),
                     ),
                     Text(
                       '${n.x.round()},${n.y.round()} · ${n.w.round()}×${n.h.round()}',
-                      style: TextStyle(fontSize: 11, color: scheme.outline),
+                      style: TextStyle(fontSize: 12, color: scheme.outline),
                     ),
                     if (n.type != SceneNodeTypes.camera) ...[
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          visualDensity: VisualDensity.compact,
-                          padding: const EdgeInsets.symmetric(horizontal: 8),
-                          minimumSize: const Size(0, 32),
-                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      const SizedBox(width: 4),
+                      FilledButton.tonal(
+                        style: FilledButton.styleFrom(
+                          minimumSize: const Size(0, 40),
+                          padding: const EdgeInsets.symmetric(horizontal: 12),
+                          tapTargetSize: MaterialTapTargetSize.padded,
                         ),
                         onPressed: n.hasPoints
                             ? () {
@@ -1054,69 +1105,69 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               },
                         child: Text(
                           n.hasPoints ? 'Points' : 'Edit points',
-                          style: const TextStyle(fontSize: 12),
+                          style: const TextStyle(fontSize: 13),
                         ),
                       ),
                       if (n.hasPoints)
                         TextButton(
                           style: TextButton.styleFrom(
-                            visualDensity: VisualDensity.compact,
-                            padding: const EdgeInsets.symmetric(horizontal: 6),
-                            minimumSize: const Size(0, 32),
-                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                            minimumSize: const Size(0, 40),
+                            padding: const EdgeInsets.symmetric(horizontal: 10),
                           ),
                           onPressed: _clearPointsOnSelected,
-                          child: const Text('Rect', style: TextStyle(fontSize: 12)),
+                          child: const Text('Rect', style: TextStyle(fontSize: 13)),
                         ),
                     ],
                     IconButton(
                       tooltip: 'Delete',
-                      icon: Icon(Icons.delete_outline, size: 18, color: scheme.error),
-                      visualDensity: VisualDensity.compact,
+                      icon: Icon(Icons.delete_outline, size: 22, color: scheme.error),
+                      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                       onPressed: _removeSelectedNode,
                     ),
                   ],
                 ),
-                const SizedBox(height: 4),
+                const SizedBox(height: 6),
                 Expanded(
                   child: Row(
                     children: [
-                      // Type
                       for (final t in SceneNodeTypes.all)
                         Padding(
-                          padding: const EdgeInsets.only(right: 4),
+                          padding: const EdgeInsets.only(right: 6),
                           child: ChoiceChip(
-                            label: Text(t, style: const TextStyle(fontSize: 11)),
+                            label: Text(t, style: const TextStyle(fontSize: 12)),
                             selected: n.type == t,
-                            visualDensity: VisualDensity.compact,
-                            materialTapTargetSize:
-                                MaterialTapTargetSize.shrinkWrap,
                             onSelected: (_) => _setNodeType(t),
                           ),
                         ),
-                      const SizedBox(width: 6),
-                      // Color dots
+                      const SizedBox(width: 4),
                       Expanded(
                         child: ListView.separated(
                           scrollDirection: Axis.horizontal,
                           itemCount: ScenePalette.colors.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 6),
+                          separatorBuilder: (_, __) => const SizedBox(width: 8),
                           itemBuilder: (context, i) {
                             final c = ScenePalette.colors[i];
                             final sel = n.color == c;
                             return GestureDetector(
+                              behavior: HitTestBehavior.opaque,
                               onTap: () => _setNodeColor(c),
-                              child: Container(
-                                width: 22,
-                                height: 22,
-                                decoration: BoxDecoration(
-                                  color: Color(c),
-                                  shape: BoxShape.circle,
-                                  border: Border.all(
-                                    color: sel
-                                        ? scheme.onSurface
-                                        : scheme.outlineVariant,
-                                    width: sel ? 2.2 : 1,
+                              child: SizedBox(
+                                width: 36,
+                                height: 36,
+                                child: Center(
+                                  child: Container(
+                                    width: 26,
+                                    height: 26,
+                                    decoration: BoxDecoration(
+                                      color: Color(c),
+                                      shape: BoxShape.circle,
+                                      border: Border.all(
+                                        color: sel
+                                            ? scheme.onSurface
+                                            : scheme.outlineVariant,
+                                        width: sel ? 2.4 : 1,
+                                      ),
+                                    ),
                                   ),
                                 ),
                               ),
@@ -1126,14 +1177,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       ),
                       IconButton(
                         tooltip: 'Smaller',
-                        icon: const Icon(Icons.remove, size: 18),
-                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.remove, size: 22),
+                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                         onPressed: () => _nudgeSelected(dw: -8, dh: -8),
                       ),
                       IconButton(
                         tooltip: 'Larger',
-                        icon: const Icon(Icons.add, size: 18),
-                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.add, size: 22),
+                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
                         onPressed: () => _nudgeSelected(dw: 8, dh: 8),
                       ),
                     ],
