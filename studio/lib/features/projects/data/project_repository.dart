@@ -147,6 +147,25 @@ class ProjectRepository {
     return _readFrom(dir);
   }
 
+
+  /// Remove leftover `.$id.staging` dirs older than 1 hour (create failure orphans).
+  Future<void> _sweepStaleStaging(Directory root) async {
+    try {
+      final cutoff = DateTime.now().subtract(const Duration(hours: 1));
+      await for (final entity in root.list(followLinks: false)) {
+        if (entity is! Directory) continue;
+        final name = p.basename(entity.path);
+        if (!name.startsWith('.') || !name.endsWith('.staging')) continue;
+        try {
+          final stat = await entity.stat();
+          if (stat.modified.isBefore(cutoff)) {
+            await entity.delete(recursive: true);
+          }
+        } catch (_) {}
+      }
+    } catch (_) {}
+  }
+
   String _newId() {
     final ts = DateTime.now().microsecondsSinceEpoch.toRadixString(36);
     final rnd = Random.secure().nextInt(1 << 32).toRadixString(36);

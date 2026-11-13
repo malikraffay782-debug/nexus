@@ -195,14 +195,13 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     result.error("bad_args", "projectId required", null)
                     return
                 }
-                // Prefer timeoutSec. Legacy timeoutMs only if value looks like milliseconds (>= 1000).
+                // Prefer timeoutSec. Legacy timeoutMs is always milliseconds.
                 val timeoutSec = run {
                     val secArg = call.argument<Number>("timeoutSec")?.toLong()
                     if (secArg != null) return@run secArg.coerceIn(1L, 120L)
                     val msArg = call.argument<Number>("timeoutMs")?.toLong()
                     if (msArg != null) {
-                        val sec = if (msArg >= 1000L) msArg / 1000L else msArg
-                        return@run sec.coerceIn(1L, 120L)
+                        return@run (msArg / 1000L).coerceIn(1L, 120L)
                     }
                     30L
                 }

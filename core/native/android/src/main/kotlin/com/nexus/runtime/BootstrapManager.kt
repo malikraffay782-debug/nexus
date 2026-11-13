@@ -218,11 +218,15 @@ class BootstrapManager(private val context: Context) {
         } catch (e: Exception) {
             RuntimeLogger.w("wipe version: ${e.message}")
         }
-        try {
-            File(runtimeRoot, "tmp").listFiles()?.forEach { f ->
-                try { f.deleteRecursively() } catch (_: Exception) {}
+        // Package/installer caches under the same runtime root
+        for (name in listOf("tmp", "host-debs", "host-debs-cpp", "host-lib")) {
+            try {
+                val dir = File(runtimeRoot, name)
+                if (dir.exists()) dir.deleteRecursively()
+            } catch (e: Exception) {
+                RuntimeLogger.w("wipe $name: ${e.message}")
             }
-        } catch (_: Exception) {}
+        }
     }
 
     fun ensureBootstrap(onProgress: ((Int, String) -> Unit)? = null): Result<Unit> {

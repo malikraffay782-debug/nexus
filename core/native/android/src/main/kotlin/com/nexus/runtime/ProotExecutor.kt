@@ -171,7 +171,7 @@ class ProotExecutor(
         }
 
         // host-lib kept for diagnostics; static proot needs no talloc staging
-        val hostLibDir = File(runtimeRoot, "host-lib").also { it.mkdirs() }
+        val hostLibDir = File(runtimeRoot, "host-lib") // optional diagnostic path only
 
         val termuxPrefix = "/data/data/com.termux/files/usr"
         val termuxHome = "/data/data/com.termux/files/home"
@@ -333,43 +333,8 @@ class ProotExecutor(
      * App-private dir with versioned soname symlinks so the dynamic linker can
      * resolve libtalloc.so.2 even when only libtalloc.so was shipped in jniLibs.
      */
-    private fun ensureHostLibStaging(nativeDir: File, runtimeRoot: File): File {
-        val hostLib = File(runtimeRoot, "host-lib")
-        if (!hostLib.exists()) hostLib.mkdirs()
-        val pairs = listOf(
-            "libtalloc.so.2" to "libtalloc.so",
-            "libtalloc.so.2.5.0" to "libtalloc.so",
-            "libandroid-shmem.so" to "libandroid-shmem.so",
-            "libtalloc.so" to "libtalloc.so",
-        )
-        for ((linkName, targetName) in pairs) {
-            val target = File(nativeDir, targetName)
-            if (!target.isFile) continue
-            val link = File(hostLib, linkName)
-            try {
-                if (link.exists()) {
-                    // Refresh if broken or pointing elsewhere
-                    if (link.canonicalFile != target.canonicalFile) {
-                        link.delete()
-                    } else {
-                        continue
-                    }
-                }
-                // Prefer real symlink; fall back to a byte copy if symlink blocked.
-                try {
-                    android.system.Os.symlink(target.absolutePath, link.absolutePath)
-                } catch (_: Throwable) {
-                    target.inputStream().use { input ->
-                        link.outputStream().use { output -> input.copyTo(output) }
-                    }
-                    link.setReadable(true)
-                }
-            } catch (e: Exception) {
-                RuntimeLogger.w("host-lib staging $linkName: ${e.message}")
-            }
-        }
-        return hostLib
-    }
+    // Static proot: no host-lib soname staging required.
+
 
     private data class SpawnResult(
         val exitCode: Int,
