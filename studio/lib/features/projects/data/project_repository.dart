@@ -359,6 +359,33 @@ def draw_scene(scene: dict) -> None:
     for idx, node in enumerate(nodes):
         if not isinstance(node, dict):
             continue
+        ch = str(idx % 10)
+        pts = node.get("points")
+        if isinstance(pts, list) and len(pts) >= 3:
+            # Polygon: mark vertices + edges (not filled AABB).
+            coords = []
+            for pt in pts:
+                if not isinstance(pt, dict):
+                    continue
+                px = float(pt.get("x") or 0)
+                py = float(pt.get("y") or 0)
+                c = int(px / width * (cols - 1)) if width > 0 else 0
+                r = int(py / height * (rows - 1)) if height > 0 else 0
+                c = max(0, min(cols - 1, c))
+                r = max(0, min(rows - 1, r))
+                coords.append((c, r))
+                grid[r][c] = "#"
+            for i in range(len(coords)):
+                c0, r0 = coords[i]
+                c1, r1 = coords[(i + 1) % len(coords)]
+                steps = max(abs(c1 - c0), abs(r1 - r0), 1)
+                for s in range(steps + 1):
+                    t = s / steps
+                    cc = int(round(c0 + (c1 - c0) * t))
+                    rr = int(round(r0 + (r1 - r0) * t))
+                    if grid[rr][cc] == ".":
+                        grid[rr][cc] = ch
+            continue
         x = float(node.get("x") or 0)
         y = float(node.get("y") or 0)
         w = max(float(node.get("w") or 1), 1.0)
@@ -371,7 +398,6 @@ def draw_scene(scene: dict) -> None:
         c1 = max(0, min(cols - 1, c1))
         r0 = max(0, min(rows - 1, r0))
         r1 = max(0, min(rows - 1, r1))
-        ch = str(idx % 10)
         for r in range(r0, r1 + 1):
             for c in range(c0, c1 + 1):
                 grid[r][c] = ch

@@ -35,6 +35,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   /// Graphical 2D preview loop (Flutter ticker — not proot).
   bool _playing = false;
   final ValueNotifier<double> _playTime = ValueNotifier(0.0);
+
+  // Coalesce pointer nudges to one setState per frame (kills swipe lag).
+  double _pendingNudgeDx = 0;
+  double _pendingNudgeDy = 0;
+  bool _nudgeFrameScheduled = false;
   Ticker? _playTicker;
 
   @override
@@ -646,20 +651,33 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     });
   }
 
-  /// Nudge the active vertex from live _doc state (no build-time closure).
+  /// Nudge the active vertex. Coalesces to one setState per frame.
   void _nudgeSelectedPoint({double dx = 0, double dy = 0}) {
-    final id = _selectedNodeId;
-    final i = _editPointIndex;
-    if (id == null || i == null) return;
-    final nodes = _doc?.nodes;
-    if (nodes == null) return;
-    for (final e in nodes) {
-      if (e.id == id && e.hasPoints && i >= 0 && i < e.points!.length) {
-        final p = e.points![i];
-        _movePoint(id, i, p.x + dx, p.y + dy);
-        return;
+    if (dx == 0 && dy == 0) return;
+    _pendingNudgeDx += dx;
+    _pendingNudgeDy += dy;
+    if (_nudgeFrameScheduled) return;
+    _nudgeFrameScheduled = true;
+    SchedulerBinding.instance.scheduleFrameCallback((_) {
+      _nudgeFrameScheduled = false;
+      final pdx = _pendingNudgeDx;
+      final pdy = _pendingNudgeDy;
+      _pendingNudgeDx = 0;
+      _pendingNudgeDy = 0;
+      if (pdx == 0 && pdy == 0) return;
+      final id = _selectedNodeId;
+      final i = _editPointIndex;
+      if (id == null || i == null) return;
+      final nodes = _doc?.nodes;
+      if (nodes == null) return;
+      for (final e in nodes) {
+        if (e.id == id && e.hasPoints && i >= 0 && i < e.points!.length) {
+          final p = e.points![i];
+          _movePoint(id, i, p.x + pdx, p.y + pdy);
+          return;
+        }
       }
-    }
+    });
   }
 
   /// Insert a vertex after the selected point (or last). Midpoint of that edge.
