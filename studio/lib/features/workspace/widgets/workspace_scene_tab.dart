@@ -812,6 +812,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     // Pad only while a vertex is active — Done hides it without dropping points.
                     final pointsPad =
                         _pointsEditNode != null && _editPointIndex != null;
+                    final selected = _selectedNodeId != null;
                     if (wide) {
                       return Row(
                         children: [
@@ -831,23 +832,17 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                         ],
                       );
                     }
-                    // Portrait / short: more height when a node is selected
-                    // so type/color/size controls fit without bottom overflow.
-                    final selected = _selectedNodeId != null;
-                    // Compact transform strip — keep stage large on phone.
-                    final frac = selected ? 0.30 : 0.24;
-                    final maxH = selected ? 168.0 : 120.0;
-                    final minH = selected ? 120.0 : 80.0;
+                    // Phone / portrait: stage is king. Tools live in a fixed
+                    // bottom dock (video-editor style) — never a tall top panel.
                     return Column(
                       children: [
-                        SizedBox(
-                          height: (constraints.maxHeight * frac)
-                              .clamp(minH, maxH),
-                          child: _nodeSidebar(scheme),
-                        ),
+                        _phoneNodesBar(scheme),
                         const Divider(height: 1),
                         Expanded(child: _buildCanvas(scheme)),
-                        if (pointsPad) _pointsControlPad(scheme),
+                        if (pointsPad)
+                          _pointsControlPad(scheme)
+                        else if (selected)
+                          _phoneInspector(scheme),
                       ],
                     );
                   },
@@ -938,7 +933,221 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     );
   }
 
-  /// Alight-style bottom pad: move the active vertex without covering the stage.
+  /// Thin top strip: node chips + add (phone layout).
+  Widget _phoneNodesBar(ColorScheme scheme) {
+    final doc = _doc;
+    final nodes = doc?.nodes ?? const <SceneNode>[];
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.25),
+      child: SizedBox(
+        height: 44,
+        child: Row(
+          children: [
+            const SizedBox(width: 8),
+            Text('Nodes', style: Theme.of(context).textTheme.labelLarge),
+            const SizedBox(width: 8),
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                itemCount: nodes.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, i) {
+                  final n = nodes[i];
+                  final sel = n.id == _selectedNodeId;
+                  return FilterChip(
+                    label: Text(
+                      n.name,
+                      style: const TextStyle(fontSize: 12),
+                    ),
+                    selected: sel,
+                    visualDensity: VisualDensity.compact,
+                    materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                    avatar: CircleAvatar(
+                      backgroundColor: Color(n.color),
+                      radius: 6,
+                    ),
+                    onSelected: (_) => _selectNode(n.id),
+                  );
+                },
+              ),
+            ),
+            PopupMenuButton<String>(
+              tooltip: 'Add node',
+              icon: const Icon(Icons.add, size: 20),
+              padding: EdgeInsets.zero,
+              onSelected: (t) => _addNode(type: t),
+              itemBuilder: (_) => const [
+                PopupMenuItem(
+                  value: SceneNodeTypes.sprite,
+                  child: Text('Sprite'),
+                ),
+                PopupMenuItem(
+                  value: SceneNodeTypes.camera,
+                  child: Text('Camera'),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// Fixed-height bottom inspector — never grows into the stage.
+  Widget _phoneInspector(ColorScheme scheme) {
+    final doc = _doc;
+    SceneNode? node;
+    if (doc != null && _selectedNodeId != null) {
+      for (final n in doc.nodes) {
+        if (n.id == _selectedNodeId) {
+          node = n;
+          break;
+        }
+      }
+    }
+    if (node == null) return const SizedBox.shrink();
+    final n = node;
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.92),
+      elevation: 4,
+      child: SafeArea(
+        top: false,
+        child: SizedBox(
+          height: 96,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 6, 6),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Expanded(
+                      child: Text(
+                        n.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                    ),
+                    Text(
+                      '${n.x.round()},${n.y.round()} · ${n.w.round()}×${n.h.round()}',
+                      style: TextStyle(fontSize: 11, color: scheme.outline),
+                    ),
+                    if (n.type != SceneNodeTypes.camera) ...[
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          visualDensity: VisualDensity.compact,
+                          padding: const EdgeInsets.symmetric(horizontal: 8),
+                          minimumSize: const Size(0, 32),
+                          tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        ),
+                        onPressed: n.hasPoints
+                            ? () {
+                                FocusScope.of(context).unfocus();
+                                setState(() => _editPointIndex = 0);
+                              }
+                            : () {
+                                FocusScope.of(context).unfocus();
+                                _enablePointsOnSelected();
+                              },
+                        child: Text(
+                          n.hasPoints ? 'Points' : 'Edit points',
+                          style: const TextStyle(fontSize: 12),
+                        ),
+                      ),
+                      if (n.hasPoints)
+                        TextButton(
+                          style: TextButton.styleFrom(
+                            visualDensity: VisualDensity.compact,
+                            padding: const EdgeInsets.symmetric(horizontal: 6),
+                            minimumSize: const Size(0, 32),
+                            tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          ),
+                          onPressed: _clearPointsOnSelected,
+                          child: const Text('Rect', style: TextStyle(fontSize: 12)),
+                        ),
+                    ],
+                    IconButton(
+                      tooltip: 'Delete',
+                      icon: Icon(Icons.delete_outline, size: 18, color: scheme.error),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _removeSelectedNode,
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 4),
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Type
+                      for (final t in SceneNodeTypes.all)
+                        Padding(
+                          padding: const EdgeInsets.only(right: 4),
+                          child: ChoiceChip(
+                            label: Text(t, style: const TextStyle(fontSize: 11)),
+                            selected: n.type == t,
+                            visualDensity: VisualDensity.compact,
+                            materialTapTargetSize:
+                                MaterialTapTargetSize.shrinkWrap,
+                            onSelected: (_) => _setNodeType(t),
+                          ),
+                        ),
+                      const SizedBox(width: 6),
+                      // Color dots
+                      Expanded(
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: ScenePalette.colors.length,
+                          separatorBuilder: (_, __) => const SizedBox(width: 6),
+                          itemBuilder: (context, i) {
+                            final c = ScenePalette.colors[i];
+                            final sel = n.color == c;
+                            return GestureDetector(
+                              onTap: () => _setNodeColor(c),
+                              child: Container(
+                                width: 22,
+                                height: 22,
+                                decoration: BoxDecoration(
+                                  color: Color(c),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: sel
+                                        ? scheme.onSurface
+                                        : scheme.outlineVariant,
+                                    width: sel ? 2.2 : 1,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
+                        ),
+                      ),
+                      IconButton(
+                        tooltip: 'Smaller',
+                        icon: const Icon(Icons.remove, size: 18),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _nudgeSelected(dw: -8, dh: -8),
+                      ),
+                      IconButton(
+                        tooltip: 'Larger',
+                        icon: const Icon(Icons.add, size: 18),
+                        visualDensity: VisualDensity.compact,
+                        onPressed: () => _nudgeSelected(dw: 8, dh: 8),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Compact bottom pad for vertex edit (video-editor style, fixed height).
   Widget _pointsControlPad(ColorScheme scheme) {
     final node = _pointsEditNode;
     final idx = _editPointIndex;
@@ -947,126 +1156,143 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     if (idx < 0 || idx >= pts.length) return const SizedBox.shrink();
     final p = pts[idx];
     return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.96),
       elevation: 6,
       child: SafeArea(
         top: false,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Row(
-                children: [
-                  Icon(Icons.control_camera, size: 18, color: scheme.primary),
-                  const SizedBox(width: 6),
-                  Text(
-                    'Edit Points · P${idx + 1}/${pts.length}',
-                    style: Theme.of(context).textTheme.titleSmall,
-                  ),
-                  const Spacer(),
-                  Text(
-                    '${p.x.round()}, ${p.y.round()}',
-                    style: TextStyle(fontSize: 12, color: scheme.outline),
-                  ),
-                  const SizedBox(width: 4),
-                  IconButton(
-                    tooltip: 'Add vertex on edge',
-                    icon: const Icon(Icons.add_circle_outline, size: 20),
-                    visualDensity: VisualDensity.compact,
-                    onPressed: _addPointOnSelected,
-                  ),
-                  IconButton(
-                    tooltip: 'Remove vertex',
-                    icon: const Icon(Icons.remove_circle_outline, size: 20),
-                    visualDensity: VisualDensity.compact,
-                    onPressed:
-                        pts.length > 3 ? _removePointOnSelected : null,
-                  ),
-                  TextButton(
-                    onPressed: () {
-                      setState(() => _editPointIndex = null);
-                    },
-                    child: const Text('Done'),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 6),
-              // Swipe pad — finger stays off the stage (video-style control).
-              SizedBox(
-                height: 110,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    color: scheme.surface.withValues(alpha: 0.7),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: scheme.outlineVariant),
-                  ),
-                  child: Stack(
-                    alignment: Alignment.center,
-                    children: [
-                      Text(
-                        'Swipe here to move point\n'
-                        'Tap stage handles or edge + to edit',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 13,
-                          color: scheme.outline,
-                        ),
+        child: SizedBox(
+          height: 132,
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
+            child: Column(
+              children: [
+                Row(
+                  children: [
+                    Icon(Icons.control_camera, size: 18, color: scheme.primary),
+                    const SizedBox(width: 6),
+                    Text(
+                      'P${idx + 1}/${pts.length}',
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w600,
                       ),
-                      // Invisible drag surface
-                      Positioned.fill(
-                        child: GestureDetector(
-                          behavior: HitTestBehavior.opaque,
-                          onPanStart: (_) {
-                            if (_editPointIndex == null) {
-                              setState(() => _editPointIndex = idx);
-                            }
-                          },
-                          onPanUpdate: (d) {
-                            // Scale pad motion → scene units (~0.6 scene px per screen px)
-                            const sens = 0.85;
-                            _nudgeSelectedPoint(
-                              dx: d.delta.dx * sens,
-                              dy: d.delta.dy * sens,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      '${p.x.round()}, ${p.y.round()}',
+                      style: TextStyle(fontSize: 12, color: scheme.outline),
+                    ),
+                    const Spacer(),
+                    IconButton(
+                      tooltip: 'Add vertex',
+                      icon: const Icon(Icons.add, size: 20),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: _addPointOnSelected,
+                    ),
+                    IconButton(
+                      tooltip: 'Remove vertex',
+                      icon: const Icon(Icons.remove, size: 20),
+                      visualDensity: VisualDensity.compact,
+                      onPressed:
+                          pts.length > 3 ? _removePointOnSelected : null,
+                    ),
+                    TextButton(
+                      onPressed: () {
+                        FocusScope.of(context).unfocus();
+                        setState(() => _editPointIndex = null);
+                      },
+                      child: const Text('Done'),
+                    ),
+                  ],
+                ),
+                Expanded(
+                  child: Row(
+                    children: [
+                      // Vertex chips
+                      SizedBox(
+                        width: 56,
+                        child: ListView.builder(
+                          itemCount: pts.length,
+                          itemBuilder: (context, i) {
+                            final sel = i == idx;
+                            return Padding(
+                              padding: const EdgeInsets.only(bottom: 4),
+                              child: Material(
+                                color: sel
+                                    ? scheme.primaryContainer
+                                    : scheme.surface,
+                                borderRadius: BorderRadius.circular(8),
+                                child: InkWell(
+                                  onTap: () =>
+                                      setState(() => _editPointIndex = i),
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: SizedBox(
+                                    height: 28,
+                                    child: Center(
+                                      child: Text(
+                                        'P${i + 1}',
+                                        style: TextStyle(
+                                          fontSize: 11,
+                                          fontWeight: sel
+                                              ? FontWeight.w700
+                                              : FontWeight.w500,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                             );
                           },
                         ),
                       ),
-                      // Soft crosshair hint
-                      IgnorePointer(
-                        child: Icon(
-                          Icons.open_with,
-                          size: 28,
-                          color: scheme.primary.withValues(alpha: 0.35),
+                      const SizedBox(width: 8),
+                      // Swipe pad
+                      Expanded(
+                        child: DecoratedBox(
+                          decoration: BoxDecoration(
+                            color: scheme.surface.withValues(alpha: 0.75),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: scheme.outlineVariant),
+                          ),
+                          child: Stack(
+                            alignment: Alignment.center,
+                            children: [
+                              Text(
+                                'Swipe to move point',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: scheme.outline,
+                                ),
+                              ),
+                              Positioned.fill(
+                                child: GestureDetector(
+                                  behavior: HitTestBehavior.opaque,
+                                  onPanUpdate: (d) {
+                                    const sens = 0.85;
+                                    _nudgeSelectedPoint(
+                                      dx: d.delta.dx * sens,
+                                      dy: d.delta.dy * sens,
+                                    );
+                                  },
+                                ),
+                              ),
+                              IgnorePointer(
+                                child: Icon(
+                                  Icons.open_with,
+                                  size: 26,
+                                  color: scheme.primary.withValues(alpha: 0.3),
+                                ),
+                              ),
+                            ],
+                          ),
                         ),
                       ),
                     ],
                   ),
                 ),
-              ),
-              const SizedBox(height: 6),
-              // Quick vertex picker chips
-              SizedBox(
-                height: 32,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  itemCount: pts.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 6),
-                  itemBuilder: (context, i) {
-                    final sel = i == idx;
-                    return ChoiceChip(
-                      label: Text('P${i + 1}', style: const TextStyle(fontSize: 11)),
-                      selected: sel,
-                      visualDensity: VisualDensity.compact,
-                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
-                      onSelected: (_) {
-                        setState(() => _editPointIndex = i);
-                      },
-                    );
-                  },
-                ),
-              ),
-            ],
+              ],
+            ),
           ),
         ),
       ),
