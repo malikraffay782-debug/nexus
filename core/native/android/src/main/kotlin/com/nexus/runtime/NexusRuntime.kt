@@ -35,7 +35,8 @@ class NexusRuntime private constructor(context: Context) {
 
     val packages = PackageManager(
         runLocked = runLockedCmd,
-        pythonInstaller = PythonInstaller(appContext, runLockedCmd)
+        pythonInstaller = PythonInstaller(appContext, runLockedCmd),
+        cppInstaller = CppInstaller(appContext, runLockedCmd)
     )
 
     companion object {
@@ -132,15 +133,29 @@ class NexusRuntime private constructor(context: Context) {
     /** Filesystem-only; no proot. For UI status on every screen open. */
     fun hasPythonBinary(): Boolean = bootstrapManager.hasPythonBinary()
 
+    fun hasClangBinary(): Boolean = bootstrapManager.hasClangBinary()
+
     /**
-     * Single cheap probe for UI: ready + python present, no process spawn.
+     * Single cheap probe for UI: ready + optional language tools, no process spawn.
      */
     fun probeStatus(): Map<String, Any> {
         val ready = isReady
         return mapOf(
             "ready" to ready,
-            "hasPython" to if (ready) bootstrapManager.hasPythonBinary() else false
+            "hasPython" to if (ready) bootstrapManager.hasPythonBinary() else false,
+            "hasCpp" to if (ready) bootstrapManager.hasClangBinary() else false
         )
+    }
+
+    fun installCpp(): CppInstaller.Result {
+        return CppInstaller(appContext, runLockedCmd).install()
+    }
+
+    fun cppVersion(): String {
+        val result = runCommand(
+            "clang++ --version 2>&1 | head -3 || clang --version 2>&1 | head -3 || echo 'C++ toolchain not found'"
+        )
+        return if (result.exitCode == 0) result.stdout else result.stderr.ifBlank { "C++ toolchain not found" }
     }
 
     fun hasBinary(name: String): Boolean {

@@ -10,7 +10,8 @@ import kotlin.concurrent.withLock
  */
 class PackageManager(
     private val runLocked: (command: String, timeoutSec: Long) -> ProotExecutor.CommandResult,
-    private val pythonInstaller: PythonInstaller? = null
+    private val pythonInstaller: PythonInstaller? = null,
+    private val cppInstaller: CppInstaller? = null
 ) {
 
     data class InstallResult(
@@ -60,6 +61,21 @@ class PackageManager(
         }
 
         val outputs = StringBuilder()
+
+        // Optional C++17 meta packages → host HTTP clang install (does not touch Python).
+        val wantsCpp = deduped.any {
+            it == "clang" || it == "clang++" || it == "cpp17" || it == "c++" || it == "g++"
+        }
+        if (wantsCpp && cppInstaller != null) {
+            val host = cppInstaller.install()
+            outputs.append("—— host C++17 (clang) install ——\n")
+            outputs.append(host.output).append('\n')
+            if (host.error.isNotBlank()) outputs.append(host.error).append('\n')
+            if (host.success) {
+                return InstallResult(true, outputs.toString(), "")
+            }
+            // Fall through to apt path for remaining packages if host install failed.
+        }
 
         fun appendResult(label: String, result: ProotExecutor.CommandResult) {
             outputs.append("—— ").append(label).append(" ——\n")

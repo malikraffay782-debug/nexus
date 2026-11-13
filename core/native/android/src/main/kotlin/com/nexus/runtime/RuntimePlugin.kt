@@ -160,7 +160,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                         runtime.probeStatus()
                     } catch (t: Throwable) {
                         RuntimeLogger.e("probeStatus failed", t)
-                        mapOf("ready" to false, "hasPython" to false)
+                        mapOf("ready" to false, "hasPython" to false, "hasCpp" to false)
                     }
                 }
             }
@@ -252,6 +252,23 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                         "output" to updateResult.output,
                         "error" to updateResult.error
                     )
+                }
+            }
+
+            "installCpp" -> {
+                onWorker(result, "installCpp") {
+                    val installResult = runtime.installCpp()
+                    mapOf(
+                        "success" to installResult.success,
+                        "output" to installResult.output,
+                        "error" to installResult.error
+                    )
+                }
+            }
+
+            "cppVersion" -> {
+                onWorker(result, "cppVersion") {
+                    runtime.cppVersion()
                 }
             }
 

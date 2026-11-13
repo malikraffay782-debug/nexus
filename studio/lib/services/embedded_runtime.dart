@@ -58,7 +58,7 @@ class EmbeddedRuntime {
 
   /// Filesystem-only status. Does not start proot — use on every screen open.
   /// [error] is set when the channel/native call fails (not the same as !ready).
-  static Future<({bool ready, bool hasPython, String? error})> probeStatus() async {
+  static Future<({bool ready, bool hasPython, bool hasCpp, String? error})> probeStatus() async {
     try {
       final raw = await _channel
           .invokeMethod<dynamic>('probeStatus')
@@ -67,12 +67,13 @@ class EmbeddedRuntime {
         return (
           ready: raw['ready'] == true,
           hasPython: raw['hasPython'] == true,
+          hasCpp: raw['hasCpp'] == true,
           error: null,
         );
       }
-      return (ready: false, hasPython: false, error: 'Unexpected probe response');
+      return (ready: false, hasPython: false, hasCpp: false, error: 'Unexpected probe response');
     } catch (e) {
-      return (ready: false, hasPython: false, error: e.toString());
+      return (ready: false, hasPython: false, hasCpp: false, error: e.toString());
     }
   }
 
@@ -277,6 +278,40 @@ class EmbeddedRuntime {
       return PackageResult(success: false, output: '', error: 'Install timed out');
     } catch (e) {
       return PackageResult(success: false, output: '', error: e.toString());
+    }
+  }
+
+  /// Optional C++17 toolchain (clang++). Does not modify Python.
+  static Future<PackageResult> installCpp() async {
+    try {
+      final result = await _channel
+          .invokeMethod<Map>('installCpp')
+          .timeout(const Duration(minutes: 15));
+      if (result == null) {
+        return PackageResult(success: false, output: '', error: 'Null response');
+      }
+      return PackageResult(
+        success: result['success'] == true,
+        output: result['output'] as String? ?? '',
+        error: result['error'] as String? ?? '',
+      );
+    } on PlatformException catch (e) {
+      return PackageResult(success: false, output: '', error: '${e.code}: ${e.message}');
+    } on TimeoutException {
+      return PackageResult(success: false, output: '', error: 'C++17 install timed out');
+    } catch (e) {
+      return PackageResult(success: false, output: '', error: e.toString());
+    }
+  }
+
+  static Future<String> cppVersion() async {
+    try {
+      final raw = await _channel
+          .invokeMethod<dynamic>('cppVersion')
+          .timeout(const Duration(seconds: 20));
+      return raw?.toString() ?? 'C++ toolchain not found';
+    } catch (e) {
+      return e.toString();
     }
   }
 

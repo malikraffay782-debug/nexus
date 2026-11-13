@@ -180,6 +180,24 @@ class BootstrapManager(private val context: Context) {
         }
     }
 
+    /** Filesystem-only check for optional C++17 toolchain (clang++). */
+    fun hasClangBinary(): Boolean {
+        if (!isReady) return false
+        val candidates = listOf(
+            File(prefixDir, "bin/clang++"),
+            File(prefixDir, "bin/clang"),
+            File(prefixDir, "usr/bin/clang++"),
+            File(prefixDir, "usr/bin/clang")
+        )
+        return candidates.any { f ->
+            try {
+                f.exists() && !f.isDirectory
+            } catch (_: Throwable) {
+                false
+            }
+        }
+    }
+
     fun invalidateReadyCache() {
         readyCached = false
     }
