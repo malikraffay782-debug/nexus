@@ -1198,7 +1198,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     );
   }
 
-  /// Compact bottom pad for vertex edit (video-editor style, fixed height).
+  /// Large video-editor style pad: left tool rail + full swipe surface.
   Widget _pointsControlPad(ColorScheme scheme) {
     final node = _pointsEditNode;
     final idx = _editPointIndex;
@@ -1207,120 +1207,189 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     if (idx < 0 || idx >= pts.length) return const SizedBox.shrink();
     final p = pts[idx];
     return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.96),
-      elevation: 6,
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.98),
+      elevation: 8,
       child: SafeArea(
         top: false,
         child: SizedBox(
-          height: 132,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(10, 6, 10, 6),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Icon(Icons.control_camera, size: 18, color: scheme.primary),
-                    const SizedBox(width: 6),
-                    Text(
-                      'P${idx + 1}/${pts.length}',
-                      style: const TextStyle(
-                        fontSize: 13,
-                        fontWeight: FontWeight.w600,
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    Text(
-                      '${p.x.round()}, ${p.y.round()}',
-                      style: TextStyle(fontSize: 12, color: scheme.outline),
-                    ),
-                    const Spacer(),
-                    IconButton(
-                      tooltip: 'Add vertex',
-                      icon: const Icon(Icons.add, size: 20),
-                      visualDensity: VisualDensity.compact,
-                      onPressed: _addPointOnSelected,
-                    ),
-                    IconButton(
-                      tooltip: 'Remove vertex',
-                      icon: const Icon(Icons.remove, size: 20),
-                      visualDensity: VisualDensity.compact,
-                      onPressed:
-                          pts.length > 3 ? _removePointOnSelected : null,
-                    ),
-                    TextButton(
-                      onPressed: () {
-                        FocusScope.of(context).unfocus();
-                        setState(() => _editPointIndex = null);
-                      },
-                      child: const Text('Done'),
-                    ),
-                  ],
-                ),
-                Expanded(
+          // Room for rail + large swipe zone (matches reference UX).
+          height: 220,
+          child: Column(
+            children: [
+              // Title bar
+              SizedBox(
+                height: 44,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 10),
                   child: Row(
                     children: [
-                      // Vertex chips
-                      SizedBox(
-                        width: 56,
-                        child: ListView.builder(
-                          itemCount: pts.length,
-                          itemBuilder: (context, i) {
-                            final sel = i == idx;
-                            return Padding(
-                              padding: const EdgeInsets.only(bottom: 4),
-                              child: Material(
-                                color: sel
-                                    ? scheme.primaryContainer
-                                    : scheme.surface,
-                                borderRadius: BorderRadius.circular(8),
-                                child: InkWell(
-                                  onTap: () =>
-                                      setState(() => _editPointIndex = i),
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: SizedBox(
-                                    height: 28,
-                                    child: Center(
-                                      child: Text(
-                                        'P${i + 1}',
-                                        style: TextStyle(
-                                          fontSize: 11,
-                                          fontWeight: sel
-                                              ? FontWeight.w700
-                                              : FontWeight.w500,
+                      Icon(Icons.control_camera,
+                          size: 20, color: scheme.primary),
+                      const SizedBox(width: 8),
+                      Text(
+                        'Edit Points  ·  P${idx + 1}/${pts.length}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w600,
+                        ),
+                      ),
+                      const SizedBox(width: 10),
+                      Text(
+                        '${p.x.round()}, ${p.y.round()}',
+                        style: TextStyle(fontSize: 13, color: scheme.outline),
+                      ),
+                      const Spacer(),
+                      TextButton(
+                        style: TextButton.styleFrom(
+                          minimumSize: const Size(0, 40),
+                          padding: const EdgeInsets.symmetric(horizontal: 14),
+                        ),
+                        onPressed: () {
+                          FocusScope.of(context).unfocus();
+                          setState(() => _editPointIndex = null);
+                        },
+                        child: const Text(
+                          'Done',
+                          style: TextStyle(fontSize: 14),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const Divider(height: 1),
+              // Rail + swipe pad
+              Expanded(
+                child: Row(
+                  children: [
+                    // Left tool rail
+                    SizedBox(
+                      width: 56,
+                      child: Column(
+                        children: [
+                          const SizedBox(height: 6),
+                          IconButton(
+                            tooltip: 'Add vertex on edge',
+                            icon: const Icon(Icons.add_circle_outline, size: 24),
+                            constraints:
+                                const BoxConstraints(minWidth: 48, minHeight: 44),
+                            onPressed: _addPointOnSelected,
+                          ),
+                          IconButton(
+                            tooltip: 'Remove vertex',
+                            icon: const Icon(Icons.remove_circle_outline, size: 24),
+                            constraints:
+                                const BoxConstraints(minWidth: 48, minHeight: 44),
+                            onPressed:
+                                pts.length > 3 ? _removePointOnSelected : null,
+                          ),
+                          const Divider(height: 12),
+                          Expanded(
+                            child: ListView.builder(
+                              padding: const EdgeInsets.symmetric(horizontal: 6),
+                              itemCount: pts.length,
+                              itemBuilder: (context, i) {
+                                final sel = i == idx;
+                                return Padding(
+                                  padding: const EdgeInsets.only(bottom: 6),
+                                  child: Material(
+                                    color: sel
+                                        ? scheme.primaryContainer
+                                        : scheme.surfaceContainerHigh,
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: InkWell(
+                                      borderRadius: BorderRadius.circular(10),
+                                      onTap: () =>
+                                          setState(() => _editPointIndex = i),
+                                      child: SizedBox(
+                                        height: 36,
+                                        child: Center(
+                                          child: Text(
+                                            'P${i + 1}',
+                                            style: TextStyle(
+                                              fontSize: 12,
+                                              fontWeight: sel
+                                                  ? FontWeight.w700
+                                                  : FontWeight.w500,
+                                            ),
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                                );
+                              },
+                            ),
+                          ),
+                        ],
                       ),
-                      const SizedBox(width: 8),
-                      // Swipe pad
-                      Expanded(
+                    ),
+                    const VerticalDivider(width: 1),
+                    // Large swipe surface
+                    Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.fromLTRB(8, 8, 10, 10),
                         child: DecoratedBox(
                           decoration: BoxDecoration(
-                            color: scheme.surface.withValues(alpha: 0.75),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(color: scheme.outlineVariant),
+                            color: scheme.surface.withValues(alpha: 0.85),
+                            borderRadius: BorderRadius.circular(14),
+                            border: Border.all(
+                              color: scheme.outlineVariant.withValues(alpha: 0.6),
+                            ),
                           ),
                           child: Stack(
                             alignment: Alignment.center,
                             children: [
-                              Text(
-                                'Swipe to move point',
-                                style: TextStyle(
-                                  fontSize: 12,
-                                  color: scheme.outline,
-                                ),
+                              Positioned(
+                                left: 10,
+                                top: 10,
+                                child: Icon(Icons.crop_free,
+                                    size: 16,
+                                    color: scheme.outline.withValues(alpha: 0.35)),
+                              ),
+                              Positioned(
+                                right: 10,
+                                bottom: 10,
+                                child: Icon(Icons.crop_free,
+                                    size: 16,
+                                    color: scheme.outline.withValues(alpha: 0.35)),
+                              ),
+                              Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    Icons.open_with,
+                                    size: 32,
+                                    color:
+                                        scheme.primary.withValues(alpha: 0.4),
+                                  ),
+                                  const SizedBox(height: 10),
+                                  Text(
+                                    'Swipe here to move the point',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      color: scheme.onSurface
+                                          .withValues(alpha: 0.7),
+                                    ),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    'Or drag handles on the stage',
+                                    textAlign: TextAlign.center,
+                                    style: TextStyle(
+                                      fontSize: 12,
+                                      color: scheme.outline,
+                                    ),
+                                  ),
+                                ],
                               ),
                               Positioned.fill(
                                 child: GestureDetector(
                                   behavior: HitTestBehavior.opaque,
                                   onPanUpdate: (d) {
-                                    const sens = 0.85;
+                                    // Slightly lower sens for smoother feel on large pad.
+                                    const sens = 0.7;
                                     _nudgeSelectedPoint(
                                       dx: d.delta.dx * sens,
                                       dy: d.delta.dy * sens,
@@ -1328,22 +1397,15 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                                   },
                                 ),
                               ),
-                              IgnorePointer(
-                                child: Icon(
-                                  Icons.open_with,
-                                  size: 26,
-                                  color: scheme.primary.withValues(alpha: 0.3),
-                                ),
-                              ),
                             ],
                           ),
                         ),
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       ),
