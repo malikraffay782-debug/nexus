@@ -1212,8 +1212,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       child: SafeArea(
         top: false,
         child: SizedBox(
-          // Room for rail + large swipe zone (matches reference UX).
-          height: 220,
+          // Large swipe zone — easy finger travel for vertex nudge.
+          height: 280,
           child: Column(
             children: [
               // Title bar
@@ -1385,14 +1385,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                                 ],
                               ),
                               Positioned.fill(
-                                child: GestureDetector(
+                                child: Listener(
                                   behavior: HitTestBehavior.opaque,
-                                  onPanUpdate: (d) {
-                                    // Slightly lower sens for smoother feel on large pad.
-                                    const sens = 0.7;
+                                  onPointerMove: (e) {
+                                    // Screen px → scene units; high enough to feel responsive.
+                                    const sens = 1.6;
                                     _nudgeSelectedPoint(
-                                      dx: d.delta.dx * sens,
-                                      dy: d.delta.dy * sens,
+                                      dx: e.delta.dx * sens,
+                                      dy: e.delta.dy * sens,
                                     );
                                   },
                                 ),

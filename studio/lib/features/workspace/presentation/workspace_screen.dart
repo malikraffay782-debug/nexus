@@ -215,6 +215,9 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
           children: [
             Expanded(
               child: TabBarView(
+                // Editor surfaces (esp. Edit Points swipe pad) must not lose
+                // horizontal pans to tab switching.
+                physics: const NeverScrollableScrollPhysics(),
                 children: [
                   for (final t in tabs)
                     if (t.label == 'Code')
