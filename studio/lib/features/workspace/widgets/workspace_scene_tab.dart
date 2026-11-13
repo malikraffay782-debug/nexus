@@ -574,9 +574,29 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     setState(() {
       _doc = doc.withNodeUpdated(cur!.copyWith(points: pts));
       _selectedNodeId = id;
-      _editPointIndex = null;
+      _editPointIndex = 0; // start on first vertex for pad control
       _dirty = true;
     });
+  }
+
+  /// Selected node that is in freeform points mode (for control pad).
+  SceneNode? get _pointsEditNode {
+    final doc = _doc;
+    final id = _selectedNodeId;
+    if (doc == null || id == null) return null;
+    for (final n in doc.nodes) {
+      if (n.id == id && n.hasPoints) return n;
+    }
+    return null;
+  }
+
+  void _ensureEditPointSelected() {
+    final n = _pointsEditNode;
+    if (n == null) return;
+    final i = _editPointIndex;
+    if (i == null || i < 0 || i >= n.points!.length) {
+      setState(() => _editPointIndex = 0);
+    }
   }
 
   void _clearPointsOnSelected() {
@@ -783,6 +803,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     // Side-by-side only when both axes have room; else stack.
                     final wide = constraints.maxWidth >= 560 &&
                         constraints.maxHeight >= 300;
+                    final pointsPad = _pointsEditNode != null;
                     if (wide) {
                       return Row(
                         children: [
@@ -791,7 +812,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                             child: _nodeSidebar(scheme),
                           ),
                           const VerticalDivider(width: 1),
-                          Expanded(child: _buildCanvas(scheme)),
+                          Expanded(
+                            child: Column(
+                              children: [
+                                Expanded(child: _buildCanvas(scheme)),
+                                if (pointsPad) _pointsControlPad(scheme),
+                              ],
+                            ),
+                          ),
                         ],
                       );
                     }
@@ -799,9 +827,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     // so type/color/size controls fit without bottom overflow.
                     final selected = _selectedNodeId != null;
                     // Compact transform strip — keep stage large on phone.
-                    final frac = selected ? 0.34 : 0.26;
-                    final maxH = selected ? 188.0 : 130.0;
-                    final minH = selected ? 140.0 : 84.0;
+                    final frac = selected ? 0.30 : 0.24;
+                    final maxH = selected ? 168.0 : 120.0;
+                    final minH = selected ? 120.0 : 80.0;
                     return Column(
                       children: [
                         SizedBox(
@@ -811,6 +839,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                         ),
                         const Divider(height: 1),
                         Expanded(child: _buildCanvas(scheme)),
+                        if (pointsPad) _pointsControlPad(scheme),
                       ],
                     );
                   },
@@ -897,6 +926,147 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             child: const Text('Create main scene'),
           ),
         ],
+      ),
+    );
+  }
+
+  /// Alight-style bottom pad: move the active vertex without covering the stage.
+  Widget _pointsControlPad(ColorScheme scheme) {
+    final node = _pointsEditNode;
+    if (node == null) return const SizedBox.shrink();
+    final pts = node.points!;
+    var idx = _editPointIndex;
+    if (idx == null || idx < 0 || idx >= pts.length) {
+      // Defer selection to after this frame if needed.
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _pointsEditNode != null) _ensureEditPointSelected();
+      });
+      idx = 0;
+    }
+    final p = pts[idx.clamp(0, pts.length - 1)];
+    return Material(
+      color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
+      elevation: 6,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 10),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Row(
+                children: [
+                  Icon(Icons.control_camera, size: 18, color: scheme.primary),
+                  const SizedBox(width: 6),
+                  Text(
+                    'Edit Points · P${idx + 1}/${pts.length}',
+                    style: Theme.of(context).textTheme.titleSmall,
+                  ),
+                  const Spacer(),
+                  Text(
+                    '${p.x.round()}, ${p.y.round()}',
+                    style: TextStyle(fontSize: 12, color: scheme.outline),
+                  ),
+                  const SizedBox(width: 4),
+                  IconButton(
+                    tooltip: 'Add vertex on edge',
+                    icon: const Icon(Icons.add_circle_outline, size: 20),
+                    visualDensity: VisualDensity.compact,
+                    onPressed: _addPointOnSelected,
+                  ),
+                  IconButton(
+                    tooltip: 'Remove vertex',
+                    icon: const Icon(Icons.remove_circle_outline, size: 20),
+                    visualDensity: VisualDensity.compact,
+                    onPressed:
+                        pts.length > 3 ? _removePointOnSelected : null,
+                  ),
+                  TextButton(
+                    onPressed: () {
+                      setState(() => _editPointIndex = null);
+                    },
+                    child: const Text('Done'),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 6),
+              // Swipe pad — finger stays off the stage (video-style control).
+              SizedBox(
+                height: 110,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    color: scheme.surface.withValues(alpha: 0.7),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: scheme.outlineVariant),
+                  ),
+                  child: Stack(
+                    alignment: Alignment.center,
+                    children: [
+                      Text(
+                        'Swipe here to move point\n'
+                        'Tap stage handles or edge + to edit',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                          fontSize: 13,
+                          color: scheme.outline,
+                        ),
+                      ),
+                      // Invisible drag surface
+                      Positioned.fill(
+                        child: GestureDetector(
+                          behavior: HitTestBehavior.opaque,
+                          onPanStart: (_) {
+                            if (_editPointIndex == null) {
+                              setState(() => _editPointIndex = idx);
+                            }
+                          },
+                          onPanUpdate: (d) {
+                            // Scale pad motion → scene units (~0.6 scene px per screen px)
+                            const sens = 0.85;
+                            _nudgeSelectedPoint(
+                              dx: d.delta.dx * sens,
+                              dy: d.delta.dy * sens,
+                            );
+                          },
+                        ),
+                      ),
+                      // Soft crosshair hint
+                      IgnorePointer(
+                        child: Icon(
+                          Icons.open_with,
+                          size: 28,
+                          color: scheme.primary.withValues(alpha: 0.35),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+              const SizedBox(height: 6),
+              // Quick vertex picker chips
+              SizedBox(
+                height: 32,
+                child: ListView.separated(
+                  scrollDirection: Axis.horizontal,
+                  itemCount: pts.length,
+                  separatorBuilder: (_, __) => const SizedBox(width: 6),
+                  itemBuilder: (context, i) {
+                    final sel = i == idx;
+                    return ChoiceChip(
+                      label: Text('P${i + 1}', style: const TextStyle(fontSize: 11)),
+                      selected: sel,
+                      visualDensity: VisualDensity.compact,
+                      materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                      onSelected: (_) {
+                        setState(() => _editPointIndex = i);
+                      },
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        ),
       ),
     );
   }
