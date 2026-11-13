@@ -1212,8 +1212,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       child: SafeArea(
         top: false,
         child: SizedBox(
-          // Large swipe zone — easy finger travel for vertex nudge.
-          height: 280,
+          // Full-bleed swipe zone under the title (fills dock, not a small inset card).
+          height: 320,
           child: Column(
             children: [
               // Title bar
@@ -1325,80 +1325,77 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       ),
                     ),
                     const VerticalDivider(width: 1),
-                    // Large swipe surface
+                    // Full-bleed swipe surface (uses all remaining dock space).
                     Expanded(
-                      child: Padding(
-                        padding: const EdgeInsets.fromLTRB(8, 8, 10, 10),
-                        child: DecoratedBox(
-                          decoration: BoxDecoration(
-                            color: scheme.surface.withValues(alpha: 0.85),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color: scheme.outlineVariant.withValues(alpha: 0.6),
+                      child: ColoredBox(
+                        color: scheme.surface.withValues(alpha: 0.92),
+                        child: Stack(
+                          fit: StackFit.expand,
+                          alignment: Alignment.center,
+                          children: [
+                            Positioned(
+                              left: 12,
+                              top: 10,
+                              child: Icon(
+                                Icons.crop_free,
+                                size: 18,
+                                color: scheme.outline.withValues(alpha: 0.35),
+                              ),
                             ),
-                          ),
-                          child: Stack(
-                            alignment: Alignment.center,
-                            children: [
-                              Positioned(
-                                left: 10,
-                                top: 10,
-                                child: Icon(Icons.crop_free,
-                                    size: 16,
-                                    color: scheme.outline.withValues(alpha: 0.35)),
+                            Positioned(
+                              right: 12,
+                              bottom: 10,
+                              child: Icon(
+                                Icons.crop_free,
+                                size: 18,
+                                color: scheme.outline.withValues(alpha: 0.35),
                               ),
-                              Positioned(
-                                right: 10,
-                                bottom: 10,
-                                child: Icon(Icons.crop_free,
-                                    size: 16,
-                                    color: scheme.outline.withValues(alpha: 0.35)),
-                              ),
-                              Column(
+                            ),
+                            IgnorePointer(
+                              child: Column(
                                 mainAxisSize: MainAxisSize.min,
                                 children: [
                                   Icon(
                                     Icons.open_with,
-                                    size: 32,
-                                    color:
-                                        scheme.primary.withValues(alpha: 0.4),
+                                    size: 40,
+                                    color: scheme.primary.withValues(alpha: 0.45),
                                   ),
-                                  const SizedBox(height: 10),
+                                  const SizedBox(height: 12),
                                   Text(
                                     'Swipe here to move the point',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      fontSize: 14,
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.w500,
                                       color: scheme.onSurface
-                                          .withValues(alpha: 0.7),
+                                          .withValues(alpha: 0.75),
                                     ),
                                   ),
-                                  const SizedBox(height: 4),
+                                  const SizedBox(height: 6),
                                   Text(
                                     'Or drag handles on the stage',
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
-                                      fontSize: 12,
+                                      fontSize: 13,
                                       color: scheme.outline,
                                     ),
                                   ),
                                 ],
                               ),
-                              Positioned.fill(
-                                child: Listener(
-                                  behavior: HitTestBehavior.opaque,
-                                  onPointerMove: (e) {
-                                    // Screen px → scene units; high enough to feel responsive.
-                                    const sens = 1.6;
-                                    _nudgeSelectedPoint(
-                                      dx: e.delta.dx * sens,
-                                      dy: e.delta.dy * sens,
-                                    );
-                                  },
-                                ),
+                            ),
+                            Positioned.fill(
+                              child: Listener(
+                                behavior: HitTestBehavior.opaque,
+                                onPointerMove: (e) {
+                                  const sens = 1.6;
+                                  _nudgeSelectedPoint(
+                                    dx: e.delta.dx * sens,
+                                    dy: e.delta.dy * sens,
+                                  );
+                                },
                               ),
-                            ],
-                          ),
+                            ),
+                          ],
                         ),
                       ),
                     ),
