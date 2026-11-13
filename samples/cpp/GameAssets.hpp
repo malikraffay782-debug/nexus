@@ -10,7 +10,7 @@
 //      makeCampfireSmoke()  rising smoke + embers
 //      makeExplosion()      fireball + dark smoke + sparks + dust ring (burst)
 //      makeMagicAura()      swirling glowing motes + mist (e.g. around the sword)
-//      makeGroundFog()      slow low-lying fog
+//      makeGroundFog()      slow low-lying fog (pre-warmed at the origin: use teleport())
 //      + makeSmokeTexture() / makeGlowTexture()  (procedural RGBA8 textures)
 //
 //  Conventions
@@ -18,6 +18,10 @@
 //   - Sword: origin = middle of the grip, blade points +Y, flat faces look +/-Z.
 //   - Boxes: origin = bottom center.
 //   - Vertex = pos(3f) normal(3f) uv(2f) = 32 bytes. Indices = uint32_t.
+//   - addBox / addChamferBox-free faces use METRIC UVs (1 uv unit = 1 meter in
+//     the builder's local space), so textures are not stretched on thin parts.
+//   - Image rows: row 0 = BOTTOM of the image (v = 0), matching the particle quad
+//     uv (0,0) = bottom-left. D3D/Vulkan-style APIs: flip v in the shader.
 //   - Unreal/Unity-style engines: just remap axes/handedness when importing.
 //
 //  Quick use
@@ -35,6 +39,11 @@
 //         layer.buildBillboards(camPos, camRight, camUp, v, i);
 //         // draw with layer.desc().blend and texture layer.desc().texture
 //     }
+//     if (fx.aliveCount() == 0) { /* one-shot effect finished: recycle it */ }
+//
+//     setPosition() moves only the emitter (good for trailing smoke).
+//     teleport()    also moves the particles already alive (good for placing
+//                   pre-warmed effects such as makeGroundFog()).
 //
 //  Test:  g++ -std=c++17 -O2 -DGA_DEMO_MAIN demo.cpp   (demo.cpp includes this file)
 //         writes sword.obj, crate.obj, chest.obj, metalcase.obj, smoke.tga, glow.tga
@@ -187,10 +196,12 @@ public:
         if (area2(p0, p2, p3) > 1e-20f) tri(a, c, d);
     }
     // Same, but flips the winding if the quad faces away from `outward`.
-    void quadAuto(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 outward) {
+    // The UVs travel with their corners when the winding is flipped.
+    void quadAuto(Vec3 p0, Vec3 p1, Vec3 p2, Vec3 p3, Vec3 outward,
+                  Vec2 t0 = {0, 0}, Vec2 t1 = {1, 0}, Vec2 t2 = {1, 1}, Vec2 t3 = {0, 1}) {
         Vec3 n = cross(p2 - p0, p3 - p1);
-        if (dot(n, outward) < 0.f) quadFlat(p0, p3, p2, p1);
-        else quadFlat(p0, p1, p2, p3);
+        if (dot(n, outward) < 0.f) quadFlat(p0, p3, p2, p1, t0, t3, t2, t1);
+        else quadFlat(p0, p1, p2, p3, t0, t1, t2, t3);
     }
     void triAuto(Vec3 a, Vec3 b, Vec3 c, Vec3 outward) {
         Vec3 n = cross(b - a, c - a);
@@ -202,22 +213,26 @@ public:
     }
 
     // ---- primitives ------------------------------------------------------
+    // Metric UVs: each face is mapped 1 uv unit per meter, so a 0.11 x 1.0 beam
+    // is not stretched like a 1 x 1 face would be.
     void addBox(Vec3 c, Vec3 h) {
         for (int a = 0; a < 3; ++a)
             for (int s = -1; s <= 1; s += 2) {
                 int b = (a + 1) % 3, d = (a + 2) % 3;
                 static const int ob[4] = {-1, 1, 1, -1}, od[4] = {-1, -1, 1, 1};
                 Vec3 p[4];
+                Vec2 t[4];
                 for (int k = 0; k < 4; ++k) {
                     float e[3];
                     e[a] = s * comp(h, a);
                     e[b] = ob[k] * comp(h, b);
                     e[d] = od[k] * comp(h, d);
                     p[k] = c + Vec3{e[0], e[1], e[2]};
+                    t[k] = {(float)(ob[k] + 1) * comp(h, b), (float)(od[k] + 1) * comp(h, d)};
                 }
                 float o[3] = {0, 0, 0};
                 o[a] = (float)s;
-                quadAuto(p[0], p[1], p[2], p[3], {o[0], o[1], o[2]});
+                quadAuto(p[0], p[1], p[2], p[3], {o[0], o[1], o[2]}, t[0], t[1], t[2], t[3]);
             }
     }
 
@@ -602,10 +617,11 @@ inline Mesh makeTreasureChest() {
 
     mb.useMaterial(mIron);
     for (int s = -1; s <= 1; s += 2) {
-        mb.addBox({s * 0.30f, 0.25f, 0}, {0.04f, 0.255f, 0.305f});          // body bands
+        // FIX: spans y = 0 .. 0.505 (previously started at -0.005, below the floor)
+        mb.addBox({s * 0.30f, 0.2525f, 0}, {0.04f, 0.2525f, 0.305f});       // body bands
         mb.addArch(s * 0.30f, 0.08f, 0.308f, 0.5f, 28, true);               // lid bands
         for (int sz = -1; sz <= 1; sz += 2)                                  // vertical corner plates
-            mb.addBox({s * 0.476f, 0.25f, sz * 0.276f}, {0.03f, 0.255f, 0.03f});
+            mb.addBox({s * 0.476f, 0.2525f, sz * 0.276f}, {0.03f, 0.2525f, 0.03f});
     }
     mb.addBox({0, 0.5f, 0}, {0.505f, 0.012f, 0.305f});                       // lid seam trim
     mb.addBox({0, 0.47f, 0.305f}, {0.04f, 0.09f, 0.005f});                   // hasp strap
@@ -618,6 +634,7 @@ inline Mesh makeTreasureChest() {
 
     mb.useMaterial(mDark);
     mb.addBox({0, 0.47f, 0.326f}, {0.009f, 0.022f, 0.004f});                 // keyhole
+    (void)mWood;
     return mb.finish();
 }
 
@@ -685,8 +702,10 @@ inline size_t countInvertedTriangles(const Mesh& m) {
 // Wavefront OBJ + MTL export (open in Blender to inspect).
 inline bool writeOBJ(const Mesh& m, const std::string& path) {
     std::string base = path;
+    // FIX: only strip an extension that belongs to the file name, not to a directory ("./out/sword").
+    size_t slashB = base.find_last_of("/\\");
     size_t dotPos = base.rfind('.');
-    if (dotPos != std::string::npos) base.resize(dotPos);
+    if (dotPos != std::string::npos && (slashB == std::string::npos || dotPos > slashB)) base.resize(dotPos);
     std::string mtlPath = base + ".mtl";
     size_t slash = mtlPath.find_last_of("/\\");
     std::string mtlName = slash == std::string::npos ? mtlPath : mtlPath.substr(slash + 1);
@@ -811,7 +830,14 @@ public:
     explicit ParticleSystem(ParticleDesc d, uint32_t seed = 1) : d_(std::move(d)), rng_(seed) { p_.reserve(d_.maxParticles); }
 
     const ParticleDesc& desc() const { return d_; }
+    // Moves only the emitter: particles already alive keep their world position (trailing smoke).
     void setPosition(Vec3 p) { pos_ = p; }
+    // Moves the emitter AND every live particle (placing pre-warmed effects such as ground fog).
+    void teleport(Vec3 p) {
+        Vec3 d = p - pos_;
+        for (auto& q : p_) q.pos += d;
+        pos_ = p;
+    }
     void setEmitting(bool e) { emitting_ = e; }
     void clear() { p_.clear(); acc_ = 0.f; }
     size_t aliveCount() const { return p_.size(); }
@@ -819,6 +845,7 @@ public:
     void prewarm(float seconds, float step = 0.05f) { for (float t = 0.f; t < seconds; t += step) update(step); }
 
     void update(float dt) {
+        dt = std::min(std::max(dt, 0.f), 0.1f);   // a frame hitch must not blow up the simulation
         time_ += dt;
         for (size_t i = 0; i < p_.size();) {
             Particle& q = p_[i];
@@ -847,16 +874,19 @@ public:
     }
 
     // Appends camera-facing quads (CCW as seen by the camera). Alpha layers are sorted back-to-front.
+    // Uses internal scratch buffers (no per-frame allocations once warm); not thread-safe on the same layer.
     void buildBillboards(Vec3 camPos, Vec3 camRight, Vec3 camUp,
                          std::vector<ParticleVertex>& outV, std::vector<uint32_t>& outI) const {
-        std::vector<uint32_t> order(p_.size());
-        std::iota(order.begin(), order.end(), 0u);
+        outV.reserve(outV.size() + p_.size() * 4);
+        outI.reserve(outI.size() + p_.size() * 6);
+        order_.resize(p_.size());
+        std::iota(order_.begin(), order_.end(), 0u);
         if (d_.blend == Blend::Alpha) {
-            std::vector<float> dist(p_.size());
-            for (size_t i = 0; i < p_.size(); ++i) { Vec3 d = p_[i].pos - camPos; dist[i] = dot(d, d); }
-            std::sort(order.begin(), order.end(), [&](uint32_t a, uint32_t b) { return dist[a] > dist[b]; });
+            dist_.resize(p_.size());
+            for (size_t i = 0; i < p_.size(); ++i) { Vec3 d = p_[i].pos - camPos; dist_[i] = dot(d, d); }
+            std::sort(order_.begin(), order_.end(), [&](uint32_t a, uint32_t b) { return dist_[a] > dist_[b]; });
         }
-        for (uint32_t id : order) {
+        for (uint32_t id : order_) {
             const Particle& q = p_[id];
             float t = clamp01(q.age / q.life);
             float ease = 1.f - (1.f - t) * (1.f - t);
@@ -917,6 +947,8 @@ private:
     Vec3 pos_{0, 0, 0};
     float acc_ = 0.f, time_ = 0.f;
     bool emitting_ = true;
+    mutable std::vector<uint32_t> order_;   // scratch for buildBillboards
+    mutable std::vector<float> dist_;
 };
 
 // A named bundle of particle layers (draw each layer with its own blend mode/texture).
@@ -924,11 +956,14 @@ struct Effect {
     std::string name;
     std::vector<ParticleSystem> layers;
     void setPosition(Vec3 p) { for (auto& l : layers) l.setPosition(p); }
+    void teleport(Vec3 p) { for (auto& l : layers) l.teleport(p); }
     void setEmitting(bool e) { for (auto& l : layers) l.setEmitting(e); }
     void burst() { for (auto& l : layers) l.burst(); }
     void update(float dt) { for (auto& l : layers) l.update(dt); }
     void prewarm(float seconds) { for (auto& l : layers) l.prewarm(seconds); }
     void clear() { for (auto& l : layers) l.clear(); }
+    // Total live particles; for one-shot effects (explosion) 0 means "finished, safe to recycle".
+    size_t aliveCount() const { size_t n = 0; for (const auto& l : layers) n += l.aliveCount(); return n; }
 };
 
 // ---- presets ---------------------------------------------------------------
@@ -1025,6 +1060,7 @@ inline Effect makeExplosion() {
 }
 
 // Emitter origin = base of the blade; the cylinder rises 0.9 m along +Y.
+// (Blade starts at y = 0.118 in sword space, so place it at swordPos + (0, 0.118, 0).)
 inline Effect makeMagicAura() {
     Effect e;
     e.name = "magic_aura";
@@ -1056,6 +1092,8 @@ inline Effect makeMagicAura() {
     return e;
 }
 
+// Pre-warmed at the origin. To place it elsewhere call fog.teleport(pos) (NOT setPosition),
+// otherwise the already-spawned fog stays behind at the origin.
 inline Effect makeGroundFog() {
     Effect e;
     e.name = "ground_fog";
@@ -1075,7 +1113,7 @@ inline Effect makeGroundFog() {
     return e;
 }
 
-// ---- procedural textures (RGBA8, row 0 = top) --------------------------------
+// ---- procedural textures (RGBA8, row 0 = BOTTOM / v = 0) ----------------------
 struct Image { int w = 0, h = 0; std::vector<uint8_t> rgba; };
 
 inline Image makeSmokeTexture(int size = 128, uint32_t seed = 7) {
@@ -1122,7 +1160,7 @@ inline bool writeTGA(const Image& im, const std::string& path) {
     hdr[2] = 2;
     hdr[12] = (uint8_t)(im.w & 255); hdr[13] = (uint8_t)(im.w >> 8);
     hdr[14] = (uint8_t)(im.h & 255); hdr[15] = (uint8_t)(im.h >> 8);
-    hdr[16] = 32; hdr[17] = 0x28;   // 32 bpp, top-left origin, 8 alpha bits
+    hdr[16] = 32; hdr[17] = 0x08;   // 32 bpp, bottom-left origin (row 0 = bottom), 8 alpha bits
     std::fwrite(hdr, 1, 18, f);
     for (size_t i = 0; i < (size_t)im.w * im.h; ++i) {
         uint8_t px[4] = {im.rgba[i * 4 + 2], im.rgba[i * 4 + 1], im.rgba[i * 4 + 0], im.rgba[i * 4 + 3]};
