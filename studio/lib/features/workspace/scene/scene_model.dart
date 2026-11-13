@@ -151,12 +151,17 @@ class SceneNode {
       }
       if (points.length < 3) points = null;
     }
+    final rawId = (json['id'] as String?)?.trim() ?? '';
+    final px = (json['x'] as num?)?.toDouble() ?? 0;
+    final py = (json['y'] as num?)?.toDouble() ?? 0;
     return SceneNode(
-      id: json['id'] as String? ?? '',
+      id: rawId.isEmpty
+          ? 'node_${px.toInt()}_${py.toInt()}_${type.hashCode.toUnsigned(32).toRadixString(16)}'
+          : rawId,
       type: type,
       name: json['name'] as String? ?? 'node',
-      x: (json['x'] as num?)?.toDouble() ?? 0,
-      y: (json['y'] as num?)?.toDouble() ?? 0,
+      x: px,
+      y: py,
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,

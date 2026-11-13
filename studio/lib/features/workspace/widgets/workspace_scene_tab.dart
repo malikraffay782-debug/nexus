@@ -51,6 +51,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
 
   @override
   void dispose() {
+    _nudgeFrameScheduled = false;
+    _pendingNudgeDx = 0;
+    _pendingNudgeDy = 0;
     _stopPlayLoop();
     _playTime.dispose();
     _nameCtrl.dispose();
@@ -660,6 +663,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _nudgeFrameScheduled = true;
     SchedulerBinding.instance.scheduleFrameCallback((_) {
       _nudgeFrameScheduled = false;
+      if (!mounted) {
+        _pendingNudgeDx = 0;
+        _pendingNudgeDy = 0;
+        return;
+      }
       final pdx = _pendingNudgeDx;
       final pdy = _pendingNudgeDy;
       _pendingNudgeDx = 0;
