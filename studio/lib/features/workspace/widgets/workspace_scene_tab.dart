@@ -363,8 +363,19 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       }
     }
     setState(() {
+      final same = _selectedNodeId == id;
       _selectedNodeId = id;
-      _editPointIndex = null;
+      // Re-tapping the same polygon must not wipe the active vertex —
+      // that was dropping pad control mid-edit.
+      if (!same) {
+        _editPointIndex = (node != null && node.hasPoints) ? 0 : null;
+      } else if (node != null &&
+          node.hasPoints &&
+          _editPointIndex != null &&
+          (_editPointIndex! < 0 ||
+              _editPointIndex! >= node.points!.length)) {
+        _editPointIndex = 0;
+      }
       _syncNameField(node);
     });
   }
@@ -399,15 +410,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   }
 
   void _resizeSelected(double delta) {
-    _updateSelectedNode((n) {
-      final doc = _doc;
-      if (doc == null) return n;
-      final maxW = (doc.width - n.x).clamp(24.0, 512.0);
-      final maxH = (doc.height - n.y).clamp(24.0, 512.0);
-      final nw = (n.w + delta).clamp(24.0, maxW);
-      final nh = (n.h + delta).clamp(24.0, maxH);
-      return n.copyWith(w: nw, h: nh);
-    });
+    // Prefer vertex-aware path so points mode bbox stays in sync.
+    _nudgeSelected(dw: delta, dh: delta);
   }
 
   /// Nudge position or size by small steps (bottom transform strip).
@@ -456,16 +460,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             )
             .toList();
       }
-      // Keep inside stage after nudge.
+      // Keep inside stage after nudge (apply X/Y independently; no overwrite).
       final b2 = SceneNode.boundsOf(pts);
       var shiftX = 0.0;
       var shiftY = 0.0;
-      if (b2.$1 < 0) shiftX = -b2.$1;
-      if (b2.$2 < 0) shiftY = -b2.$2;
-      if (b2.$1 + b2.$3 > doc.width) {
+      if (b2.$1 < 0) {
+        shiftX = -b2.$1;
+      } else if (b2.$1 + b2.$3 > doc.width) {
         shiftX = doc.width - (b2.$1 + b2.$3);
       }
-      if (b2.$2 + b2.$4 > doc.height) {
+      if (b2.$2 < 0) {
+        shiftY = -b2.$2;
+      } else if (b2.$2 + b2.$4 > doc.height) {
         shiftY = doc.height - (b2.$2 + b2.$4);
       }
       if (shiftX != 0 || shiftY != 0) {
@@ -803,7 +809,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     // Side-by-side only when both axes have room; else stack.
                     final wide = constraints.maxWidth >= 560 &&
                         constraints.maxHeight >= 300;
-                    final pointsPad = _pointsEditNode != null;
+                    // Pad only while a vertex is active — Done hides it without dropping points.
+                    final pointsPad =
+                        _pointsEditNode != null && _editPointIndex != null;
                     if (wide) {
                       return Row(
                         children: [
@@ -933,17 +941,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   /// Alight-style bottom pad: move the active vertex without covering the stage.
   Widget _pointsControlPad(ColorScheme scheme) {
     final node = _pointsEditNode;
-    if (node == null) return const SizedBox.shrink();
+    final idx = _editPointIndex;
+    if (node == null || idx == null) return const SizedBox.shrink();
     final pts = node.points!;
-    var idx = _editPointIndex;
-    if (idx == null || idx < 0 || idx >= pts.length) {
-      // Defer selection to after this frame if needed.
-      WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted && _pointsEditNode != null) _ensureEditPointSelected();
-      });
-      idx = 0;
-    }
-    final p = pts[idx.clamp(0, pts.length - 1)];
+    if (idx < 0 || idx >= pts.length) return const SizedBox.shrink();
+    final p = pts[idx];
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.95),
       elevation: 6,
