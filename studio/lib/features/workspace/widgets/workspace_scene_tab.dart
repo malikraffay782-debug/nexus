@@ -255,15 +255,21 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     final col = n % 4;
     final row = n ~/ 4;
     final t = SceneNodeTypes.normalize(type);
+    final isCam = t == SceneNodeTypes.camera;
     final node = SceneNode(
       id: 'n_${DateTime.now().microsecondsSinceEpoch}',
       type: t,
-      name: t == SceneNodeTypes.camera ? 'Camera ${n + 1}' : 'Sprite ${n + 1}',
+      name: isCam ? 'Camera ${n + 1}' : 'Sprite ${n + 1}',
       x: 80.0 + col * 120,
       y: 80.0 + row * 120,
-      w: t == SceneNodeTypes.camera ? 48 : 64,
-      h: t == SceneNodeTypes.camera ? 48 : 64,
+      z: 0,
+      w: isCam ? 48 : 64,
+      h: isCam ? 48 : 64,
       color: ScenePalette.forType(t),
+      // Camera 3D foundation defaults (sprites keep model defaults).
+      fov: isCam ? SceneNode.defaultFov : SceneNode.defaultFov,
+      near: isCam ? SceneNode.defaultNear : SceneNode.defaultNear,
+      far: isCam ? SceneNode.defaultFar : SceneNode.defaultFar,
     );
     setState(() {
       _doc = doc.withNodeAdded(node);
@@ -1666,6 +1672,28 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             children: [
               stepper('W', node.w.round(), () => _nudgeSelected(dw: -8), () => _nudgeSelected(dw: 8)),
               stepper('H', node.h.round(), () => _nudgeSelected(dh: -8), () => _nudgeSelected(dh: 8)),
+            ],
+          ),
+          // 3D foundation: Z on all nodes; FOV on cameras
+          Row(
+            children: [
+              stepper(
+                'Z',
+                node.z.round(),
+                () => _updateSelectedNode((n) => n.copyWith(z: n.z - 8)),
+                () => _updateSelectedNode((n) => n.copyWith(z: n.z + 8)),
+              ),
+              if (node.isCamera)
+                stepper(
+                  'FOV',
+                  node.fov.round(),
+                  () => _updateSelectedNode(
+                    (n) => n.copyWith(fov: (n.fov - 5).clamp(1.0, 179.0)),
+                  ),
+                  () => _updateSelectedNode(
+                    (n) => n.copyWith(fov: (n.fov + 5).clamp(1.0, 179.0)),
+                  ),
+                ),
             ],
           ),
           // Color

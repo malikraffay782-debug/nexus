@@ -55,6 +55,11 @@ class ScenePoint {
 /// When [points] is null the node is an axis-aligned rect (x,y,w,h).
 /// When [points] is set it is a freeform polygon; x/y/w/h stay the
 /// bounding box for list/sidebar and coarse drag.
+///
+/// 3D foundation (additive, backward-compatible):
+/// - [z] depth in scene units (default 0). Used later for sort / projection.
+/// - [fov] / [near] / [far] are meaningful on camera nodes; sprites ignore them
+///   in the 2D painter but still persist for future 3D run path.
 class SceneNode {
   const SceneNode({
     required this.id,
@@ -62,25 +67,44 @@ class SceneNode {
     required this.name,
     required this.x,
     required this.y,
+    this.z = defaultZ,
     this.w = 64,
     this.h = 64,
     this.color = 0xFF7C4DFF,
     this.points,
+    this.fov = defaultFov,
+    this.near = defaultNear,
+    this.far = defaultFar,
   });
+
+  static const double defaultZ = 0;
+  static const double defaultFov = 60;
+  static const double defaultNear = 0.1;
+  static const double defaultFar = 1000;
 
   final String id;
   final String type;
   final String name;
   final double x;
   final double y;
+  /// Depth (scene units). Default 0 keeps existing 2D behaviour.
+  final double z;
   final double w;
   final double h;
   /// ARGB packed color for stage paint.
   final int color;
   /// Optional polygon vertices in scene space. Null = rect node.
   final List<ScenePoint>? points;
+  /// Vertical field of view in degrees (camera nodes).
+  final double fov;
+  /// Near clip plane (camera nodes).
+  final double near;
+  /// Far clip plane (camera nodes).
+  final double far;
 
   bool get hasPoints => points != null && points!.length >= 3;
+
+  bool get isCamera => type == SceneNodeTypes.camera;
 
   /// Four corners of the current rect (scene space), TL→TR→BR→BL.
   List<ScenePoint> rectAsPoints() {
@@ -123,6 +147,11 @@ class SceneNode {
       'h': h,
       'color': color,
     };
+    // 3D foundation — always write so Python / future run path can read them.
+    map['z'] = z;
+    if (isCamera || fov != defaultFov) map['fov'] = fov;
+    if (isCamera || near != defaultNear) map['near'] = near;
+    if (isCamera || far != defaultFar) map['far'] = far;
     if (points != null && points!.isNotEmpty) {
       map['points'] = points!.map((p) => p.toJson()).toList();
     }
@@ -154,6 +183,10 @@ class SceneNode {
     final rawId = (json['id'] as String?)?.trim() ?? '';
     final px = (json['x'] as num?)?.toDouble() ?? 0;
     final py = (json['y'] as num?)?.toDouble() ?? 0;
+    final pz = (json['z'] as num?)?.toDouble() ?? defaultZ;
+    final fov = (json['fov'] as num?)?.toDouble() ?? defaultFov;
+    final near = (json['near'] as num?)?.toDouble() ?? defaultNear;
+    final far = (json['far'] as num?)?.toDouble() ?? defaultFar;
     return SceneNode(
       id: rawId.isEmpty
           ? 'node_${px.toInt()}_${py.toInt()}_${type.hashCode.toUnsigned(32).toRadixString(16)}'
@@ -162,10 +195,14 @@ class SceneNode {
       name: json['name'] as String? ?? 'node',
       x: px,
       y: py,
+      z: pz,
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,
       points: points,
+      fov: fov.clamp(1.0, 179.0),
+      near: near > 0 ? near : defaultNear,
+      far: far > near ? far : defaultFar,
     );
   }
 
@@ -175,11 +212,15 @@ class SceneNode {
     String? name,
     double? x,
     double? y,
+    double? z,
     double? w,
     double? h,
     int? color,
     List<ScenePoint>? points,
     bool clearPoints = false,
+    double? fov,
+    double? near,
+    double? far,
   }) {
     return SceneNode(
       id: id ?? this.id,
@@ -187,10 +228,14 @@ class SceneNode {
       name: name ?? this.name,
       x: x ?? this.x,
       y: y ?? this.y,
+      z: z ?? this.z,
       w: w ?? this.w,
       h: h ?? this.h,
       color: color ?? this.color,
       points: clearPoints ? null : (points ?? this.points),
+      fov: fov ?? this.fov,
+      near: near ?? this.near,
+      far: far ?? this.far,
     );
   }
 }

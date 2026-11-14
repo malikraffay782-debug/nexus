@@ -333,11 +333,18 @@ def _node_label(node: dict) -> str:
     ntype = str(node.get("type") or "sprite")
     x = int(float(node.get("x") or 0))
     y = int(float(node.get("y") or 0))
+    z = float(node.get("z") or 0)
     w = int(float(node.get("w") or 0))
     h = int(float(node.get("h") or 0))
     pts = node.get("points")
     extra = f" poly:{len(pts)}" if isinstance(pts, list) and len(pts) >= 3 else ""
-    return f"{name} [{ntype}] @({x},{y}) {w}x{h}{extra}"
+    zpart = f" z={z:g}" if z else ""
+    if ntype == "camera":
+        fov = float(node.get("fov") or 60)
+        near = float(node.get("near") or 0.1)
+        far = float(node.get("far") or 1000)
+        extra = f" fov={fov:g} near={near:g} far={far:g}"
+    return f"{name} [{ntype}] @({x},{y}){zpart} {w}x{h}{extra}"
 
 
 def draw_scene(scene: dict) -> None:
