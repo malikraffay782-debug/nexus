@@ -309,11 +309,11 @@ if __name__ == "__main__":
 ''';
 
 /// Minimal scene JSON reader + ASCII stage for embedded runtime.
-const String _kSceneDrawPy = r'''
-"""Load Nexus scene JSON and print a simple text stage (no GUI yet)."""
+const String _kSceneDrawPy = r'''"""Load Nexus scene JSON and print a text stage (2D + 3D foundation)."""
 from __future__ import annotations
 
 import json
+import math
 from pathlib import Path
 
 
@@ -347,6 +347,49 @@ def _node_label(node: dict) -> str:
     return f"{name} [{ntype}] @({x},{y}){zpart} {w}x{h}{extra}"
 
 
+def _active_camera(nodes: list) -> dict | None:
+    for n in nodes:
+        if isinstance(n, dict) and str(n.get("type") or "") == "camera":
+            return n
+    return None
+
+
+def _project_xy(
+    x: float,
+    y: float,
+    z: float,
+    cam: dict | None,
+    width: float,
+    height: float,
+) -> tuple[float, float]:
+    """Mild perspective toward camera when present; else identity (ortho 2D).
+
+    Scene x/y are pixel-like (0..width/height). z is depth in the same unit
+    family. Full pinhole focal/depth blows up on these ranges, so we use a
+    FOV-weighted scale that stays readable on the ASCII stage:
+      scale = ref / (ref + depth * fov_k)
+    """
+    if cam is None:
+        return x, y
+    cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
+    cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
+    cz = float(cam.get("z") or 0)
+    fov = float(cam.get("fov") or 60)
+    near = max(float(cam.get("near") or 0.1), 0.01)
+    far = max(float(cam.get("far") or 1000), near + 0.01)
+    # Camera looks along +Z (into scene). Positive depth = in front.
+    depth = z - cz
+    if depth < near or depth > far:
+        return x, y
+    # FOV: wider lens → stronger shrink with depth (clamped for ASCII).
+    fov_k = max(0.35, min(2.5, fov / 60.0))
+    ref = max(width, height) * 0.35
+    scale = ref / (ref + depth * fov_k)
+    sx = cx + (x - cx) * scale
+    sy = cy + (y - cy) * scale
+    return sx, sy
+
+
 def draw_scene(scene: dict) -> None:
     width = int(scene.get("width") or 720)
     height = int(scene.get("height") or 1280)
@@ -355,32 +398,44 @@ def draw_scene(scene: dict) -> None:
     if not isinstance(nodes, list):
         nodes = []
 
-    print(f"Nexus scene: {name}  {width}x{height}")
-    print(f"nodes: {len(nodes)} (paint order = list order, last on top)")
+    cam = _active_camera(nodes)
+    mode = "perspective" if cam else "ortho"
+    print(f"Nexus scene: {name}  {width}x{height}  [{mode}]")
+    if cam:
+        print(f"active camera: {_node_label(cam)}")
+    print(f"nodes: {len(nodes)} (depth sort by z, far→near)")
     if not nodes:
         print("(empty stage)")
         return
 
+    # Paint non-camera nodes sorted by z ascending (far first), cameras last marker only.
+    drawable = [n for n in nodes if isinstance(n, dict) and str(n.get("type") or "") != "camera"]
+    drawable.sort(key=lambda n: float(n.get("z") or 0))
+
     cols, rows = 24, 12
     grid = [["." for _ in range(cols)] for _ in range(rows)]
-    for idx, node in enumerate(nodes):
-        if not isinstance(node, dict):
-            continue
+
+    def to_cell(px: float, py: float) -> tuple[int, int]:
+        c = int(px / width * (cols - 1)) if width > 0 else 0
+        r = int(py / height * (rows - 1)) if height > 0 else 0
+        c = max(0, min(cols - 1, c))
+        r = max(0, min(rows - 1, r))
+        return c, r
+
+    for idx, node in enumerate(drawable):
         ch = str(idx % 10)
+        z = float(node.get("z") or 0)
         pts = node.get("points")
         if isinstance(pts, list) and len(pts) >= 3:
-            # Polygon: mark vertices + edges (not filled AABB).
             coords = []
             for pt in pts:
                 if not isinstance(pt, dict):
                     continue
                 px = float(pt.get("x") or 0)
                 py = float(pt.get("y") or 0)
-                c = int(px / width * (cols - 1)) if width > 0 else 0
-                r = int(py / height * (rows - 1)) if height > 0 else 0
-                c = max(0, min(cols - 1, c))
-                r = max(0, min(rows - 1, r))
-                coords.append((c, r))
+                sx, sy = _project_xy(px, py, z, cam, width, height)
+                coords.append(to_cell(sx, sy))
+                c, r = coords[-1]
                 grid[r][c] = "#"
             for i in range(len(coords)):
                 c0, r0 = coords[i]
@@ -397,17 +452,28 @@ def draw_scene(scene: dict) -> None:
         y = float(node.get("y") or 0)
         w = max(float(node.get("w") or 1), 1.0)
         h = max(float(node.get("h") or 1), 1.0)
-        c0 = int(x / width * (cols - 1)) if width > 0 else 0
-        r0 = int(y / height * (rows - 1)) if height > 0 else 0
-        c1 = int((x + w) / width * (cols - 1)) if width > 0 else c0
-        r1 = int((y + h) / height * (rows - 1)) if height > 0 else r0
-        c0 = max(0, min(cols - 1, c0))
-        c1 = max(0, min(cols - 1, c1))
-        r0 = max(0, min(rows - 1, r0))
-        r1 = max(0, min(rows - 1, r1))
+        # Project four corners of the rect at node z
+        corners = [
+            _project_xy(x, y, z, cam, width, height),
+            _project_xy(x + w, y, z, cam, width, height),
+            _project_xy(x + w, y + h, z, cam, width, height),
+            _project_xy(x, y + h, z, cam, width, height),
+        ]
+        cs = [to_cell(px, py) for px, py in corners]
+        c0 = min(c for c, _ in cs)
+        c1 = max(c for c, _ in cs)
+        r0 = min(r for _, r in cs)
+        r1 = max(r for _, r in cs)
         for r in range(r0, r1 + 1):
             for c in range(c0, c1 + 1):
                 grid[r][c] = ch
+
+    # Mark camera cell with C
+    if cam is not None:
+        cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
+        cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
+        cc, rr = to_cell(cx, cy)
+        grid[rr][cc] = "C"
 
     print("+" + "-" * cols + "+")
     for row in grid:
@@ -416,4 +482,13 @@ def draw_scene(scene: dict) -> None:
     for i, node in enumerate(nodes):
         if isinstance(node, dict):
             print(f"  {i}: {_node_label(node)}")
+
+
+def main() -> None:
+    scene = load_scene("scenes/main.json")
+    draw_scene(scene)
+
+
+if __name__ == "__main__":
+    main()
 ''';

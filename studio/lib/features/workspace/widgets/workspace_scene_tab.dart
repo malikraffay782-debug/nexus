@@ -1674,7 +1674,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
               stepper('H', node.h.round(), () => _nudgeSelected(dh: -8), () => _nudgeSelected(dh: 8)),
             ],
           ),
-          // 3D foundation: Z on all nodes; FOV on cameras
+          // 3D foundation: Z on all nodes; FOV / near / far on cameras
           Row(
             children: [
               stepper(
@@ -1696,6 +1696,41 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 ),
             ],
           ),
+          if (node.isCamera)
+            Row(
+              children: [
+                stepper(
+                  'Near',
+                  node.near < 1
+                      ? (node.near * 10).round()
+                      : node.near.round(),
+                  () => _updateSelectedNode((n) {
+                    final v = n.near <= 1
+                        ? (n.near - 0.1).clamp(0.01, n.far - 0.01)
+                        : (n.near - 1).clamp(0.01, n.far - 0.01);
+                    return n.copyWith(near: v);
+                  }),
+                  () => _updateSelectedNode((n) {
+                    final v = n.near < 1
+                        ? (n.near + 0.1).clamp(0.01, n.far - 0.01)
+                        : (n.near + 1).clamp(0.01, n.far - 0.01);
+                    return n.copyWith(near: v);
+                  }),
+                ),
+                stepper(
+                  'Far',
+                  node.far.round(),
+                  () => _updateSelectedNode((n) {
+                    final v = (n.far - 10).clamp(n.near + 0.01, 100000.0);
+                    return n.copyWith(far: v);
+                  }),
+                  () => _updateSelectedNode((n) {
+                    final v = (n.far + 10).clamp(n.near + 0.01, 100000.0);
+                    return n.copyWith(far: v);
+                  }),
+                ),
+              ],
+            ),
           // Color
           SizedBox(
             height: 26,
