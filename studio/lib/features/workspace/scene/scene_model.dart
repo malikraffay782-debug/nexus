@@ -30,6 +30,38 @@ class ScenePalette {
       type == SceneNodeTypes.camera ? colors.last : colors.first;
 }
 
+/// Built-in mesh ids that map to samples/cpp GameAssets.hpp makers.
+/// Empty / unknown = no mesh (rect/poly only).
+class SceneMeshes {
+  static const none = '';
+  static const sword = 'sword';
+  static const crate = 'crate';
+  static const chest = 'chest';
+  static const metalcase = 'metalcase';
+
+  static const List<String> all = [none, sword, crate, chest, metalcase];
+
+  static String normalize(String? raw) {
+    final t = (raw ?? '').trim().toLowerCase();
+    return all.contains(t) ? t : none;
+  }
+
+  static String label(String id) {
+    switch (normalize(id)) {
+      case sword:
+        return 'Sword';
+      case crate:
+        return 'Crate';
+      case chest:
+        return 'Chest';
+      case metalcase:
+        return 'Metal case';
+      default:
+        return 'None';
+    }
+  }
+}
+
 /// One vertex in scene space (used when a node is in points/edit mode).
 class ScenePoint {
   const ScenePoint(this.x, this.y);
@@ -72,6 +104,7 @@ class SceneNode {
     this.h = 64,
     this.color = 0xFF7C4DFF,
     this.points,
+    this.mesh = '',
     this.fov = defaultFov,
     this.near = defaultNear,
     this.far = defaultFar,
@@ -95,6 +128,8 @@ class SceneNode {
   final int color;
   /// Optional polygon vertices in scene space. Null = rect node.
   final List<ScenePoint>? points;
+  /// Optional GameAssets mesh id (sword/crate/chest/metalcase). Empty = none.
+  final String mesh;
   /// Vertical field of view in degrees (camera nodes).
   final double fov;
   /// Near clip plane (camera nodes).
@@ -155,6 +190,8 @@ class SceneNode {
     if (points != null && points!.isNotEmpty) {
       map['points'] = points!.map((p) => p.toJson()).toList();
     }
+    final meshId = SceneMeshes.normalize(mesh);
+    if (meshId.isNotEmpty) map['mesh'] = meshId;
     return map;
   }
 
@@ -187,6 +224,7 @@ class SceneNode {
     final fov = (json['fov'] as num?)?.toDouble() ?? defaultFov;
     final near = (json['near'] as num?)?.toDouble() ?? defaultNear;
     final far = (json['far'] as num?)?.toDouble() ?? defaultFar;
+    final mesh = SceneMeshes.normalize(json['mesh'] as String?);
     return SceneNode(
       id: rawId.isEmpty
           ? 'node_${px.toInt()}_${py.toInt()}_${type.hashCode.toUnsigned(32).toRadixString(16)}'
@@ -200,6 +238,7 @@ class SceneNode {
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,
       points: points,
+      mesh: mesh,
       fov: fov.clamp(1.0, 179.0),
       near: near > 0 ? near : defaultNear,
       far: far > near ? far : defaultFar,
@@ -218,6 +257,7 @@ class SceneNode {
     int? color,
     List<ScenePoint>? points,
     bool clearPoints = false,
+    String? mesh,
     double? fov,
     double? near,
     double? far,
@@ -233,6 +273,7 @@ class SceneNode {
       h: h ?? this.h,
       color: color ?? this.color,
       points: clearPoints ? null : (points ?? this.points),
+      mesh: mesh ?? this.mesh,
       fov: fov ?? this.fov,
       near: near ?? this.near,
       far: far ?? this.far,

@@ -338,6 +338,9 @@ def _node_label(node: dict) -> str:
     h = int(float(node.get("h") or 0))
     pts = node.get("points")
     extra = f" poly:{len(pts)}" if isinstance(pts, list) and len(pts) >= 3 else ""
+    mesh = str(node.get("mesh") or "").strip()
+    if mesh and ntype != "camera":
+        extra = f"{extra} mesh={mesh}"
     zpart = f" z={z:g}" if z else ""
     if ntype == "camera":
         fov = float(node.get("fov") or 60)

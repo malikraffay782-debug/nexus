@@ -149,12 +149,75 @@ class SceneStagePainter extends CustomPainter {
       ..strokeWidth = 1.5;
     if (isCamera) {
       canvas.drawCircle(Offset(cx, cy), 6, glyph);
+      _paintCameraFrustum(canvas, n, scaleX, scaleY, selected);
     } else {
       canvas.drawRect(
         Rect.fromCenter(center: Offset(cx, cy), width: 10, height: 10),
         glyph,
       );
+      // Mesh badge (small triangle) when a GameAssets mesh is linked.
+      if (SceneMeshes.normalize(n.mesh).isNotEmpty) {
+        final badge = Path()
+          ..moveTo(cx, cy - 8)
+          ..lineTo(cx + 7, cy + 5)
+          ..lineTo(cx - 7, cy + 5)
+          ..close();
+        canvas.drawPath(
+          badge,
+          Paint()..color = Colors.white.withValues(alpha: 0.85),
+        );
+      }
     }
+  }
+
+  /// 2D FOV wedge in front of the camera (down the +Y stage axis).
+  /// Length scales with far (clamped); opening angle from [SceneNode.fov].
+  void _paintCameraFrustum(
+    Canvas canvas,
+    SceneNode n,
+    double scaleX,
+    double scaleY,
+    bool selected,
+  ) {
+    final cx = (n.x + n.w * 0.5) * scaleX;
+    final cy = (n.y + n.h * 0.5) * scaleY;
+    // Map far into a readable on-stage length (scene units → px via scaleY).
+    final depth = n.far.clamp(80.0, 480.0);
+    final halfRad = (n.fov.clamp(1.0, 179.0) * math.pi / 180.0) * 0.5;
+    final halfW = depth * math.tan(halfRad);
+    final tipY = cy + n.h * scaleY * 0.15;
+    final left = Offset(cx - halfW * scaleX, tipY + depth * scaleY);
+    final right = Offset(cx + halfW * scaleX, tipY + depth * scaleY);
+    final apex = Offset(cx, tipY);
+    final path = Path()
+      ..moveTo(apex.dx, apex.dy)
+      ..lineTo(left.dx, left.dy)
+      ..lineTo(right.dx, right.dy)
+      ..close();
+    final fillA = selected ? 0.14 : 0.07;
+    final strokeA = selected ? 0.85 : 0.45;
+    canvas.drawPath(
+      path,
+      Paint()..color = const Color(0xFF80D8FF).withValues(alpha: fillA),
+    );
+    canvas.drawPath(
+      path,
+      Paint()
+        ..color = const Color(0xFF80D8FF).withValues(alpha: strokeA)
+        ..style = PaintingStyle.stroke
+        ..strokeWidth = selected ? 1.8 : 1.1,
+    );
+    // Near plane tick
+    final nearT = (n.near.clamp(0.01, depth) / depth).clamp(0.05, 0.95);
+    final ny = tipY + depth * scaleY * nearT;
+    final nw = halfW * scaleX * nearT;
+    canvas.drawLine(
+      Offset(cx - nw, ny),
+      Offset(cx + nw, ny),
+      Paint()
+        ..color = const Color(0xFF80D8FF).withValues(alpha: strokeA * 0.8)
+        ..strokeWidth = 1,
+    );
   }
 
   @override

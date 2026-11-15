@@ -1759,6 +1759,34 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
               },
             ),
           ),
+          // Mesh link (sprites → GameAssets.hpp makers)
+          if (node.type != SceneNodeTypes.camera) ...[
+            const SizedBox(height: 2),
+            SizedBox(
+              height: 28,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                children: [
+                  for (final id in SceneMeshes.all)
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: ChoiceChip(
+                        label: Text(
+                          SceneMeshes.label(id),
+                          style: const TextStyle(fontSize: 10),
+                        ),
+                        selected: SceneMeshes.normalize(node.mesh) == id,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onSelected: (_) => _updateSelectedNode(
+                          (n) => n.copyWith(mesh: id),
+                        ),
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          ],
         ],
       ),
     );
@@ -1793,7 +1821,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
           title: Text(n.name, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13)),
           subtitle: Text(
             '${n.type} · ${n.w.toInt()}×${n.h.toInt()}'
-            '${n.hasPoints ? ' · poly' : ''}',
+            '${n.hasPoints ? ' · poly' : ''}'
+            '${SceneMeshes.normalize(n.mesh).isNotEmpty ? ' · ${n.mesh}' : ''}',
             style: TextStyle(fontSize: 11, color: scheme.outline),
           ),
           leading: Container(
