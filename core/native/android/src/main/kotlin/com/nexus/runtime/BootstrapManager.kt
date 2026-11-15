@@ -35,6 +35,22 @@ class BootstrapManager(private val context: Context) {
         private const val VERSION_FILE = "version"
         const val CURRENT_BOOTSTRAP_VERSION = "2026.11.01-r1"
 
+        /**
+         * Termux packages hard-code PREFIX=/data/data/com.termux/files/usr.
+         * Under proot -r [prefixDir] we create that path as a relative symlink
+         * back to the rootfs root (not host "/").
+         *
+         * Depth = number of path segments under prefix → that many "../".
+         * Link parent: {prefix}/data/data/com.termux/files → 4 segments.
+         */
+        private val TERMUX_FILES_SEGMENTS = listOf("data", "data", "com.termux", "files")
+        private val TERMUX_USR_REL: String =
+            TERMUX_FILES_SEGMENTS.joinToString("/") // data/data/com.termux/files
+        private val TERMUX_PREFIX_LINK_TARGET: String =
+            "../".repeat(TERMUX_FILES_SEGMENTS.size) // ../../../../
+        private val TERMUX_HOME_LINK_TARGET: String =
+            TERMUX_PREFIX_LINK_TARGET + "home" // ../../../../home
+
         private val bootstrapLock = ReentrantLock()
     }
 
@@ -83,34 +99,24 @@ class BootstrapManager(private val context: Context) {
     }
 
     /**
-     * Cheap filesystem probe for python after pkg install.
-     * Does NOT spawn proot — safe to call on every Runtime tab open.
-     */
-    /**
      * Termux packages expect PREFIX at /data/data/com.termux/files/usr.
-     * Under proot -r [prefixDir], create that path as a symlink to the rootfs root
-     * so $PREFIX/bin resolves to /bin without a recursive -b bind (which SIGSEGVs).
-     */
-    /**
-     * Termux packages expect PREFIX at /data/data/com.termux/files/usr.
-     * Under proot -r [prefixDir], create that path as a symlink to the rootfs root.
-     * @return false if the critical usr symlink could not be created.
+     * Under proot -r [prefixDir], create that path as a relative symlink to the
+     * rootfs root so $PREFIX/bin → /bin without a recursive -b bind (SIGSEGV).
+     *
+     * @return false if the critical usr symlink could not be created or verified.
      */
     fun ensureTermuxPathLayout(): Boolean {
         val root = prefixDir.canonicalFile
         if (!root.isDirectory) return false
-        val filesDir = File(root, "data/data/com.termux/files")
+        val filesDir = File(root, TERMUX_USR_REL)
         if (!filesDir.exists() && !filesDir.mkdirs()) {
-            RuntimeLogger.w("Could not create Termux files dir")
+            RuntimeLogger.w("Could not create Termux files dir under prefix ($TERMUX_USR_REL)")
             return false
         }
-        // Symlink target is relative to the *parent* of the link (POSIX).
         // Link:  {prefix}/data/data/com.termux/files/usr
-        // Parent: {prefix}/data/data/com.termux/files
-        // ../../../../ from parent => {prefix}
-        // Absolute "/" is wrong under proot (host root, not rootfs).
+        // Target relative to link parent → prefix root (not host "/").
         val usrLink = File(filesDir, "usr")
-        val expectedTarget = "../../../../"
+        val expectedTarget = TERMUX_PREFIX_LINK_TARGET
         try {
             if (usrLink.exists() || Files.isSymbolicLink(usrLink.toPath())) {
                 val current = try {
@@ -119,7 +125,7 @@ class BootstrapManager(private val context: Context) {
                     null
                 }
                 if (current != expectedTarget) {
-                    // Wrong target (old builds used "/" or 5-level relative)
+                    // Wrong target (old builds used "/" or wrong ../ depth)
                     try { usrLink.delete() } catch (_: Throwable) {}
                     try { Files.deleteIfExists(usrLink.toPath()) } catch (_: Throwable) {}
                 }
@@ -128,10 +134,11 @@ class BootstrapManager(private val context: Context) {
                 Os.symlink(expectedTarget, usrLink.absolutePath)
             }
         } catch (e: Throwable) {
-            RuntimeLogger.w("Could not create Termux PREFIX symlink: ${e.message}")
+            RuntimeLogger.w(
+                "Termux PREFIX symlink failed (expected target=$expectedTarget): ${e.message}"
+            )
             return false
         }
-        // Verify host-side: resolving the symlink must land on prefix/lib
         val resolvedUsr = try {
             usrLink.canonicalFile
         } catch (_: Throwable) {
@@ -139,20 +146,20 @@ class BootstrapManager(private val context: Context) {
         }
         if (resolvedUsr == null || resolvedUsr != root) {
             RuntimeLogger.w(
-                "PREFIX symlink resolves to ${resolvedUsr?.absolutePath} expected ${root.absolutePath}"
+                "PREFIX symlink resolves to ${resolvedUsr?.absolutePath} expected ${root.absolutePath} " +
+                    "(link target was $expectedTarget)"
             )
             return false
         }
         val viaLib = File(resolvedUsr, "lib")
         if (!viaLib.isDirectory) {
-            RuntimeLogger.w("PREFIX/lib missing after symlink resolve")
+            RuntimeLogger.w("PREFIX/lib missing after symlink resolve — re-Initialize bootstrap")
             return false
         }
         val homeLink = File(filesDir, "home")
         if (!homeLink.exists() && !Files.isSymbolicLink(homeLink.toPath())) {
             try {
-                // parent is files/; ../../../../home => {prefix}/home
-                Os.symlink("../../../../home", homeLink.absolutePath)
+                Os.symlink(TERMUX_HOME_LINK_TARGET, homeLink.absolutePath)
             } catch (_: Throwable) {
                 // home bind is also applied by ProotExecutor; non-fatal
             }

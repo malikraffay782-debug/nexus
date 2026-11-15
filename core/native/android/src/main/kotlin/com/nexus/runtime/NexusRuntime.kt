@@ -40,6 +40,10 @@ class NexusRuntime private constructor(context: Context) {
     )
 
     companion object {
+        /** Must match Flutter embedding / path_provider documents dir name on Android. */
+        private const val FLUTTER_APP_DIR = "flutter"
+        private const val PROJECTS_SUBDIR = "projects"
+
         @Volatile
         private var instance: NexusRuntime? = null
 
@@ -112,10 +116,7 @@ class NexusRuntime private constructor(context: Context) {
             }
             runMutex.lock()
             try {
-                // CONTRACT: must match Flutter path_provider getApplicationDocumentsDirectory()
-                // which is context.getDir("flutter", MODE_PRIVATE) on Android.
-                val projectsRoot = File(appContext.getDir("flutter", android.content.Context.MODE_PRIVATE), "projects")
-                val mount = ProjectMount.resolve(projectsRoot, projectId)
+                val mount = ProjectMount.resolve(projectsRootDir(), projectId)
                 ProjectMount.ensureGuestMountPoint(bootstrapManager.prefixDir)
                 executor.runGuest(
                     guestArgv = mount.guestCommand(),
@@ -180,12 +181,25 @@ class NexusRuntime private constructor(context: Context) {
      * Stop the currently running proot project/command if any.
      * Does not take runMutex — only signals the process.
      */
-    /** Same directory Flutter path_provider documents + /projects uses on Android. */
-    fun projectsRootPath(): String {
-        val root = File(appContext.getDir("flutter", android.content.Context.MODE_PRIVATE), "projects")
+    /**
+     * Single source of truth for the host projects directory.
+     *
+     * CONTRACT (Android): path_provider getApplicationDocumentsDirectory() is
+     * context.getDir(FLUTTER_APP_DIR, MODE_PRIVATE). Projects live under
+     * PROJECTS_SUBDIR. Dart must prefer MethodChannel getProjectsRoot so Run
+     * and file UI share one root.
+     */
+    private fun projectsRootDir(): File {
+        val root = File(
+            appContext.getDir(FLUTTER_APP_DIR, Context.MODE_PRIVATE),
+            PROJECTS_SUBDIR,
+        )
         if (!root.exists()) root.mkdirs()
-        return root.absolutePath
+        return root
     }
+
+    /** Absolute path of [projectsRootDir] — exposed to Dart via getProjectsRoot. */
+    fun projectsRootPath(): String = projectsRootDir().absolutePath
 
     /**
      * Recovery: stop active run, delete prefix + version marker, clear ready cache.
