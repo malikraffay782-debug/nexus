@@ -225,10 +225,12 @@ class SceneNode {
     final near = (json['near'] as num?)?.toDouble() ?? defaultNear;
     final far = (json['far'] as num?)?.toDouble() ?? defaultFar;
     final mesh = SceneMeshes.normalize(json['mesh'] as String?);
+    // Empty id → unique per decode (position alone collides for stacked nodes).
+    final id = rawId.isEmpty
+        ? 'n_${DateTime.now().microsecondsSinceEpoch}_${_nextFallbackId()}'
+        : rawId;
     return SceneNode(
-      id: rawId.isEmpty
-          ? 'node_${px.toInt()}_${py.toInt()}_${type.hashCode.toUnsigned(32).toRadixString(16)}'
-          : rawId,
+      id: id,
       type: type,
       name: json['name'] as String? ?? 'node',
       x: px,
@@ -243,6 +245,13 @@ class SceneNode {
       near: near > 0 ? near : defaultNear,
       far: far > near ? far : defaultFar,
     );
+  }
+
+  static int _fallbackIdSeq = 0;
+
+  static int _nextFallbackId() {
+    _fallbackIdSeq = (_fallbackIdSeq + 1) & 0x7fffffff;
+    return _fallbackIdSeq;
   }
 
   SceneNode copyWith({
@@ -318,13 +327,27 @@ class SceneDoc {
         }
       }
     }
+    // Force unique ids if a hand-edited JSON reused the same id twice.
+    final seen = <String>{};
+    final unique = <SceneNode>[];
+    for (final n in nodes) {
+      if (seen.add(n.id)) {
+        unique.add(n);
+      } else {
+        unique.add(
+          n.copyWith(
+            id: 'n_${DateTime.now().microsecondsSinceEpoch}_${SceneNode._nextFallbackId()}',
+          ),
+        );
+      }
+    }
     return SceneDoc(
       version: (json['version'] as num?)?.toInt() ?? 1,
       name: json['name'] as String? ?? 'untitled',
       width: (json['width'] as num?)?.toInt() ?? 720,
       height: (json['height'] as num?)?.toInt() ?? 1280,
       showGrid: json['showGrid'] as bool? ?? true,
-      nodes: nodes,
+      nodes: unique,
     );
   }
 

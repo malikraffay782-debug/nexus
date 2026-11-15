@@ -134,11 +134,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       final discard = await _confirmDiscard();
       if (!discard || !mounted) return;
     }
+    // Stop preview before swapping doc — same as _reload.
+    _stopPlayLoop();
     setState(() {
       _selected = name;
       _error = null;
       _loading = true;
       _selectedNodeId = null;
+      _editPointIndex = null;
     });
     try {
       final doc = await _service.load(name);
@@ -184,31 +187,36 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       if (!discard || !mounted) return;
     }
     final controller = TextEditingController();
-    final name = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('New scene'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(
-            labelText: 'Name',
-            hintText: 'main',
+    String? name;
+    try {
+      name = await showDialog<String>(
+        context: context,
+        builder: (ctx) => AlertDialog(
+          title: const Text('New scene'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'Name',
+              hintText: 'main',
+            ),
+            onSubmitted: (v) => Navigator.pop(ctx, v),
           ),
-          onSubmitted: (v) => Navigator.pop(ctx, v),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Cancel'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, controller.text),
+              child: const Text('Create'),
+            ),
+          ],
         ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Cancel'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text),
-            child: const Text('Create'),
-          ),
-        ],
-      ),
-    );
+      );
+    } finally {
+      controller.dispose();
+    }
     if (name == null || name.trim().isEmpty || !mounted) return;
     try {
       final fileName = await _service.create(name);
