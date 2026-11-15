@@ -298,11 +298,12 @@ from pathlib import Path
 # Ensure src/ is importable when run as /home/project/src/main.py
 sys.path.insert(0, str(Path(__file__).resolve().parent))
 
-from scene_draw import load_scene, draw_scene
+from scene_draw import load_scene, draw_scene, export_mesh_stub
 
 def main():
     scene = load_scene("scenes/main.json")
     draw_scene(scene)
+    export_mesh_stub(scene)
 
 if __name__ == "__main__":
     main()
@@ -487,9 +488,76 @@ def draw_scene(scene: dict) -> None:
             print(f"  {i}: {_node_label(node)}")
 
 
+# GameAssets.hpp makers (samples/cpp) — runtime export stub only.
+_MESH_MAKERS = {
+    "sword": "ga::makeSword()",
+    "crate": "ga::makeWoodenCrate()",
+    "chest": "ga::makeTreasureChest()",
+    "metalcase": "ga::makeMetalCase()",
+}
+
+
+def _collect_mesh_ids(nodes: list) -> list[str]:
+    seen: list[str] = []
+    for n in nodes:
+        if not isinstance(n, dict):
+            continue
+        if str(n.get("type") or "") == "camera":
+            continue
+        mid = str(n.get("mesh") or "").strip().lower()
+        if mid and mid in _MESH_MAKERS and mid not in seen:
+            seen.append(mid)
+    return seen
+
+
+def export_mesh_stub(scene: dict, rel_dir: str = "assets/meshes") -> None:
+    """Write a manifest of linked mesh ids for later C++ / runtime sample use.
+
+    Does not compile or copy geometry — only records which GameAssets makers
+    the scene needs so a future pack step can pull samples/cpp.
+    """
+    nodes = scene.get("nodes") or []
+    if not isinstance(nodes, list):
+        nodes = []
+    ids = _collect_mesh_ids(nodes)
+    print("--- mesh export stub ---")
+    if not ids:
+        print("(no mesh ids linked on sprites)")
+        return
+    out_dir = Path(rel_dir)
+    try:
+        out_dir.mkdir(parents=True, exist_ok=True)
+    except OSError as e:
+        print(f"mesh stub: could not create {out_dir}: {e}")
+        return
+    entries = []
+    for mid in ids:
+        maker = _MESH_MAKERS[mid]
+        entries.append({
+            "id": mid,
+            "maker": maker,
+            "header": "samples/cpp/GameAssets.hpp",
+            "status": "stub",
+        })
+        print(f"  {mid} -> {maker}  [stub]")
+    manifest = {
+        "version": 1,
+        "source": "scenes/main.json",
+        "meshes": entries,
+        "note": "Stub only — geometry not exported. Link C++17 sample later.",
+    }
+    path = out_dir / "manifest.json"
+    try:
+        path.write_text(json.dumps(manifest, indent=2) + "\n", encoding="utf-8")
+        print(f"wrote {path}")
+    except OSError as e:
+        print(f"mesh stub: write failed: {e}")
+
+
 def main() -> None:
     scene = load_scene("scenes/main.json")
     draw_scene(scene)
+    export_mesh_stub(scene)
 
 
 if __name__ == "__main__":
