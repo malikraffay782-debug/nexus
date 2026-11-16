@@ -50,9 +50,20 @@ class SceneStagePainter extends CustomPainter {
       _paintGrid(canvas, size, scaleX, scaleY);
     }
 
-    // Paint order = list order (last on top).
-    for (final n in doc.nodes) {
-      _paintNode(canvas, n, scaleX, scaleY);
+    // Depth order: non-cameras far→near by z; cameras last (frustum on top).
+    // List-order up/down still owns the model; this only affects paint.
+    final indexed = <(int, SceneNode)>[
+      for (var i = 0; i < doc.nodes.length; i++) (i, doc.nodes[i]),
+    ]..sort((a, b) {
+        final ac = a.$2.isCamera ? 1 : 0;
+        final bc = b.$2.isCamera ? 1 : 0;
+        if (ac != bc) return ac - bc;
+        final cz = a.$2.z.compareTo(b.$2.z);
+        if (cz != 0) return cz;
+        return a.$1.compareTo(b.$1); // stable: original list order
+      });
+    for (final e in indexed) {
+      _paintNode(canvas, e.$2, scaleX, scaleY);
     }
   }
 

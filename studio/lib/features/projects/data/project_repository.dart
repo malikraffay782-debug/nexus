@@ -358,6 +358,27 @@ def _active_camera(nodes: list) -> dict | None:
     return None
 
 
+def _cam_params(cam: dict) -> tuple[float, float, float, float, float, float]:
+    """Unpack camera node → (cx, cy, cz, fov, near, far)."""
+    cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
+    cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
+    cz = float(cam.get("z") or 0)
+    fov = float(cam.get("fov") or 60)
+    near = max(float(cam.get("near") or 0.1), 0.01)
+    far = max(float(cam.get("far") or 1000), near + 0.01)
+    return cx, cy, cz, fov, near, far
+
+
+def _camera_space_depth(z: float, cz: float) -> float:
+    """(1) Camera space: eye at cz, look +Z. Positive depth = in front."""
+    return z - cz
+
+
+def _in_depth_frustum(depth: float, near: float, far: float) -> bool:
+    """(3) Depth-slab cull. Full 6-plane FOV cone waits on a real clip matrix."""
+    return near <= depth <= far
+
+
 def _project_xy(
     x: float,
     y: float,
@@ -365,33 +386,28 @@ def _project_xy(
     cam: dict | None,
     width: float,
     height: float,
-) -> tuple[float, float]:
-    """Mild perspective toward camera when present; else identity (ortho 2D).
+) -> tuple[float, float, bool]:
+    """(2) Soft clip-space scale toward camera center.
 
-    Scene x/y are pixel-like (0..width/height). z is depth in the same unit
-    family. Full pinhole focal/depth blows up on these ranges, so we use a
-    FOV-weighted scale that stays readable on the ASCII stage:
-      scale = ref / (ref + depth * fov_k)
+    Full path later: world → camera space → projection matrix (FOV, aspect,
+    near, far) → NDC / clip volume. ASCII stage uses a readable FOV-weighted
+    scale instead of a pinhole that blows up on pixel-like ranges.
+
+    Returns (sx, sy, visible). visible=False ⇒ culled by depth frustum.
     """
     if cam is None:
-        return x, y
-    cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
-    cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
-    cz = float(cam.get("z") or 0)
-    fov = float(cam.get("fov") or 60)
-    near = max(float(cam.get("near") or 0.1), 0.01)
-    far = max(float(cam.get("far") or 1000), near + 0.01)
-    # Camera looks along +Z (into scene). Positive depth = in front.
-    depth = z - cz
-    if depth < near or depth > far:
-        return x, y
-    # FOV: wider lens → stronger shrink with depth (clamped for ASCII).
+        return x, y, True
+    cx, cy, cz, fov, near, far = _cam_params(cam)
+    depth = _camera_space_depth(z, cz)
+    if not _in_depth_frustum(depth, near, far):
+        return x, y, False
+    # Wider FOV → stronger shrink with depth (clamped for ASCII readability).
     fov_k = max(0.35, min(2.5, fov / 60.0))
     ref = max(width, height) * 0.35
     scale = ref / (ref + depth * fov_k)
     sx = cx + (x - cx) * scale
     sy = cy + (y - cy) * scale
-    return sx, sy
+    return sx, sy, True
 
 
 def draw_scene(scene: dict) -> None:
@@ -407,17 +423,20 @@ def draw_scene(scene: dict) -> None:
     print(f"Nexus scene: {name}  {width}x{height}  [{mode}]")
     if cam:
         print(f"active camera: {_node_label(cam)}")
+        _cx, _cy, cz, _fov, near, far = _cam_params(cam)
+        print(f"camera space: look +Z  eye_z={cz:g}  near={near:g}  far={far:g}")
     print(f"nodes: {len(nodes)} (depth sort by z, far→near)")
     if not nodes:
         print("(empty stage)")
         return
 
-    # Paint non-camera nodes sorted by z ascending (far first), cameras last marker only.
+    # Non-cameras sorted far→near; cameras drawn as marker only.
     drawable = [n for n in nodes if isinstance(n, dict) and str(n.get("type") or "") != "camera"]
     drawable.sort(key=lambda n: float(n.get("z") or 0))
 
     cols, rows = 24, 12
     grid = [["." for _ in range(cols)] for _ in range(rows)]
+    culled = 0
 
     def to_cell(px: float, py: float) -> tuple[int, int]:
         c = int(px / width * (cols - 1)) if width > 0 else 0
@@ -429,6 +448,13 @@ def draw_scene(scene: dict) -> None:
     for idx, node in enumerate(drawable):
         ch = str(idx % 10)
         z = float(node.get("z") or 0)
+        # Depth cull once per node (same z for all corners / verts).
+        if cam is not None:
+            _cx, _cy, cz, _fov, near, far = _cam_params(cam)
+            if not _in_depth_frustum(_camera_space_depth(z, cz), near, far):
+                culled += 1
+                print(f"  culled: {_node_label(node)}")
+                continue
         pts = node.get("points")
         if isinstance(pts, list) and len(pts) >= 3:
             coords = []
@@ -437,7 +463,7 @@ def draw_scene(scene: dict) -> None:
                     continue
                 px = float(pt.get("x") or 0)
                 py = float(pt.get("y") or 0)
-                sx, sy = _project_xy(px, py, z, cam, width, height)
+                sx, sy, _vis = _project_xy(px, py, z, cam, width, height)
                 coords.append(to_cell(sx, sy))
                 c, r = coords[-1]
                 grid[r][c] = "#"
@@ -456,12 +482,11 @@ def draw_scene(scene: dict) -> None:
         y = float(node.get("y") or 0)
         w = max(float(node.get("w") or 1), 1.0)
         h = max(float(node.get("h") or 1), 1.0)
-        # Project four corners of the rect at node z
         corners = [
-            _project_xy(x, y, z, cam, width, height),
-            _project_xy(x + w, y, z, cam, width, height),
-            _project_xy(x + w, y + h, z, cam, width, height),
-            _project_xy(x, y + h, z, cam, width, height),
+            _project_xy(x, y, z, cam, width, height)[:2],
+            _project_xy(x + w, y, z, cam, width, height)[:2],
+            _project_xy(x + w, y + h, z, cam, width, height)[:2],
+            _project_xy(x, y + h, z, cam, width, height)[:2],
         ]
         cs = [to_cell(px, py) for px, py in corners]
         c0 = min(c for c, _ in cs)
@@ -474,8 +499,7 @@ def draw_scene(scene: dict) -> None:
 
     # Mark camera cell with C
     if cam is not None:
-        cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
-        cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
+        cx, cy, _cz, _fov, _near, _far = _cam_params(cam)
         cc, rr = to_cell(cx, cy)
         grid[rr][cc] = "C"
 
@@ -483,6 +507,8 @@ def draw_scene(scene: dict) -> None:
     for row in grid:
         print("|" + "".join(row) + "|")
     print("+" + "-" * cols + "+")
+    if culled:
+        print(f"culled: {culled} (outside camera near/far)")
     for i, node in enumerate(nodes):
         if isinstance(node, dict):
             print(f"  {i}: {_node_label(node)}")
