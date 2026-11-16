@@ -223,7 +223,10 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
                     if (t.label == 'Code')
                       WorkspaceCodeTab(controller: files)
                     else if (t.label == 'Scene')
-                      WorkspaceSceneTab(projectPath: project.path)
+                      WorkspaceSceneTab(
+                        key: ValueKey('scene-${project.path}'),
+                        projectPath: project.path,
+                      )
                     else
                       _Placeholder(icon: t.icon, title: t.label, hint: t.hint),
                 ],

@@ -50,6 +50,22 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   }
 
   @override
+  void didUpdateWidget(covariant WorkspaceSceneTab oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.projectPath != widget.projectPath) {
+      // Project switched without disposing this State — rebind service + reload.
+      _stopPlayLoop();
+      _service = SceneService(widget.projectPath);
+      _selected = null;
+      _doc = null;
+      _selectedNodeId = null;
+      _editPointIndex = null;
+      _dirty = false;
+      _reload();
+    }
+  }
+
+  @override
   void dispose() {
     _nudgeFrameScheduled = false;
     _pendingNudgeDx = 0;
@@ -794,7 +810,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       var ny = y ?? n.y;
       var nw = w;
       var nh = h;
-      // Min size.
+      // Min size (origin shift for non-BR corners).
       if (nw < 24) {
         if (x != null) nx = n.x + n.w - 24;
         nw = 24;
@@ -814,8 +830,13 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       }
       if (nx + nw > doc.width) nw = doc.width - nx;
       if (ny + nh > doc.height) nh = doc.height - ny;
-      nw = nw.clamp(24.0, 512.0);
-      nh = nh.clamp(24.0, 512.0);
+      // Prefer >=24 only when stage has room; never overflow after min clamp.
+      final maxW = (doc.width - nx).clamp(0.0, 512.0);
+      final maxH = (doc.height - ny).clamp(0.0, 512.0);
+      final minW = maxW >= 24 ? 24.0 : maxW;
+      final minH = maxH >= 24 ? 24.0 : maxH;
+      nw = nw.clamp(minW, maxW);
+      nh = nh.clamp(minH, maxH);
       return n.copyWith(x: nx, y: ny, w: nw, h: nh);
     }).toList();
     setState(() {
