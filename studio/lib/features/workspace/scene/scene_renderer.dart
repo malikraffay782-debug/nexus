@@ -3,15 +3,17 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'scene_model.dart';
+import 'scene_project.dart';
 
 /// Graphical 2D stage painter — sprites / cameras / polys.
 ///
 /// Edit mode (`playTime <= 0`): ortho paint so drag handles match model coords.
-/// Play preview (`playTime > 0`): non-destructive bob + camera depth projection
-/// (same look-+Z convention as `scene_draw.py`). Does not mutate [doc].
+/// Play preview (`playTime > 0`): non-destructive bob + camera projection
+/// via [SceneProject] (default [SceneProjectMode.soft] for low-end).
+/// Does not mutate [doc].
 ///
 /// Low-end notes:
-/// - Camera frame constants resolved once per [paint].
+/// - [SceneCamFrame] resolved once per [paint].
 /// - No per-frame record/tuple sort list; plain [List.of] + sort.
 /// - Grid skipped while playing (saves many drawLine calls on weak GPUs).
 /// - Depth scale / frustum tested once per node, not per corner.
@@ -22,6 +24,7 @@ class SceneStagePainter extends CustomPainter {
     this.editPointIndex,
     this.showGrid = true,
     this.playTime = 0.0,
+    this.projectMode = SceneProjectMode.soft,
   });
 
   final SceneDoc doc;
@@ -29,34 +32,11 @@ class SceneStagePainter extends CustomPainter {
   final int? editPointIndex;
   final bool showGrid;
   final double playTime;
+  /// Soft = default low-end; ndc = Unity-style space (opt-in).
+  final SceneProjectMode projectMode;
 
-  // --- Play-frame camera cache (filled at start of paint) ---
-  // Avoids re-reading cam fields and re-clamping near/far on every node.
-  bool _hasCam = false;
-  double _camCx = 0;
-  double _camCy = 0;
-  double _camCz = 0;
-  double _camNear = SceneNode.defaultNear;
-  double _camFar = SceneNode.defaultFar;
-  double _camFovK = 1.0;
-  double _camRef = 1.0;
-
-  void _resolveCamera() {
-    _hasCam = false;
-    if (playTime <= 0) return;
-    for (final n in doc.nodes) {
-      if (!n.isCamera) continue;
-      _camCx = n.x + n.w * 0.5;
-      _camCy = n.y + n.h * 0.5;
-      _camCz = n.z;
-      _camNear = n.near > 0 ? n.near : SceneNode.defaultNear;
-      _camFar = n.far > _camNear ? n.far : SceneNode.defaultFar;
-      _camFovK = (n.fov / 60.0).clamp(0.35, 2.5);
-      _camRef = math.max(doc.width.toDouble(), doc.height.toDouble()) * 0.35;
-      _hasCam = true;
-      return; // first camera in list order (matches run path)
-    }
-  }
+  /// Play-frame camera (null in edit mode or when no camera node).
+  SceneCamFrame? _cam;
 
   /// Preview bob in scene units. Cameras stay fixed.
   Offset _previewOffset(SceneNode n) {
@@ -65,24 +45,13 @@ class SceneStagePainter extends CustomPainter {
     return Offset(math.cos(phase * 0.7) * 4.0, math.sin(phase) * 10.0);
   }
 
-  /// Soft perspective toward active camera (play only).
-  ///
-  /// Returns `(x, y, uniformScale, inFrustum)`.
-  /// Ortho / no cam → identity scale and inFrustum=true.
-  (double, double, double, bool) _project(double x, double y, double z) {
-    if (!_hasCam) return (x, y, 1.0, true);
-    final depth = z - _camCz;
-    if (depth < _camNear || depth > _camFar) {
-      return (x, y, 1.0, false);
+  /// Project stage point; identity when no cam / edit mode.
+  SceneProjected _project(double x, double y, double z) {
+    final cam = _cam;
+    if (cam == null) {
+      return SceneProjected(x: x, y: y, scale: 1, visible: true);
     }
-    // scale → 1 at depth≈0, shrinks with depth (readable on pixel-like stages)
-    final scale = _camRef / (_camRef + math.max(depth, _camNear) * _camFovK);
-    return (
-      _camCx + (x - _camCx) * scale,
-      _camCy + (y - _camCy) * scale,
-      scale,
-      true,
-    );
+    return SceneProject.project(cam, x, y, z, mode: projectMode);
   }
 
   @override
@@ -91,7 +60,13 @@ class SceneStagePainter extends CustomPainter {
 
     final scaleX = size.width / doc.width;
     final scaleY = size.height / doc.height;
-    _resolveCamera();
+    _cam = playTime > 0
+        ? SceneCamFrame.fromNodes(
+            doc.nodes,
+            stageW: doc.width.toDouble(),
+            stageH: doc.height.toDouble(),
+          )
+        : null;
 
     canvas.drawRect(
       Offset.zero & size,
@@ -155,16 +130,23 @@ class SceneStagePainter extends CustomPainter {
     final selected = n.id == selectedId;
     final isCamera = n.isCamera;
     final off = _previewOffset(n);
+    final cam = _cam;
 
-    // One depth test / scale sample per node (not per corner).
+    // One project sample per node (center) — not per corner.
+    final midX = n.x + off.dx + n.w * 0.5;
+    final midY = n.y + off.dy + n.h * 0.5;
     var alphaMul = 1.0;
     var pScale = 1.0;
-    if (!isCamera && _hasCam) {
-      final depth = n.z - _camCz;
-      if (depth < _camNear || depth > _camFar) {
+    var outX = midX;
+    var outY = midY;
+    if (!isCamera && cam != null) {
+      final pr = _project(midX, midY, n.z);
+      if (!pr.visible) {
         alphaMul = 0.28; // outside frustum: dim, still visible for context
       } else {
-        pScale = _camRef / (_camRef + math.max(depth, _camNear) * _camFovK);
+        pScale = pr.scale;
+        outX = pr.x;
+        outY = pr.y;
       }
     }
 
@@ -177,17 +159,6 @@ class SceneStagePainter extends CustomPainter {
     if (n.hasPoints) {
       _paintPoly(canvas, n, off, scaleX, scaleY, fill, stroke, selected);
       return;
-    }
-
-    // Rect: project center; size shrinks by pScale in play+camera mode.
-    final midX = n.x + off.dx + n.w * 0.5;
-    final midY = n.y + off.dy + n.h * 0.5;
-    double outX = midX;
-    double outY = midY;
-    if (!isCamera && _hasCam && alphaMul >= 1.0) {
-      // in-frustum: apply same scale used for size
-      outX = _camCx + (midX - _camCx) * pScale;
-      outY = _camCy + (midY - _camCy) * pScale;
     }
     final drawW = n.w * (isCamera ? 1.0 : pScale);
     final drawH = n.h * (isCamera ? 1.0 : pScale);
@@ -226,7 +197,6 @@ class SceneStagePainter extends CustomPainter {
       Rect.fromCenter(center: Offset(cx, cy), width: g, height: g),
       glyph,
     );
-    // Mesh badge — only when linked (string empty check before normalize).
     if (n.mesh.isNotEmpty && SceneMeshes.normalize(n.mesh).isNotEmpty) {
       final badge = Path()
         ..moveTo(cx, cy - 8)
@@ -252,16 +222,16 @@ class SceneStagePainter extends CustomPainter {
   ) {
     final pts = n.points!;
     final path = Path();
-    final applyProj = _hasCam;
+    final applyProj = _cam != null;
     for (var i = 0; i < pts.length; i++) {
       var x = pts[i].x + off.dx;
       var y = pts[i].y + off.dy;
       if (applyProj) {
         final pr = _project(x, y, n.z);
         // Out-of-frustum points stay at ortho position (dimmed via fill alpha).
-        if (pr.$4) {
-          x = pr.$1;
-          y = pr.$2;
+        if (pr.visible) {
+          x = pr.x;
+          y = pr.y;
         }
       }
       final px = x * scaleX;
@@ -354,7 +324,8 @@ class SceneStagePainter extends CustomPainter {
     if (old.doc != doc ||
         old.selectedId != selectedId ||
         old.editPointIndex != editPointIndex ||
-        old.showGrid != showGrid) {
+        old.showGrid != showGrid ||
+        old.projectMode != projectMode) {
       return true;
     }
     // ~120 Hz threshold: skip repaint if time delta is tiny (duplicate ticks).
