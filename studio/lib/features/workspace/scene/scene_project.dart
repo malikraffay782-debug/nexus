@@ -124,7 +124,8 @@ class SceneProject {
   /// Camera-space → NDC (OpenGL-style x/y in [-1,1]; z in [-1,1] mid-depth map).
   ///
   /// Point is relative to camera center on X/Y (stage units treated as world).
-  /// Returns null if behind near plane or non-positive w.
+  /// Returns null if outside the **depth** slab or non-positive w.
+  /// Lateral (|nx|/|ny|) is tested separately via [inNdcLateral].
   static (double nx, double ny, double nz)? toNdc(
     SceneCamFrame cam,
     double x,
@@ -155,6 +156,23 @@ class SceneProject {
     return (nx, ny, nz);
   }
 
+  /// True if NDC x/y lie inside the unit square (FOV left/right/top/bottom).
+  /// Soft path does **not** use this — depth slab only for low-end cost.
+  static bool inNdcLateral(double nx, double ny) =>
+      nx >= -1.0 && nx <= 1.0 && ny >= -1.0 && ny <= 1.0;
+
+  /// Full NDC frustum test: depth (via [toNdc] non-null) + lateral unit square.
+  static bool inNdcFrustum(
+    SceneCamFrame cam,
+    double x,
+    double y,
+    double z,
+  ) {
+    final ndc = toNdc(cam, x, y, z);
+    if (ndc == null) return false;
+    return inNdcLateral(ndc.$1, ndc.$2);
+  }
+
   /// NDC → stage pixels (top-left origin, Y-down like Flutter).
   static (double x, double y) ndcToStage(
     SceneCamFrame cam,
@@ -168,6 +186,9 @@ class SceneProject {
   }
 
   /// Dispatch by [mode]. Default soft for low-end frames.
+  ///
+  /// - [SceneProjectMode.soft]: depth slab only (near/far).
+  /// - [SceneProjectMode.ndc]: depth + lateral FOV cone (|nx|,|ny| ≤ 1).
   static SceneProjected project(
     SceneCamFrame cam,
     double x,
@@ -183,6 +204,10 @@ class SceneProject {
       return SceneProjected(x: x, y: y, scale: 1, visible: false);
     }
     final (nx, ny, _) = ndc;
+    // Lateral frustum cull (Unity-style clip volume on x/y).
+    if (!inNdcLateral(nx, ny)) {
+      return SceneProjected(x: x, y: y, scale: 1, visible: false);
+    }
     final (sx, sy) = ndcToStage(cam, nx, ny);
     // Size scale from depth (same soft weight) so rects still shrink.
     final depth = cam.depthOf(z);
