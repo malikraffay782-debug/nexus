@@ -222,8 +222,12 @@ class SceneNode {
     final py = (json['y'] as num?)?.toDouble() ?? 0;
     final pz = (json['z'] as num?)?.toDouble() ?? defaultZ;
     final fov = (json['fov'] as num?)?.toDouble() ?? defaultFov;
-    final near = (json['near'] as num?)?.toDouble() ?? defaultNear;
-    final far = (json['far'] as num?)?.toDouble() ?? defaultFar;
+    // Clamp near/far so invariant always holds: near > 0 and far > near.
+    // Hand-edited or corrupt JSON must not produce invalid cameras.
+    var near = (json['near'] as num?)?.toDouble() ?? defaultNear;
+    var far = (json['far'] as num?)?.toDouble() ?? defaultFar;
+    if (!(near > 0)) near = defaultNear;
+    if (!(far > near)) far = near < defaultFar ? defaultFar : near + 1.0;
     final mesh = SceneMeshes.normalize(json['mesh'] as String?);
     // Empty id → unique per decode (position alone collides for stacked nodes).
     final id = rawId.isEmpty
@@ -242,8 +246,8 @@ class SceneNode {
       points: points,
       mesh: mesh,
       fov: fov.clamp(1.0, 179.0),
-      near: near > 0 ? near : defaultNear,
-      far: far > near ? far : defaultFar,
+      near: near,
+      far: far,
     );
   }
 
