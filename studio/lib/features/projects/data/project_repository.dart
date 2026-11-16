@@ -383,28 +383,30 @@ def _project_xy(
     x: float,
     y: float,
     z: float,
-    cam: dict | None,
     width: float,
     height: float,
+    params: tuple[float, float, float, float, float, float] | None,
+    *,
+    skip_cull: bool = False,
 ) -> tuple[float, float, bool]:
     """(2) Soft clip-space scale toward camera center.
 
-    Full path later: world → camera space → projection matrix (FOV, aspect,
-    near, far) → NDC / clip volume. ASCII stage uses a readable FOV-weighted
-    scale instead of a pinhole that blows up on pixel-like ranges.
+    params = (cx, cy, cz, fov, near, far) from _cam_params, or None = ortho.
+    skip_cull=True when the caller already depth-filtered the node (hot path).
 
-    Returns (sx, sy, visible). visible=False ⇒ culled by depth frustum.
+    Full path later: world → camera → projection matrix → NDC.
+    Returns (sx, sy, visible).
     """
-    if cam is None:
+    if params is None:
         return x, y, True
-    cx, cy, cz, fov, near, far = _cam_params(cam)
+    cx, cy, cz, fov, near, far = params
     depth = _camera_space_depth(z, cz)
-    if not _in_depth_frustum(depth, near, far):
+    if not skip_cull and not _in_depth_frustum(depth, near, far):
         return x, y, False
     # Wider FOV → stronger shrink with depth (clamped for ASCII readability).
     fov_k = max(0.35, min(2.5, fov / 60.0))
     ref = max(width, height) * 0.35
-    scale = ref / (ref + depth * fov_k)
+    scale = ref / (ref + max(depth, near) * fov_k)
     sx = cx + (x - cx) * scale
     sy = cy + (y - cy) * scale
     return sx, sy, True
@@ -419,24 +421,36 @@ def draw_scene(scene: dict) -> None:
         nodes = []
 
     cam = _active_camera(nodes)
-    mode = "perspective" if cam else "ortho"
+    # Hoist camera unpack once for the whole frame.
+    params = _cam_params(cam) if cam is not None else None
+    mode = "perspective" if params is not None else "ortho"
     print(f"Nexus scene: {name}  {width}x{height}  [{mode}]")
-    if cam:
+    if params is not None:
+        _cx, _cy, cz, _fov, near, far = params
         print(f"active camera: {_node_label(cam)}")
-        _cx, _cy, cz, _fov, near, far = _cam_params(cam)
         print(f"camera space: look +Z  eye_z={cz:g}  near={near:g}  far={far:g}")
     print(f"nodes: {len(nodes)} (depth sort by z, far→near)")
     if not nodes:
         print("(empty stage)")
         return
 
-    # Non-cameras sorted far→near; cameras drawn as marker only.
-    drawable = [n for n in nodes if isinstance(n, dict) and str(n.get("type") or "") != "camera"]
-    drawable.sort(key=lambda n: float(n.get("z") or 0))
+    # Pre-filter: one depth test per node, then sort only survivors.
+    visible: list = []
+    culled_labels: list[str] = []
+    for n in nodes:
+        if not isinstance(n, dict) or str(n.get("type") or "") == "camera":
+            continue
+        if params is not None:
+            z = float(n.get("z") or 0)
+            _cx, _cy, cz, _fov, near, far = params
+            if not _in_depth_frustum(_camera_space_depth(z, cz), near, far):
+                culled_labels.append(_node_label(n))
+                continue
+        visible.append(n)
+    visible.sort(key=lambda n: float(n.get("z") or 0))
 
     cols, rows = 24, 12
     grid = [["." for _ in range(cols)] for _ in range(rows)]
-    culled = 0
 
     def to_cell(px: float, py: float) -> tuple[int, int]:
         c = int(px / width * (cols - 1)) if width > 0 else 0
@@ -445,16 +459,9 @@ def draw_scene(scene: dict) -> None:
         r = max(0, min(rows - 1, r))
         return c, r
 
-    for idx, node in enumerate(drawable):
+    for idx, node in enumerate(visible):
         ch = str(idx % 10)
         z = float(node.get("z") or 0)
-        # Depth cull once per node (same z for all corners / verts).
-        if cam is not None:
-            _cx, _cy, cz, _fov, near, far = _cam_params(cam)
-            if not _in_depth_frustum(_camera_space_depth(z, cz), near, far):
-                culled += 1
-                print(f"  culled: {_node_label(node)}")
-                continue
         pts = node.get("points")
         if isinstance(pts, list) and len(pts) >= 3:
             coords = []
@@ -463,7 +470,9 @@ def draw_scene(scene: dict) -> None:
                     continue
                 px = float(pt.get("x") or 0)
                 py = float(pt.get("y") or 0)
-                sx, sy, _vis = _project_xy(px, py, z, cam, width, height)
+                sx, sy, _vis = _project_xy(
+                    px, py, z, width, height, params, skip_cull=True
+                )
                 coords.append(to_cell(sx, sy))
                 c, r = coords[-1]
                 grid[r][c] = "#"
@@ -483,10 +492,10 @@ def draw_scene(scene: dict) -> None:
         w = max(float(node.get("w") or 1), 1.0)
         h = max(float(node.get("h") or 1), 1.0)
         corners = [
-            _project_xy(x, y, z, cam, width, height)[:2],
-            _project_xy(x + w, y, z, cam, width, height)[:2],
-            _project_xy(x + w, y + h, z, cam, width, height)[:2],
-            _project_xy(x, y + h, z, cam, width, height)[:2],
+            _project_xy(x, y, z, width, height, params, skip_cull=True)[:2],
+            _project_xy(x + w, y, z, width, height, params, skip_cull=True)[:2],
+            _project_xy(x + w, y + h, z, width, height, params, skip_cull=True)[:2],
+            _project_xy(x, y + h, z, width, height, params, skip_cull=True)[:2],
         ]
         cs = [to_cell(px, py) for px, py in corners]
         c0 = min(c for c, _ in cs)
@@ -498,8 +507,8 @@ def draw_scene(scene: dict) -> None:
                 grid[r][c] = ch
 
     # Mark camera cell with C
-    if cam is not None:
-        cx, cy, _cz, _fov, _near, _far = _cam_params(cam)
+    if params is not None:
+        cx, cy, _cz, _fov, _near, _far = params
         cc, rr = to_cell(cx, cy)
         grid[rr][cc] = "C"
 
@@ -507,8 +516,10 @@ def draw_scene(scene: dict) -> None:
     for row in grid:
         print("|" + "".join(row) + "|")
     print("+" + "-" * cols + "+")
-    if culled:
-        print(f"culled: {culled} (outside camera near/far)")
+    if culled_labels:
+        print(f"culled: {len(culled_labels)} (outside camera near/far)")
+        for label in culled_labels:
+            print(f"  culled: {label}")
     for i, node in enumerate(nodes):
         if isinstance(node, dict):
             print(f"  {i}: {_node_label(node)}")

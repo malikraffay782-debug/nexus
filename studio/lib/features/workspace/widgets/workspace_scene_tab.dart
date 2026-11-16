@@ -97,8 +97,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _playTime.value = 0;
     _playTicker = createTicker((elapsed) {
       if (!mounted) return;
-      // Only the stage ListenableBuilder rebuilds — not the whole tab.
-      _playTime.value = elapsed.inMicroseconds / 1e6;
+      // Stage-only rebuild via ListenableBuilder (not the whole tab).
+      // ~30 fps is enough for bob/depth on low-end; skips duplicate ticks.
+      final t = elapsed.inMilliseconds / 1000.0;
+      if ((t - _playTime.value).abs() < 1 / 30) return;
+      _playTime.value = t;
     })..start();
     setState(() {
       _playing = true;
