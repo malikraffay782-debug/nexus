@@ -67,6 +67,12 @@ class SceneCamFrame {
   /// Camera-space depth (look +Z).
   double depthOf(double z) => z - cz;
 
+  /// Soft visibility: in front of / on the eye plane through far.
+  /// Includes [0, near) so default z=0 sprites still draw when cam.z=0
+  /// (near is used for scale, not hard reject, on the soft path).
+  bool inSoftDepth(double depth) => depth >= 0 && depth <= far;
+
+  /// Strict near/far slab (NDC / true frustum).
   bool inDepthSlab(double depth) => depth >= near && depth <= far;
 }
 
@@ -109,7 +115,7 @@ class SceneProject {
     double z,
   ) {
     final depth = cam.depthOf(z);
-    if (!cam.inDepthSlab(depth)) {
+    if (!cam.inSoftDepth(depth)) {
       return SceneProjected(x: x, y: y, scale: 1, visible: false);
     }
     final s = depthScale(cam, depth);
@@ -123,8 +129,8 @@ class SceneProject {
 
   /// Camera-space → NDC (OpenGL-style x/y in [-1,1]; z in [-1,1] mid-depth map).
   ///
-  /// Point is relative to camera center on X/Y (stage units treated as world).
-  /// Returns null if outside the **depth** slab or non-positive w.
+  /// Stage Y is down; converted to Y-up before projection so [ndcToStage]
+  /// flip is consistent. Returns null if outside near/far or w<=0.
   /// Lateral (|nx|/|ny|) is tested separately via [inNdcLateral].
   static (double nx, double ny, double nz)? toNdc(
     SceneCamFrame cam,
@@ -135,9 +141,9 @@ class SceneProject {
     final depth = cam.depthOf(z);
     if (depth < cam.near || depth > cam.far) return null;
 
-    // Camera space: origin at eye, x right, y down (stage), z forward.
+    // Camera space: origin at eye, x right, y up, z forward.
     final xc = x - cam.cx;
-    final yc = y - cam.cy;
+    final yc = cam.cy - y; // stage Y-down → camera Y-up
     final zc = depth;
 
     final f = 1.0 / math.tan(cam.fovDeg * math.pi / 360.0);
@@ -150,9 +156,9 @@ class SceneProject {
 
     final nx = xClip / w;
     final ny = yClip / w;
-    // Map near..far → -1..+1 (simple linear in z; fine until reverse-Z).
-    final nz =
-        ((zc - cam.near) / (cam.far - cam.near)) * 2.0 - 1.0;
+    // Map near..far → -1..+1 (guard degenerate far==near).
+    final span = cam.far - cam.near;
+    final nz = span > 1e-9 ? ((zc - cam.near) / span) * 2.0 - 1.0 : 0.0;
     return (nx, ny, nz);
   }
 

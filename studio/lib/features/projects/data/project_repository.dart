@@ -374,8 +374,13 @@ def _camera_space_depth(z: float, cz: float) -> float:
     return z - cz
 
 
+def _in_soft_depth(depth: float, far: float) -> bool:
+    """Soft path: on/in front of eye through far (near used for scale only)."""
+    return 0.0 <= depth <= far
+
+
 def _in_depth_frustum(depth: float, near: float, far: float) -> bool:
-    """Soft path: near/far depth slab only (low-end)."""
+    """Strict near/far slab (NDC / true frustum)."""
     return near <= depth <= far
 
 
@@ -416,7 +421,7 @@ def _to_ndc(
     if not _in_depth_frustum(depth, near, far):
         return None
     xc = x - cx
-    yc = y - cy
+    yc = cy - y  # stage Y-down → camera Y-up (matches Dart SceneProject)
     zc = depth
     if zc <= 1e-9:
         return None
@@ -424,7 +429,8 @@ def _to_ndc(
     a = (width / height) if height > 0 else 1.0
     nx = (f * xc / a) / zc
     ny = (f * yc) / zc
-    nz = ((zc - near) / (far - near)) * 2.0 - 1.0
+    span = far - near
+    nz = ((zc - near) / span) * 2.0 - 1.0 if span > 1e-9 else 0.0
     return nx, ny, nz
 
 
@@ -458,17 +464,17 @@ def _visible_node(
     z = float(n.get("z") or 0)
     cx, cy, cz, fov, near, far = params
     depth = _camera_space_depth(z, cz)
-    if not _in_depth_frustum(depth, near, far):
-        return False
-    if mode != "ndc":
-        return True
-    # Lateral test at node center (cheap; matches editor center sample).
-    x = float(n.get("x") or 0) + float(n.get("w") or 0) * 0.5
-    y = float(n.get("y") or 0) + float(n.get("h") or 0) * 0.5
-    ndc = _to_ndc(x, y, z, width, height, params)
-    if ndc is None:
-        return False
-    return _in_ndc_lateral(ndc[0], ndc[1])
+    if mode == "ndc":
+        if not _in_depth_frustum(depth, near, far):
+            return False
+        # Lateral test at node center (cheap; matches editor center sample).
+        x = float(n.get("x") or 0) + float(n.get("w") or 0) * 0.5
+        y = float(n.get("y") or 0) + float(n.get("h") or 0) * 0.5
+        ndc = _to_ndc(x, y, z, width, height, params)
+        if ndc is None:
+            return False
+        return _in_ndc_lateral(ndc[0], ndc[1])
+    return _in_soft_depth(depth, far)
 
 
 def _project_xy(
@@ -502,7 +508,7 @@ def _project_xy(
         return sx, sy, True
 
     # soft (default)
-    if not skip_cull and not _in_depth_frustum(depth, near, far):
+    if not skip_cull and not _in_soft_depth(depth, far):
         return x, y, False
     s = _depth_scale(depth, near, fov, width, height)
     sx = cx + (x - cx) * s

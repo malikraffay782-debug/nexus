@@ -133,28 +133,23 @@ class SceneStagePainter extends CustomPainter {
     final cam = _cam;
 
     // One project sample per node (center) — not per corner.
+    // Play + camera: skip draw if outside frustum (Unity-style: don't draw
+    // what the camera cannot see). Edit mode has no cam → always draw.
     final midX = n.x + off.dx + n.w * 0.5;
     final midY = n.y + off.dy + n.h * 0.5;
-    var alphaMul = 1.0;
     var pScale = 1.0;
     var outX = midX;
     var outY = midY;
     if (!isCamera && cam != null) {
       final pr = _project(midX, midY, n.z);
-      if (!pr.visible) {
-        alphaMul = 0.28; // outside frustum: dim, still visible for context
-      } else {
-        pScale = pr.scale;
-        outX = pr.x;
-        outY = pr.y;
-      }
+      if (!pr.visible) return;
+      pScale = pr.scale;
+      outX = pr.x;
+      outY = pr.y;
     }
 
-    final baseA = (selected ? 0.95 : 0.85) * alphaMul;
-    final fill = Color(n.color).withValues(alpha: baseA);
-    final stroke = selected
-        ? Colors.white.withValues(alpha: alphaMul < 1 ? 0.4 : 1.0)
-        : fill;
+    final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.85);
+    final stroke = selected ? Colors.white : fill;
 
     if (n.hasPoints) {
       _paintPoly(canvas, n, off, scaleX, scaleY, fill, stroke, selected);
@@ -183,7 +178,7 @@ class SceneStagePainter extends CustomPainter {
     final cx = rect.center.dx;
     final cy = rect.center.dy;
     final glyph = Paint()
-      ..color = Colors.white.withValues(alpha: 0.9 * alphaMul)
+      ..color = Colors.white.withValues(alpha: 0.9)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     if (isCamera) {
@@ -205,7 +200,7 @@ class SceneStagePainter extends CustomPainter {
         ..close();
       canvas.drawPath(
         badge,
-        Paint()..color = Colors.white.withValues(alpha: 0.85 * alphaMul),
+        Paint()..color = Colors.white.withValues(alpha: 0.85),
       );
     }
   }
