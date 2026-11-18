@@ -359,7 +359,7 @@ def _active_camera(nodes: list) -> dict | None:
 
 
 def _cam_params(cam: dict) -> tuple[float, float, float, float, float, float]:
-    """Unpack camera node → (cx, cy, cz, fov, near, far)."""
+    """Unpack camera node → (cx, cy, cz, fov, near, far). Matches SceneCamFrame."""
     cx = float(cam.get("x") or 0) + float(cam.get("w") or 0) * 0.5
     cy = float(cam.get("y") or 0) + float(cam.get("h") or 0) * 0.5
     cz = float(cam.get("z") or 0)
@@ -370,13 +370,105 @@ def _cam_params(cam: dict) -> tuple[float, float, float, float, float, float]:
 
 
 def _camera_space_depth(z: float, cz: float) -> float:
-    """(1) Camera space: eye at cz, look +Z. Positive depth = in front."""
+    """Camera space: eye at cz, look +Z. Positive depth = in front."""
     return z - cz
 
 
 def _in_depth_frustum(depth: float, near: float, far: float) -> bool:
-    """(3) Depth-slab cull. Full 6-plane FOV cone waits on a real clip matrix."""
+    """Soft path: near/far depth slab only (low-end)."""
     return near <= depth <= far
+
+
+def _project_mode(scene: dict) -> str:
+    """soft (default) | ndc — scene.projectMode or env NEXUS_PROJECT_MODE."""
+    import os
+
+    raw = str(scene.get("projectMode") or os.environ.get("NEXUS_PROJECT_MODE") or "soft")
+    raw = raw.strip().lower()
+    return "ndc" if raw == "ndc" else "soft"
+
+
+def _depth_scale(
+    depth: float,
+    near: float,
+    fov: float,
+    width: float,
+    height: float,
+) -> float:
+    """Soft depth scale — same idea as SceneProject.depthScale / scene editor."""
+    fov_k = max(0.35, min(2.5, fov / 60.0))
+    ref = max(width, height) * 0.35
+    d = max(depth, near)
+    return ref / (ref + d * fov_k)
+
+
+def _to_ndc(
+    x: float,
+    y: float,
+    z: float,
+    width: float,
+    height: float,
+    params: tuple[float, float, float, float, float, float],
+) -> tuple[float, float, float] | None:
+    """Camera → NDC (OpenGL-style). None if outside depth slab or w<=0."""
+    cx, cy, cz, fov, near, far = params
+    depth = _camera_space_depth(z, cz)
+    if not _in_depth_frustum(depth, near, far):
+        return None
+    xc = x - cx
+    yc = y - cy
+    zc = depth
+    if zc <= 1e-9:
+        return None
+    f = 1.0 / math.tan(math.radians(fov) * 0.5)
+    a = (width / height) if height > 0 else 1.0
+    nx = (f * xc / a) / zc
+    ny = (f * yc) / zc
+    nz = ((zc - near) / (far - near)) * 2.0 - 1.0
+    return nx, ny, nz
+
+
+def _in_ndc_lateral(nx: float, ny: float) -> bool:
+    """FOV left/right/top/bottom — unit square in NDC."""
+    return -1.0 <= nx <= 1.0 and -1.0 <= ny <= 1.0
+
+
+def _ndc_to_stage(
+    nx: float,
+    ny: float,
+    width: float,
+    height: float,
+) -> tuple[float, float]:
+    """NDC → stage pixels (Y-down, top-left origin)."""
+    sx = (nx + 1.0) * 0.5 * width
+    sy = (1.0 - ny) * 0.5 * height
+    return sx, sy
+
+
+def _visible_node(
+    n: dict,
+    width: float,
+    height: float,
+    params: tuple[float, float, float, float, float, float] | None,
+    mode: str,
+) -> bool:
+    """Pre-filter: soft = depth slab; ndc = depth + lateral FOV."""
+    if params is None:
+        return True
+    z = float(n.get("z") or 0)
+    cx, cy, cz, fov, near, far = params
+    depth = _camera_space_depth(z, cz)
+    if not _in_depth_frustum(depth, near, far):
+        return False
+    if mode != "ndc":
+        return True
+    # Lateral test at node center (cheap; matches editor center sample).
+    x = float(n.get("x") or 0) + float(n.get("w") or 0) * 0.5
+    y = float(n.get("y") or 0) + float(n.get("h") or 0) * 0.5
+    ndc = _to_ndc(x, y, z, width, height, params)
+    if ndc is None:
+        return False
+    return _in_ndc_lateral(ndc[0], ndc[1])
 
 
 def _project_xy(
@@ -386,29 +478,35 @@ def _project_xy(
     width: float,
     height: float,
     params: tuple[float, float, float, float, float, float] | None,
+    mode: str = "soft",
     *,
     skip_cull: bool = False,
 ) -> tuple[float, float, bool]:
-    """(2) Soft clip-space scale toward camera center.
+    """Project stage point — mirrors SceneProject.project (soft | ndc).
 
-    params = (cx, cy, cz, fov, near, far) from _cam_params, or None = ortho.
-    skip_cull=True when the caller already depth-filtered the node (hot path).
-
-    Full path later: world → camera → projection matrix → NDC.
     Returns (sx, sy, visible).
     """
     if params is None:
         return x, y, True
     cx, cy, cz, fov, near, far = params
     depth = _camera_space_depth(z, cz)
+
+    if mode == "ndc":
+        ndc = _to_ndc(x, y, z, width, height, params)
+        if ndc is None:
+            return x, y, False
+        nx, ny, _nz = ndc
+        if not skip_cull and not _in_ndc_lateral(nx, ny):
+            return x, y, False
+        sx, sy = _ndc_to_stage(nx, ny, width, height)
+        return sx, sy, True
+
+    # soft (default)
     if not skip_cull and not _in_depth_frustum(depth, near, far):
         return x, y, False
-    # Wider FOV → stronger shrink with depth (clamped for ASCII readability).
-    fov_k = max(0.35, min(2.5, fov / 60.0))
-    ref = max(width, height) * 0.35
-    scale = ref / (ref + max(depth, near) * fov_k)
-    sx = cx + (x - cx) * scale
-    sy = cy + (y - cy) * scale
+    s = _depth_scale(depth, near, fov, width, height)
+    sx = cx + (x - cx) * s
+    sy = cy + (y - cy) * s
     return sx, sy, True
 
 
@@ -421,10 +519,10 @@ def draw_scene(scene: dict) -> None:
         nodes = []
 
     cam = _active_camera(nodes)
-    # Hoist camera unpack once for the whole frame.
     params = _cam_params(cam) if cam is not None else None
-    mode = "perspective" if params is not None else "ortho"
-    print(f"Nexus scene: {name}  {width}x{height}  [{mode}]")
+    proj = _project_mode(scene)
+    space = "perspective" if params is not None else "ortho"
+    print(f"Nexus scene: {name}  {width}x{height}  [{space}/{proj}]")
     if params is not None:
         _cx, _cy, cz, _fov, near, far = params
         print(f"active camera: {_node_label(cam)}")
@@ -434,18 +532,15 @@ def draw_scene(scene: dict) -> None:
         print("(empty stage)")
         return
 
-    # Pre-filter: one depth test per node, then sort only survivors.
+    # Pre-filter (soft depth / ndc depth+lateral), then sort survivors.
     visible: list = []
     culled_labels: list[str] = []
     for n in nodes:
         if not isinstance(n, dict) or str(n.get("type") or "") == "camera":
             continue
-        if params is not None:
-            z = float(n.get("z") or 0)
-            _cx, _cy, cz, _fov, near, far = params
-            if not _in_depth_frustum(_camera_space_depth(z, cz), near, far):
-                culled_labels.append(_node_label(n))
-                continue
+        if params is not None and not _visible_node(n, width, height, params, proj):
+            culled_labels.append(_node_label(n))
+            continue
         visible.append(n)
     visible.sort(key=lambda n: float(n.get("z") or 0))
 
@@ -471,7 +566,7 @@ def draw_scene(scene: dict) -> None:
                 px = float(pt.get("x") or 0)
                 py = float(pt.get("y") or 0)
                 sx, sy, _vis = _project_xy(
-                    px, py, z, width, height, params, skip_cull=True
+                    px, py, z, width, height, params, proj, skip_cull=True
                 )
                 coords.append(to_cell(sx, sy))
                 c, r = coords[-1]
@@ -492,10 +587,10 @@ def draw_scene(scene: dict) -> None:
         w = max(float(node.get("w") or 1), 1.0)
         h = max(float(node.get("h") or 1), 1.0)
         corners = [
-            _project_xy(x, y, z, width, height, params, skip_cull=True)[:2],
-            _project_xy(x + w, y, z, width, height, params, skip_cull=True)[:2],
-            _project_xy(x + w, y + h, z, width, height, params, skip_cull=True)[:2],
-            _project_xy(x, y + h, z, width, height, params, skip_cull=True)[:2],
+            _project_xy(x, y, z, width, height, params, proj, skip_cull=True)[:2],
+            _project_xy(x + w, y, z, width, height, params, proj, skip_cull=True)[:2],
+            _project_xy(x + w, y + h, z, width, height, params, proj, skip_cull=True)[:2],
+            _project_xy(x, y + h, z, width, height, params, proj, skip_cull=True)[:2],
         ]
         cs = [to_cell(px, py) for px, py in corners]
         c0 = min(c for c, _ in cs)
@@ -517,7 +612,7 @@ def draw_scene(scene: dict) -> None:
         print("|" + "".join(row) + "|")
     print("+" + "-" * cols + "+")
     if culled_labels:
-        print(f"culled: {len(culled_labels)} (outside camera near/far)")
+        print(f"culled: {len(culled_labels)} (outside frustum, mode={proj})")
         for label in culled_labels:
             print(f"  culled: {label}")
     for i, node in enumerate(nodes):

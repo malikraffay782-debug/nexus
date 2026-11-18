@@ -3,6 +3,7 @@ import 'package:flutter/scheduler.dart';
 
 import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
+import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
 
@@ -35,6 +36,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   /// Graphical 2D preview loop (Flutter ticker — not proot).
   bool _playing = false;
   final ValueNotifier<double> _playTime = ValueNotifier(0.0);
+  /// Play projection: soft (low-end default) or NDC (FOV lateral cull).
+  SceneProjectMode _projectMode = SceneProjectMode.soft;
 
   // Coalesce pointer nudges to one setState per frame (kills swipe lag).
   double _pendingNudgeDx = 0;
@@ -1941,6 +1944,29 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       onPressed: _togglePlay,
                     ),
                     IconButton(
+                      tooltip: _projectMode == SceneProjectMode.soft
+                          ? 'Projection: Soft (tap → NDC)'
+                          : 'Projection: NDC (tap → Soft)',
+                      icon: Icon(
+                        _projectMode == SceneProjectMode.soft
+                            ? Icons.view_in_ar_outlined
+                            : Icons.view_in_ar,
+                        size: 18,
+                        color: _projectMode == SceneProjectMode.ndc
+                            ? scheme.primary
+                            : null,
+                      ),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () {
+                        setState(() {
+                          _projectMode =
+                              _projectMode == SceneProjectMode.soft
+                                  ? SceneProjectMode.ndc
+                                  : SceneProjectMode.soft;
+                        });
+                      },
+                    ),
+                    IconButton(
                       tooltip: doc.showGrid ? 'Hide grid' : 'Show grid',
                       icon: Icon(
                         doc.showGrid ? Icons.grid_on : Icons.grid_off,
@@ -1977,6 +2003,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                                   _playing ? null : _editPointIndex,
                               showGrid: doc.showGrid,
                               playTime: _playing ? _playTime.value : 0.0,
+                              projectMode: _projectMode,
                             ),
                           );
                         },
