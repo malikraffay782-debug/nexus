@@ -3,15 +3,11 @@
 
 name: Build Nexus Debug APK
 
+# Manual only — do NOT auto-build on push (saves Actions minutes / compute).
+# Run from GitHub → Actions → "Build Nexus Debug APK" → Run workflow
+# when the user explicitly asks for an APK.
 on:
   workflow_dispatch:
-  push:
-    branches: [main]
-    paths:
-      - "studio/**"
-      - "core/native/**"
-      - "scripts/**"
-      - ".github/workflows/build-debug-apk.yml"
 
 concurrency:
   group: nexus-debug-apk-${{ github.ref }}
