@@ -247,11 +247,43 @@ class SceneProject {
     SceneCamFrame cam,
     double x,
     double y,
-    double z,
-  ) {
-    final ndc = toNdc(cam, x, y, z);
+    double z, {
+    SceneMat4? viewProjection,
+  }) {
+    final ndc = toNdc(cam, x, y, z, viewProjection: viewProjection);
     if (ndc == null) return false;
     return inNdcLateral(ndc.$1, ndc.$2);
+  }
+
+  /// Axis-aligned stage rect at constant [z] vs camera frustum.
+  ///
+  /// Soft: depth of the plane only (no lateral).
+  /// NDC: any of the 4 corners inside depth+lateral → visible (Unity-style
+  /// bounds test lite — flat Z slab, not a full 3D AABB).
+  static bool aabbVisible(
+    SceneCamFrame cam,
+    double x,
+    double y,
+    double w,
+    double h,
+    double z, {
+    SceneProjectMode mode = SceneProjectMode.soft,
+    SceneMat4? viewProjection,
+  }) {
+    final depth = cam.depthOf(z);
+    if (mode == SceneProjectMode.soft) {
+      return cam.inSoftDepth(depth);
+    }
+    if (!cam.inDepthSlab(depth)) return false;
+    final vp = viewProjection ?? cam.viewProjectionMatrix();
+    final x1 = x + w;
+    final y1 = y + h;
+    // 4 corners — early out on first hit.
+    if (inNdcFrustum(cam, x, y, z, viewProjection: vp)) return true;
+    if (inNdcFrustum(cam, x1, y, z, viewProjection: vp)) return true;
+    if (inNdcFrustum(cam, x, y1, z, viewProjection: vp)) return true;
+    if (inNdcFrustum(cam, x1, y1, z, viewProjection: vp)) return true;
+    return false;
   }
 
   /// NDC → stage pixels (top-left origin, Y-down like Flutter).

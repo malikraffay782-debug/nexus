@@ -144,20 +144,56 @@ class SceneStagePainter extends CustomPainter {
     final off = _previewOffset(n);
     final cam = _cam;
 
-    // One project sample per node (center) — not per corner.
-    // Play + camera: skip draw if outside frustum (Unity-style: don't draw
-    // what the camera cannot see). Edit mode has no cam → always draw.
-    final midX = n.x + off.dx + n.w * 0.5;
-    final midY = n.y + off.dy + n.h * 0.5;
+    // Play + camera: AABB (rect or poly bounds @ z) — skip if fully outside.
+    // Project center for draw pose when visible. Edit (no cam) → always draw.
+    var boundX = n.x + off.dx;
+    var boundY = n.y + off.dy;
+    var boundW = n.w;
+    var boundH = n.h;
+    if (n.hasPoints) {
+      final pts = n.points!;
+      var minX = pts.first.x;
+      var maxX = minX;
+      var minY = pts.first.y;
+      var maxY = minY;
+      for (final p in pts) {
+        if (p.x < minX) minX = p.x;
+        if (p.x > maxX) maxX = p.x;
+        if (p.y < minY) minY = p.y;
+        if (p.y > maxY) maxY = p.y;
+      }
+      boundX = minX + off.dx;
+      boundY = minY + off.dy;
+      boundW = (maxX - minX).clamp(1.0, double.infinity);
+      boundH = (maxY - minY).clamp(1.0, double.infinity);
+    }
+    final midX = boundX + boundW * 0.5;
+    final midY = boundY + boundH * 0.5;
     var pScale = 1.0;
     var outX = midX;
     var outY = midY;
     if (!isCamera && cam != null) {
+      final visible = SceneProject.aabbVisible(
+        cam,
+        boundX,
+        boundY,
+        boundW,
+        boundH,
+        n.z,
+        mode: projectMode,
+        viewProjection: _viewProjection,
+      );
+      if (!visible) return;
       final pr = _project(midX, midY, n.z);
-      if (!pr.visible) return;
-      pScale = pr.scale;
-      outX = pr.x;
-      outY = pr.y;
+      // Center may be outside while a corner is inside — still draw at
+      // projected center if possible; else keep stage center.
+      if (pr.visible) {
+        pScale = pr.scale;
+        outX = pr.x;
+        outY = pr.y;
+      } else {
+        pScale = SceneProject.depthScale(cam, cam.depthOf(n.z));
+      }
     }
 
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.85);
