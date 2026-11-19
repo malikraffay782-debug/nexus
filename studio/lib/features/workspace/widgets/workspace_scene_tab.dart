@@ -38,6 +38,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   final ValueNotifier<double> _playTime = ValueNotifier(0.0);
   /// Play projection: soft (low-end default) or NDC (FOV lateral cull).
   SceneProjectMode _projectMode = SceneProjectMode.soft;
+  /// Keyboard steer for sample Player (non-destructive, play only).
+  Offset _playSteer = Offset.zero;
+  final FocusNode _playFocus = FocusNode(debugLabel: 'scenePlay');
+  final Set<LogicalKeyboardKey> _playKeys = {};
 
   // Coalesce pointer nudges to one setState per frame (kills swipe lag).
   double _pendingNudgeDx = 0;
@@ -57,7 +61,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.projectPath != widget.projectPath) {
       // Project switched without disposing this State — rebind service + reload.
-      _stopPlayLoop();
+      _stopPlayLoop(rebuild: true);
       _service = SceneService(widget.projectPath);
       _selected = null;
       _doc = null;
@@ -74,30 +78,88 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _pendingNudgeDx = 0;
     _pendingNudgeDy = 0;
     _stopPlayLoop();
+    _playFocus.dispose();
     _playTime.dispose();
     _nameCtrl.dispose();
     super.dispose();
   }
 
-  void _stopPlayLoop() {
+  void _syncPlaySteer() {
+    var x = 0.0;
+    var y = 0.0;
+    if (_playKeys.contains(LogicalKeyboardKey.arrowLeft) ||
+        _playKeys.contains(LogicalKeyboardKey.keyA)) {
+      x -= 1;
+    }
+    if (_playKeys.contains(LogicalKeyboardKey.arrowRight) ||
+        _playKeys.contains(LogicalKeyboardKey.keyD)) {
+      x += 1;
+    }
+    if (_playKeys.contains(LogicalKeyboardKey.arrowUp) ||
+        _playKeys.contains(LogicalKeyboardKey.keyW)) {
+      y -= 1;
+    }
+    if (_playKeys.contains(LogicalKeyboardKey.arrowDown) ||
+        _playKeys.contains(LogicalKeyboardKey.keyS)) {
+      y += 1;
+    }
+    final next = Offset(x, y);
+    if (next != _playSteer) {
+      setState(() => _playSteer = next);
+    }
+  }
+
+  KeyEventResult _onPlayKey(FocusNode node, KeyEvent event) {
+    if (!_playing) return KeyEventResult.ignored;
+    final key = event.logicalKey;
+    final interesting = key == LogicalKeyboardKey.arrowLeft ||
+        key == LogicalKeyboardKey.arrowRight ||
+        key == LogicalKeyboardKey.arrowUp ||
+        key == LogicalKeyboardKey.arrowDown ||
+        key == LogicalKeyboardKey.keyA ||
+        key == LogicalKeyboardKey.keyD ||
+        key == LogicalKeyboardKey.keyW ||
+        key == LogicalKeyboardKey.keyS;
+    if (!interesting) return KeyEventResult.ignored;
+    if (event is KeyDownEvent || event is KeyRepeatEvent) {
+      _playKeys.add(key);
+      _syncPlaySteer();
+      return KeyEventResult.handled;
+    }
+    if (event is KeyUpEvent) {
+      _playKeys.remove(key);
+      _syncPlaySteer();
+      return KeyEventResult.handled;
+    }
+    return KeyEventResult.ignored;
+  }
+
+  /// Stops ticker + clears play clock. Use [rebuild] when no later setState
+  /// will run (e.g. project switch) so the play icon does not stick on Stop.
+  void _stopPlayLoop({bool rebuild = false}) {
     _playTicker?.dispose();
     _playTicker = null;
+    final wasPlaying = _playing;
     _playing = false;
-    _playTime.value = 0;
+    _playSteer = Offset.zero;
+    _playKeys.clear();
+    if (_playTime.value != 0) {
+      _playTime.value = 0;
+    }
+    if (rebuild && wasPlaying && mounted) {
+      setState(() {});
+    }
   }
 
   void _togglePlay() {
     if (_doc == null) return;
     if (_playing) {
-      _playTicker?.dispose();
-      _playTicker = null;
-      setState(() {
-        _playing = false;
-      });
-      _playTime.value = 0;
+      _stopPlayLoop();
+      setState(() {});
       return;
     }
     _playTime.value = 0;
+    _playSteer = Offset.zero;
     _playTicker = createTicker((elapsed) {
       if (!mounted) return;
       // Stage-only rebuild via ListenableBuilder (not the whole tab).
@@ -109,6 +171,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     setState(() {
       _playing = true;
       _editPointIndex = null;
+    });
+    // Capture arrows/WASD for sample Player steer.
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted && _playing) _playFocus.requestFocus();
     });
   }
 
@@ -1998,7 +2064,12 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                   borderRadius: BorderRadius.circular(8),
                 ),
                 clipBehavior: Clip.hardEdge,
-                child: Stack(
+                child: Focus(
+                  focusNode: _playFocus,
+                  autofocus: _playing,
+                  canRequestFocus: _playing,
+                  onKeyEvent: _onPlayKey,
+                  child: Stack(
                   children: [
                     // Graphical 2D stage (play ticker only rebuilds this layer).
                     Positioned.fill(
@@ -2015,6 +2086,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               showGrid: doc.showGrid,
                               playTime: _playing ? _playTime.value : 0.0,
                               projectMode: _projectMode,
+                              playerSteer: _playing ? _playSteer : Offset.zero,
                             ),
                           );
                         },
@@ -2040,7 +2112,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                           paintBody: false,
                         ),
                   ],
-                ),
+                ), // Stack
+                ), // Focus (play keyboard)
               ),
             ],
           ),

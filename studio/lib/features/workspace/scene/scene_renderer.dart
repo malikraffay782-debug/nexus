@@ -25,6 +25,7 @@ class SceneStagePainter extends CustomPainter {
     this.showGrid = true,
     this.playTime = 0.0,
     this.projectMode = SceneProjectMode.soft,
+    this.playerSteer = Offset.zero,
   });
 
   final SceneDoc doc;
@@ -34,6 +35,8 @@ class SceneStagePainter extends CustomPainter {
   final double playTime;
   /// Soft = default low-end; ndc = Unity-style space (opt-in).
   final SceneProjectMode projectMode;
+  /// WASD/arrows unit steer for node named Player (play only).
+  final Offset playerSteer;
 
   /// Play-frame camera (null in edit mode or when no camera node).
   SceneCamFrame? _cam;
@@ -48,9 +51,9 @@ class SceneStagePainter extends CustomPainter {
     if (playTime <= 0 || n.isCamera) return Offset.zero;
     final isPlayer = n.name.toLowerCase() == 'player';
     if (isPlayer) {
-      // Sample playable loop — prove time integration without input system yet.
-      final dx = math.sin(playTime * 1.7) * 48.0;
-      final dy = math.cos(playTime * 1.1) * 28.0;
+      // Idle roam + keyboard steer (non-destructive sample loop).
+      final dx = math.sin(playTime * 1.7) * 48.0 + playerSteer.dx * 56.0;
+      final dy = math.cos(playTime * 1.1) * 28.0 + playerSteer.dy * 56.0;
       return Offset(dx, dy);
     }
     final phase = playTime * 2.4 + n.x * 0.02 + n.y * 0.015;
@@ -379,7 +382,8 @@ class SceneStagePainter extends CustomPainter {
         old.selectedId != selectedId ||
         old.editPointIndex != editPointIndex ||
         old.showGrid != showGrid ||
-        old.projectMode != projectMode) {
+        old.projectMode != projectMode ||
+        old.playerSteer != playerSteer) {
       return true;
     }
     // ~120 Hz threshold: skip repaint if time delta is tiny (duplicate ticks).
