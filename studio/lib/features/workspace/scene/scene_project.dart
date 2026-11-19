@@ -193,7 +193,8 @@ class SceneProject {
   /// Soft depth scale in (0, 1], same idea as scene_draw.py.
   static double depthScale(SceneCamFrame cam, double depth) {
     final d = math.max(depth, cam.near);
-    return cam.softRef / (cam.softRef + d * cam.softFovK);
+    final ref = cam.softRef > 1e-9 ? cam.softRef : 1.0;
+    return ref / (ref + d * cam.softFovK);
   }
 
   /// Soft project: pull toward camera center in stage pixels.
@@ -271,7 +272,9 @@ class SceneProject {
     SceneProjectMode mode = SceneProjectMode.soft,
     SceneMat4? viewProjection,
   }) {
-    final half = zDepth > 0 ? zDepth * 0.5 : 0.0;
+    // Non-finite / negative thickness → treat as flat (avoids inverted z0/z1).
+    final zd = (zDepth.isFinite && zDepth > 0) ? zDepth : 0.0;
+    final half = zd * 0.5;
     final z0 = z - half;
     final z1 = z + half;
     final d0 = cam.depthOf(z0);

@@ -104,7 +104,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       y += 1;
     }
     final next = Offset(x, y);
-    if (next != _playSteer) {
+    if (next != _playSteer && mounted) {
       setState(() => _playSteer = next);
     }
   }
@@ -160,6 +160,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     }
     _playTime.value = 0;
     _playSteer = Offset.zero;
+    _playKeys.clear();
     _playTicker = createTicker((elapsed) {
       if (!mounted) return;
       // Stage-only rebuild via ListenableBuilder (not the whole tab).
