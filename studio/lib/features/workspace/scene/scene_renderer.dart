@@ -40,9 +40,19 @@ class SceneStagePainter extends CustomPainter {
   /// Cached P×V for NDC mode (once per paint).
   SceneMat4? _viewProjection;
 
-  /// Preview bob in scene units. Cameras stay fixed.
+  /// Non-destructive play motion (does not write [doc]).
+  ///
+  /// Sample loop: node named "Player" (any case) gets a larger roam so play
+  /// mode shows a readable game-tick. Other sprites keep a light bob.
   Offset _previewOffset(SceneNode n) {
     if (playTime <= 0 || n.isCamera) return Offset.zero;
+    final isPlayer = n.name.toLowerCase() == 'player';
+    if (isPlayer) {
+      // Sample playable loop — prove time integration without input system yet.
+      final dx = math.sin(playTime * 1.7) * 48.0;
+      final dy = math.cos(playTime * 1.1) * 28.0;
+      return Offset(dx, dy);
+    }
     final phase = playTime * 2.4 + n.x * 0.02 + n.y * 0.015;
     return Offset(math.cos(phase * 0.7) * 4.0, math.sin(phase) * 10.0);
   }

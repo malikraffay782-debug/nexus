@@ -292,6 +292,7 @@ class ProjectRepository {
 
 /// Default game entry: load scenes/main.json and text-draw nodes.
 const String _kGameMainPy = r'''
+import math
 import sys
 from pathlib import Path
 
@@ -300,8 +301,32 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 
 from scene_draw import load_scene, draw_scene, export_mesh_stub
 
+
+def _sample_loop_offset(t: float, name: str) -> tuple[float, float]:
+    """Non-destructive sample motion for a node named Player (editor parity)."""
+    if str(name).strip().lower() != "player":
+        return 0.0, 0.0
+    return math.sin(t * 1.7) * 48.0, math.cos(t * 1.1) * 28.0
+
+
 def main():
     scene = load_scene("scenes/main.json")
+    # Sample playable loop: a few ticks, then one drawn frame.
+    # Rename a sprite to "Player" in the scene to see motion in the log.
+    nodes = scene.get("nodes") if isinstance(scene.get("nodes"), list) else []
+    steps = 5
+    dt = 1.0 / 30.0
+    for i in range(steps):
+        t = i * dt
+        for n in nodes:
+            if not isinstance(n, dict):
+                continue
+            dx, dy = _sample_loop_offset(t, str(n.get("name") or ""))
+            if dx == 0.0 and dy == 0.0:
+                continue
+            x = float(n.get("x") or 0) + dx
+            y = float(n.get("y") or 0) + dy
+            print(f"tick {i}: Player @ ({x:.1f}, {y:.1f})")
     draw_scene(scene)
     export_mesh_stub(scene)
 
