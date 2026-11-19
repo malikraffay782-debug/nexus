@@ -1709,7 +1709,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
               stepper('H', node.h.round(), () => _nudgeSelected(dh: -8), () => _nudgeSelected(dh: 8)),
             ],
           ),
-          // 3D foundation: Z on all nodes; FOV / near / far on cameras
+          // 3D foundation: Z / zDepth on nodes; FOV / near / far on cameras
           Row(
             children: [
               stepper(
@@ -1718,6 +1718,17 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 () => _updateSelectedNode((n) => n.copyWith(z: n.z - 8)),
                 () => _updateSelectedNode((n) => n.copyWith(z: n.z + 8)),
               ),
+              if (!node.isCamera)
+                stepper(
+                  'Zd',
+                  node.zDepth.round(),
+                  () => _updateSelectedNode(
+                    (n) => n.copyWith(zDepth: (n.zDepth - 8).clamp(0.0, 1e6)),
+                  ),
+                  () => _updateSelectedNode(
+                    (n) => n.copyWith(zDepth: (n.zDepth + 8).clamp(0.0, 1e6)),
+                  ),
+                ),
               if (node.isCamera)
                 stepper(
                   'FOV',

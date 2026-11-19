@@ -100,6 +100,7 @@ class SceneNode {
     required this.x,
     required this.y,
     this.z = defaultZ,
+    this.zDepth = defaultZDepth,
     this.w = 64,
     this.h = 64,
     this.color = 0xFF7C4DFF,
@@ -111,6 +112,8 @@ class SceneNode {
   });
 
   static const double defaultZ = 0;
+  /// Zero = flat plane (legacy). >0 = AABB thickness along Z around [z].
+  static const double defaultZDepth = 0;
   static const double defaultFov = 60;
   static const double defaultNear = 0.1;
   static const double defaultFar = 1000;
@@ -122,6 +125,8 @@ class SceneNode {
   final double y;
   /// Depth (scene units). Default 0 keeps existing 2D behaviour.
   final double z;
+  /// Z-thickness for 3D AABB. 0 = flat at [z]; >0 → [z − d/2, z + d/2].
+  final double zDepth;
   final double w;
   final double h;
   /// ARGB packed color for stage paint.
@@ -184,6 +189,7 @@ class SceneNode {
     };
     // 3D foundation — always write so Python / future run path can read them.
     map['z'] = z;
+    if (zDepth != defaultZDepth) map['zDepth'] = zDepth;
     if (isCamera || fov != defaultFov) map['fov'] = fov;
     if (isCamera || near != defaultNear) map['near'] = near;
     if (isCamera || far != defaultFar) map['far'] = far;
@@ -221,6 +227,8 @@ class SceneNode {
     final px = (json['x'] as num?)?.toDouble() ?? 0;
     final py = (json['y'] as num?)?.toDouble() ?? 0;
     final pz = (json['z'] as num?)?.toDouble() ?? defaultZ;
+    final rawZd = (json['zDepth'] as num?)?.toDouble() ?? defaultZDepth;
+    final zDepth = rawZd.isFinite && rawZd > 0 ? rawZd : defaultZDepth;
     final fov = (json['fov'] as num?)?.toDouble() ?? defaultFov;
     // Clamp near/far so invariant always holds: near > 0 and far > near.
     // Hand-edited or corrupt JSON must not produce invalid cameras.
@@ -240,6 +248,7 @@ class SceneNode {
       x: px,
       y: py,
       z: pz,
+      zDepth: zDepth,
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,
@@ -265,6 +274,7 @@ class SceneNode {
     double? x,
     double? y,
     double? z,
+    double? zDepth,
     double? w,
     double? h,
     int? color,
@@ -282,6 +292,7 @@ class SceneNode {
       x: x ?? this.x,
       y: y ?? this.y,
       z: z ?? this.z,
+      zDepth: zDepth ?? this.zDepth,
       w: w ?? this.w,
       h: h ?? this.h,
       color: color ?? this.color,

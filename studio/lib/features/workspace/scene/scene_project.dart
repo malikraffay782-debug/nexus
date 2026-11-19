@@ -255,11 +255,11 @@ class SceneProject {
     return inNdcLateral(ndc.$1, ndc.$2);
   }
 
-  /// Axis-aligned stage rect at constant [z] vs camera frustum.
+  /// Axis-aligned box vs camera frustum.
   ///
-  /// Soft: depth of the plane only (no lateral).
-  /// NDC: any of the 4 corners inside depth+lateral → visible (Unity-style
-  /// bounds test lite — flat Z slab, not a full 3D AABB).
+  /// [zDepth] 0 → flat plane at [z] (4 corners).
+  /// [zDepth] > 0 → thickness around [z]: z±zDepth/2 (8 corners).
+  /// Soft: z-extent overlaps soft depth range. NDC: any corner in frustum.
   static bool aabbVisible(
     SceneCamFrame cam,
     double x,
@@ -267,22 +267,38 @@ class SceneProject {
     double w,
     double h,
     double z, {
+    double zDepth = 0,
     SceneProjectMode mode = SceneProjectMode.soft,
     SceneMat4? viewProjection,
   }) {
-    final depth = cam.depthOf(z);
+    final half = zDepth > 0 ? zDepth * 0.5 : 0.0;
+    final z0 = z - half;
+    final z1 = z + half;
+    final d0 = cam.depthOf(z0);
+    final d1 = cam.depthOf(z1);
+    final dMin = math.min(d0, d1);
+    final dMax = math.max(d0, d1);
+
     if (mode == SceneProjectMode.soft) {
-      return cam.inSoftDepth(depth);
+      return dMax >= 0 && dMin <= cam.far;
     }
-    if (!cam.inDepthSlab(depth)) return false;
+    if (dMax < cam.near || dMin > cam.far) return false;
+
     final vp = viewProjection ?? cam.viewProjectionMatrix();
     final x1 = x + w;
     final y1 = y + h;
-    // 4 corners — early out on first hit.
-    if (inNdcFrustum(cam, x, y, z, viewProjection: vp)) return true;
-    if (inNdcFrustum(cam, x1, y, z, viewProjection: vp)) return true;
-    if (inNdcFrustum(cam, x, y1, z, viewProjection: vp)) return true;
-    if (inNdcFrustum(cam, x1, y1, z, viewProjection: vp)) return true;
+    bool corner(double px, double py, double pz) =>
+        inNdcFrustum(cam, px, py, pz, viewProjection: vp);
+    if (corner(x, y, z0)) return true;
+    if (corner(x1, y, z0)) return true;
+    if (corner(x, y1, z0)) return true;
+    if (corner(x1, y1, z0)) return true;
+    if (half > 0) {
+      if (corner(x, y, z1)) return true;
+      if (corner(x1, y, z1)) return true;
+      if (corner(x, y1, z1)) return true;
+      if (corner(x1, y1, z1)) return true;
+    }
     return false;
   }
 

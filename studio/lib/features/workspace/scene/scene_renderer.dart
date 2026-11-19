@@ -180,6 +180,7 @@ class SceneStagePainter extends CustomPainter {
         boundW,
         boundH,
         n.z,
+        zDepth: n.zDepth,
         mode: projectMode,
         viewProjection: _viewProjection,
       );
