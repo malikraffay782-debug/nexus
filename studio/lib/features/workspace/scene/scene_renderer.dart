@@ -37,6 +37,8 @@ class SceneStagePainter extends CustomPainter {
 
   /// Play-frame camera (null in edit mode or when no camera node).
   SceneCamFrame? _cam;
+  /// Cached P×V for NDC mode (once per paint).
+  SceneMat4? _viewProjection;
 
   /// Preview bob in scene units. Cameras stay fixed.
   Offset _previewOffset(SceneNode n) {
@@ -51,7 +53,14 @@ class SceneStagePainter extends CustomPainter {
     if (cam == null) {
       return SceneProjected(x: x, y: y, scale: 1, visible: true);
     }
-    return SceneProject.project(cam, x, y, z, mode: projectMode);
+    return SceneProject.project(
+      cam,
+      x,
+      y,
+      z,
+      mode: projectMode,
+      viewProjection: _viewProjection,
+    );
   }
 
   @override
@@ -66,6 +75,9 @@ class SceneStagePainter extends CustomPainter {
             stageW: doc.width.toDouble(),
             stageH: doc.height.toDouble(),
           )
+        : null;
+    _viewProjection = (_cam != null && projectMode == SceneProjectMode.ndc)
+        ? _cam!.viewProjectionMatrix()
         : null;
 
     canvas.drawRect(

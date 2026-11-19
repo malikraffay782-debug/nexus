@@ -74,6 +74,95 @@ class SceneCamFrame {
 
   /// Strict near/far slab (NDC / true frustum).
   bool inDepthSlab(double depth) => depth >= near && depth <= far;
+
+  /// View matrix: stage (x, y_down, z) → camera (x, y_up, depth), look +Z.
+  SceneMat4 viewMatrix() => SceneMat4.viewLookPlusZ(cx, cy, cz);
+
+  /// Perspective projection (OpenGL-style clip, z → NDC −1…+1).
+  SceneMat4 projectionMatrix() =>
+      SceneMat4.perspective(fovDeg, aspect, near, far);
+
+  /// Cached VP = P × V for this frame (build once per paint when needed).
+  SceneMat4 viewProjectionMatrix() => projectionMatrix().mul(viewMatrix());
+}
+
+/// Column-major 4×4 matrix — pure Dart, no GPU package.
+///
+/// Layout matches OpenGL: index = col * 4 + row.
+class SceneMat4 {
+  SceneMat4(this.m) : assert(m.length == 16);
+
+  /// 16 elements, column-major.
+  final List<double> m;
+
+  static SceneMat4 identity() => SceneMat4(<double>[
+        1, 0, 0, 0, // col0
+        0, 1, 0, 0,
+        0, 0, 1, 0,
+        0, 0, 0, 1,
+      ]);
+
+  /// Stage → camera: translate −eye, then flip Y (stage down → camera up).
+  static SceneMat4 viewLookPlusZ(double eyeX, double eyeY, double eyeZ) {
+    return SceneMat4(<double>[
+      1, 0, 0, 0,
+      0, -1, 0, 0,
+      0, 0, 1, 0,
+      -eyeX, eyeY, -eyeZ, 1,
+    ]);
+  }
+
+  /// Symmetric perspective; [fovDeg] vertical; [aspect] = width/height.
+  static SceneMat4 perspective(
+    double fovDeg,
+    double aspect,
+    double near,
+    double far,
+  ) {
+    final safeAspect = aspect <= 1e-9 ? 1.0 : aspect;
+    final safeNear = near <= 1e-6 ? 1e-6 : near;
+    final safeFar = far > safeNear + 1e-6 ? far : safeNear + 1e-6;
+    final f = 1.0 / math.tan(fovDeg * math.pi / 360.0);
+    final a = (safeFar + safeNear) / (safeNear - safeFar);
+    final b = (2.0 * safeFar * safeNear) / (safeNear - safeFar);
+    return SceneMat4(<double>[
+      f / safeAspect, 0, 0, 0,
+      0, f, 0, 0,
+      0, 0, a, -1,
+      0, 0, b, 0,
+    ]);
+  }
+
+  /// this × other (column-major).
+  SceneMat4 mul(SceneMat4 other) {
+    final a = m;
+    final b = other.m;
+    final o = List<double>.filled(16, 0);
+    for (var col = 0; col < 4; col++) {
+      for (var row = 0; row < 4; row++) {
+        var s = 0.0;
+        for (var k = 0; k < 4; k++) {
+          s += a[k * 4 + row] * b[col * 4 + k];
+        }
+        o[col * 4 + row] = s;
+      }
+    }
+    return SceneMat4(o);
+  }
+
+  /// Transform point (x,y,z,1) → (x',y',z',w').
+  (double x, double y, double z, double w) transformPoint(
+    double x,
+    double y,
+    double z,
+  ) {
+    final e = m;
+    final xw = e[0] * x + e[4] * y + e[8] * z + e[12];
+    final yw = e[1] * x + e[5] * y + e[9] * z + e[13];
+    final zw = e[2] * x + e[6] * y + e[10] * z + e[14];
+    final ww = e[3] * x + e[7] * y + e[11] * z + e[15];
+    return (xw, yw, zw, ww);
+  }
 }
 
 /// One projected sample in stage (pixel-like) space.
@@ -96,8 +185,8 @@ class SceneProjected {
 
 /// Pure projection helpers — no Flutter/GPU.
 ///
-/// Soft path stays the low-end default. NDC path is the Unity-class space
-/// (world → camera → clip → NDC → stage) without requiring a GPU yet.
+/// Soft path stays the low-end default. NDC path uses view×projection
+/// matrices (Unity-style) then perspective divide — still CPU-only.
 class SceneProject {
   SceneProject._();
 
@@ -127,39 +216,25 @@ class SceneProject {
     );
   }
 
-  /// Camera-space → NDC (OpenGL-style x/y in [-1,1]; z in [-1,1] mid-depth map).
+  /// World/stage → NDC via view×projection (perspective divide).
   ///
-  /// Stage Y is down; converted to Y-up before projection so [ndcToStage]
-  /// flip is consistent. Returns null if outside near/far or w<=0.
-  /// Lateral (|nx|/|ny|) is tested separately via [inNdcLateral].
+  /// Returns null if behind the projection (w<=0) or outside near/far depth
+  /// slab. Lateral (|nx|/|ny|) tested separately via [inNdcLateral].
   static (double nx, double ny, double nz)? toNdc(
     SceneCamFrame cam,
     double x,
     double y,
-    double z,
-  ) {
+    double z, {
+    SceneMat4? viewProjection,
+  }) {
     final depth = cam.depthOf(z);
     if (depth < cam.near || depth > cam.far) return null;
 
-    // Camera space: origin at eye, x right, y up, z forward.
-    final xc = x - cam.cx;
-    final yc = cam.cy - y; // stage Y-down → camera Y-up
-    final zc = depth;
-
-    final f = 1.0 / math.tan(cam.fovDeg * math.pi / 360.0);
-    final a = cam.aspect <= 0 ? 1.0 : cam.aspect;
-    // Perspective: clip then divide by zc.
-    final xClip = f * xc / a;
-    final yClip = f * yc;
-    final w = zc;
-    if (w <= 1e-9) return null;
-
-    final nx = xClip / w;
-    final ny = yClip / w;
-    // Map near..far → -1..+1 (guard degenerate far==near).
-    final span = cam.far - cam.near;
-    final nz = span > 1e-9 ? ((zc - cam.near) / span) * 2.0 - 1.0 : 0.0;
-    return (nx, ny, nz);
+    final vp = viewProjection ?? cam.viewProjectionMatrix();
+    final (cx, cy, cz, cw) = vp.transformPoint(x, y, z);
+    if (cw <= 1e-9) return null;
+    final invW = 1.0 / cw;
+    return (cx * invW, cy * invW, cz * invW);
   }
 
   /// True if NDC x/y lie inside the unit square (FOV left/right/top/bottom).
@@ -193,19 +268,21 @@ class SceneProject {
 
   /// Dispatch by [mode]. Default soft for low-end frames.
   ///
-  /// - [SceneProjectMode.soft]: depth slab only (near/far).
-  /// - [SceneProjectMode.ndc]: depth + lateral FOV cone (|nx|,|ny| ≤ 1).
+  /// - [SceneProjectMode.soft]: soft depth scale (no matrices).
+  /// - [SceneProjectMode.ndc]: view×projection → NDC + lateral unit square.
   static SceneProjected project(
     SceneCamFrame cam,
     double x,
     double y,
     double z, {
     SceneProjectMode mode = SceneProjectMode.soft,
+    SceneMat4? viewProjection,
   }) {
     if (mode == SceneProjectMode.soft) {
       return projectSoft(cam, x, y, z);
     }
-    final ndc = toNdc(cam, x, y, z);
+    final vp = viewProjection ?? cam.viewProjectionMatrix();
+    final ndc = toNdc(cam, x, y, z, viewProjection: vp);
     if (ndc == null) {
       return SceneProjected(x: x, y: y, scale: 1, visible: false);
     }
