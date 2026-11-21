@@ -32,29 +32,60 @@ class SceneCamFrame {
   final double stageW;
   final double stageH;
 
-  /// First camera in [nodes], or null.
+  /// Resolve play/edit camera from [nodes].
+  ///
+  /// Prefer [preferredId] when it names a camera node (selected camera drives
+  /// the play view). Otherwise first camera in list order. Null if none.
   static SceneCamFrame? fromNodes(
     List<SceneNode> nodes, {
     required double stageW,
     required double stageH,
+    String? preferredId,
   }) {
-    for (final n in nodes) {
-      if (!n.isCamera) continue;
-      final near = n.near > 0 ? n.near : SceneNode.defaultNear;
-      final far = n.far > near ? n.far : SceneNode.defaultFar;
-      return SceneCamFrame(
-        cx: n.x + n.w * 0.5,
-        cy: n.y + n.h * 0.5,
-        cz: n.z,
+    SceneNode? pick;
+    if (preferredId != null && preferredId.isNotEmpty) {
+      for (final n in nodes) {
+        if (n.id == preferredId && n.isCamera) {
+          pick = n;
+          break;
+        }
+      }
+    }
+    if (pick == null) {
+      for (final n in nodes) {
+        if (n.isCamera) {
+          pick = n;
+          break;
+        }
+      }
+    }
+    if (pick == null) return null;
+
+    final near = pick.near > 0 ? pick.near : SceneNode.defaultNear;
+    final far = pick.far > near ? pick.far : SceneNode.defaultFar;
+    return SceneCamFrame(
+      cx: pick.x + pick.w * 0.5,
+      cy: pick.y + pick.h * 0.5,
+      cz: pick.z,
+      near: near,
+      far: far,
+      fovDeg: pick.fov.clamp(1.0, 179.0),
+      stageW: stageW,
+      stageH: stageH,
+    );
+  }
+
+  /// Same lens / depth, new eye XY (play follow — does not mutate nodes).
+  SceneCamFrame withEyeXy(double x, double y) => SceneCamFrame(
+        cx: x,
+        cy: y,
+        cz: cz,
         near: near,
         far: far,
-        fovDeg: n.fov.clamp(1.0, 179.0),
+        fovDeg: fovDeg,
         stageW: stageW,
         stageH: stageH,
       );
-    }
-    return null;
-  }
 
   double get aspect => stageH > 0 ? stageW / stageH : 1.0;
 

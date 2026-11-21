@@ -10,7 +10,8 @@ import 'scene_project.dart';
 /// Edit mode (`playTime <= 0`): ortho paint so drag handles match model coords.
 /// Play preview (`playTime > 0`): non-destructive bob + camera projection
 /// via [SceneProject] (default [SceneProjectMode.soft] for low-end).
-/// Does not mutate [doc].
+/// Active camera eye XY follows node named Player when present; lens/z stay
+/// on the camera node. Does not mutate [doc].
 ///
 /// Low-end notes:
 /// - [SceneCamFrame] resolved once per [paint].
@@ -49,8 +50,7 @@ class SceneStagePainter extends CustomPainter {
   /// mode shows a readable game-tick. Other sprites keep a light bob.
   Offset _previewOffset(SceneNode n) {
     if (playTime <= 0 || n.isCamera) return Offset.zero;
-    final isPlayer = n.name.toLowerCase() == 'player';
-    if (isPlayer) {
+    if (_isPlayer(n)) {
       // Idle roam + keyboard steer (non-destructive sample loop).
       final dx = math.sin(playTime * 1.7) * 48.0 + playerSteer.dx * 56.0;
       final dy = math.cos(playTime * 1.1) * 28.0 + playerSteer.dy * 56.0;
@@ -58,6 +58,16 @@ class SceneStagePainter extends CustomPainter {
     }
     final phase = playTime * 2.4 + n.x * 0.02 + n.y * 0.015;
     return Offset(math.cos(phase * 0.7) * 4.0, math.sin(phase) * 10.0);
+  }
+
+  static bool _isPlayer(SceneNode n) => n.name.toLowerCase() == 'player';
+
+  /// First sprite named Player (play sample target for camera follow).
+  SceneNode? _findPlayer() {
+    for (final n in doc.nodes) {
+      if (!n.isCamera && _isPlayer(n)) return n;
+    }
+    return null;
   }
 
   /// Project stage point; identity when no cam / edit mode.
@@ -82,13 +92,27 @@ class SceneStagePainter extends CustomPainter {
 
     final scaleX = size.width / doc.width;
     final scaleY = size.height / doc.height;
-    _cam = playTime > 0
-        ? SceneCamFrame.fromNodes(
-            doc.nodes,
-            stageW: doc.width.toDouble(),
-            stageH: doc.height.toDouble(),
-          )
-        : null;
+    // Play: selected camera (if any) else first; then XY-follow Player.
+    SceneCamFrame? cam;
+    if (playTime > 0) {
+      cam = SceneCamFrame.fromNodes(
+        doc.nodes,
+        stageW: doc.width.toDouble(),
+        stageH: doc.height.toDouble(),
+        preferredId: selectedId,
+      );
+      if (cam != null) {
+        final player = _findPlayer();
+        if (player != null) {
+          final off = _previewOffset(player);
+          final px = player.x + player.w * 0.5 + off.dx;
+          final py = player.y + player.h * 0.5 + off.dy;
+          // Sample follow: eye XY locks to Player; lens/z stay on camera node.
+          cam = cam.withEyeXy(px, py);
+        }
+      }
+    }
+    _cam = cam;
     _viewProjection = (_cam != null && projectMode == SceneProjectMode.ndc)
         ? _cam!.viewProjectionMatrix()
         : null;
