@@ -222,7 +222,8 @@ class ProjectRepository {
             'name': 'main',
             'width': 720,
             'height': 1280,
-            'showGrid': true,
+            // Dark void stage — no grid/ground; user adds content.
+            'showGrid': false,
             'nodes': <dynamic>[],
           }),
           flush: true,

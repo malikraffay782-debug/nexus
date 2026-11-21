@@ -2097,7 +2097,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     if (doc.nodes.isEmpty)
                       Center(
                         child: Text(
-                          'Empty stage — add a sprite or camera',
+                          'Dark void — add sprites, cameras, meshes as you build',
                           style: TextStyle(color: scheme.outline),
                         ),
                       ),

@@ -313,7 +313,8 @@ class SceneDoc {
     this.width = 720,
     this.height = 1280,
     this.nodes = const [],
-    this.showGrid = true,
+    // Dark void by default — grid is opt-in; user places content.
+    this.showGrid = false,
   });
 
   final int version;
@@ -361,7 +362,7 @@ class SceneDoc {
       name: json['name'] as String? ?? 'untitled',
       width: (json['width'] as num?)?.toInt() ?? 720,
       height: (json['height'] as num?)?.toInt() ?? 1280,
-      showGrid: json['showGrid'] as bool? ?? true,
+      showGrid: json['showGrid'] as bool? ?? false,
       nodes: unique,
     );
   }
