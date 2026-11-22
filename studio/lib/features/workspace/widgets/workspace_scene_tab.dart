@@ -1198,10 +1198,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       child: SafeArea(
         top: false,
         child: SizedBox(
-          // Slightly taller + 44dp targets for thumb-friendly taps.
-          height: 118,
+          // Name row + tools + RX/RY/RZ. Fixed heights so the stage stays king.
+          height: 158,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 8),
+            padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
             child: Column(
               children: [
                 Row(
@@ -1261,8 +1261,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     ),
                   ],
                 ),
-                const SizedBox(height: 6),
-                Expanded(
+                const SizedBox(height: 4),
+                SizedBox(
+                  height: 44,
                   child: Row(
                     children: [
                       for (final t in SceneNodeTypes.all)
@@ -1325,10 +1326,76 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     ],
                   ),
                 ),
+                SizedBox(
+                  height: 40,
+                  child: ListView(
+                    scrollDirection: Axis.horizontal,
+                    children: [
+                      _rotStep(
+                        scheme,
+                        'RX',
+                        n.rx,
+                        (d) => _updateSelectedNode((node) => node.copyWith(rx: node.rx + d)),
+                      ),
+                      _rotStep(
+                        scheme,
+                        'RY',
+                        n.ry,
+                        (d) => _updateSelectedNode((node) => node.copyWith(ry: node.ry + d)),
+                      ),
+                      _rotStep(
+                        scheme,
+                        'RZ',
+                        n.rz,
+                        (d) => _updateSelectedNode((node) => node.copyWith(rz: node.rz + d)),
+                      ),
+                    ],
+                  ),
+                ),
               ],
             ),
           ),
         ),
+      ),
+    );
+  }
+
+  /// ±15° step for one rotation axis. Phone dock scrolls these horizontally.
+  Widget _rotStep(
+    ColorScheme scheme,
+    String label,
+    double degrees,
+    void Function(double delta) apply,
+  ) {
+    return Padding(
+      padding: const EdgeInsets.only(right: 4),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(label, style: TextStyle(fontSize: 12, color: scheme.outline)),
+          IconButton(
+            tooltip: '$label −15°',
+            icon: const Icon(Icons.remove, size: 18),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: EdgeInsets.zero,
+            onPressed: () => apply(-15),
+          ),
+          SizedBox(
+            width: 40,
+            child: Text(
+              '${degrees.round()}°',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12),
+            ),
+          ),
+          IconButton(
+            tooltip: '$label +15°',
+            icon: const Icon(Icons.add, size: 18),
+            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
+            padding: EdgeInsets.zero,
+            onPressed: () => apply(15),
+          ),
+        ],
       ),
     );
   }
@@ -1581,11 +1648,15 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             ),
           ),
           const Divider(height: 1),
-          // List must shrink; properties stay fixed-height below.
-          Expanded(child: _nodeList(scheme)),
+          // List shrinks when the property stack is tall (rotation rows included).
+          Flexible(child: _nodeList(scheme)),
           if (_selectedNodeId != null) ...[
             const Divider(height: 1),
-            _nodeProperties(scheme),
+            Flexible(
+              child: SingleChildScrollView(
+                child: _nodeProperties(scheme),
+              ),
+            ),
           ],
         ],
       ),
@@ -1808,6 +1879,34 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                     (n) => n.copyWith(fov: (n.fov + 5).clamp(1.0, 179.0)),
                   ),
                 ),
+            ],
+          ),
+          // Orientation (degrees). Two per row — sidebar is ~200px.
+          Row(
+            children: [
+              stepper(
+                'RX',
+                node.rx.round(),
+                () => _updateSelectedNode((n) => n.copyWith(rx: n.rx - 15)),
+                () => _updateSelectedNode((n) => n.copyWith(rx: n.rx + 15)),
+              ),
+              stepper(
+                'RY',
+                node.ry.round(),
+                () => _updateSelectedNode((n) => n.copyWith(ry: n.ry - 15)),
+                () => _updateSelectedNode((n) => n.copyWith(ry: n.ry + 15)),
+              ),
+            ],
+          ),
+          Row(
+            children: [
+              stepper(
+                'RZ',
+                node.rz.round(),
+                () => _updateSelectedNode((n) => n.copyWith(rz: n.rz - 15)),
+                () => _updateSelectedNode((n) => n.copyWith(rz: n.rz + 15)),
+              ),
+              const Expanded(child: SizedBox.shrink()),
             ],
           ),
           if (node.isCamera)

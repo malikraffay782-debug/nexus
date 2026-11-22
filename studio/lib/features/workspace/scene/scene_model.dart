@@ -90,6 +90,9 @@ class ScenePoint {
 ///
 /// 3D foundation (additive, backward-compatible):
 /// - [z] depth in scene units (default 0). Used later for sort / projection.
+/// - [zDepth] AABB thickness along Z.
+/// - [rx] / [ry] / [rz] orientation in degrees (default 0). Rects and cameras
+///   paint them; polygon verts stay in scene space (gnomon only).
 /// - [fov] / [near] / [far] are meaningful on camera nodes; sprites ignore them
 ///   in the 2D painter but still persist for future 3D run path.
 class SceneNode {
@@ -101,6 +104,9 @@ class SceneNode {
     required this.y,
     this.z = defaultZ,
     this.zDepth = defaultZDepth,
+    this.rx = 0,
+    this.ry = 0,
+    this.rz = 0,
     this.w = 64,
     this.h = 64,
     this.color = 0xFF7C4DFF,
@@ -127,6 +133,12 @@ class SceneNode {
   final double z;
   /// Z-thickness for 3D AABB. 0 = flat at [z]; >0 → [z − d/2, z + d/2].
   final double zDepth;
+  /// Rotation about local X, degrees. Pitch. 0 = legacy flat rect.
+  final double rx;
+  /// Rotation about local Y, degrees. Yaw. Painted as width foreshorten.
+  final double ry;
+  /// Rotation about local Z, degrees. Roll. Painted as canvas rotation.
+  final double rz;
   final double w;
   final double h;
   /// ARGB packed color for stage paint.
@@ -176,6 +188,15 @@ class SceneNode {
     return (minX, minY, bw, bh);
   }
 
+  /// Wrap degrees into (-180, 180]. Non-finite → 0.
+  static double normalizeDegrees(double raw) {
+    if (!raw.isFinite) return 0;
+    var d = raw % 360.0;
+    if (d > 180) d -= 360;
+    if (d == 0) return 0;
+    return d;
+  }
+
   Map<String, dynamic> toJson() {
     final map = <String, dynamic>{
       'id': id,
@@ -190,6 +211,12 @@ class SceneNode {
     // 3D foundation — always write so Python / future run path can read them.
     map['z'] = z;
     if (zDepth != defaultZDepth) map['zDepth'] = zDepth;
+    final nrx = normalizeDegrees(rx);
+    final nry = normalizeDegrees(ry);
+    final nrz = normalizeDegrees(rz);
+    if (nrx != 0) map['rx'] = nrx;
+    if (nry != 0) map['ry'] = nry;
+    if (nrz != 0) map['rz'] = nrz;
     if (isCamera || fov != defaultFov) map['fov'] = fov;
     if (isCamera || near != defaultNear) map['near'] = near;
     if (isCamera || far != defaultFar) map['far'] = far;
@@ -229,6 +256,9 @@ class SceneNode {
     final pz = (json['z'] as num?)?.toDouble() ?? defaultZ;
     final rawZd = (json['zDepth'] as num?)?.toDouble() ?? defaultZDepth;
     final zDepth = rawZd.isFinite && rawZd > 0 ? rawZd : defaultZDepth;
+    final rx = normalizeDegrees((json['rx'] as num?)?.toDouble() ?? 0);
+    final ry = normalizeDegrees((json['ry'] as num?)?.toDouble() ?? 0);
+    final rz = normalizeDegrees((json['rz'] as num?)?.toDouble() ?? 0);
     final fov = (json['fov'] as num?)?.toDouble() ?? defaultFov;
     // Clamp near/far so invariant always holds: near > 0 and far > near.
     // Hand-edited or corrupt JSON must not produce invalid cameras.
@@ -249,6 +279,9 @@ class SceneNode {
       y: py,
       z: pz,
       zDepth: zDepth,
+      rx: rx,
+      ry: ry,
+      rz: rz,
       w: (json['w'] as num?)?.toDouble() ?? 64,
       h: (json['h'] as num?)?.toDouble() ?? 64,
       color: color,
@@ -275,6 +308,9 @@ class SceneNode {
     double? y,
     double? z,
     double? zDepth,
+    double? rx,
+    double? ry,
+    double? rz,
     double? w,
     double? h,
     int? color,
@@ -293,6 +329,9 @@ class SceneNode {
       y: y ?? this.y,
       z: z ?? this.z,
       zDepth: zDepth ?? this.zDepth,
+      rx: rx != null ? normalizeDegrees(rx) : this.rx,
+      ry: ry != null ? normalizeDegrees(ry) : this.ry,
+      rz: rz != null ? normalizeDegrees(rz) : this.rz,
       w: w ?? this.w,
       h: h ?? this.h,
       color: color ?? this.color,

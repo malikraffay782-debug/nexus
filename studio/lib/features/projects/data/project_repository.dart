@@ -369,12 +369,16 @@ def _node_label(node: dict) -> str:
     if mesh and ntype != "camera":
         extra = f"{extra} mesh={mesh}"
     zpart = f" z={z:g}" if z else ""
+    rx = float(node.get("rx") or 0)
+    ry = float(node.get("ry") or 0)
+    rz = float(node.get("rz") or 0)
+    rpart = f" rot=({rx:g},{ry:g},{rz:g})" if (rx or ry or rz) else ""
     if ntype == "camera":
         fov = float(node.get("fov") or 60)
         near = float(node.get("near") or 0.1)
         far = float(node.get("far") or 1000)
         extra = f" fov={fov:g} near={near:g} far={far:g}"
-    return f"{name} [{ntype}] @({x},{y}){zpart} {w}x{h}{extra}"
+    return f"{name} [{ntype}] @({x},{y}){zpart}{rpart} {w}x{h}{extra}"
 
 
 def _active_camera(nodes: list) -> dict | None:

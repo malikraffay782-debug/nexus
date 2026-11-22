@@ -239,12 +239,27 @@ class SceneStagePainter extends CustomPainter {
 
     if (n.hasPoints) {
       _paintPoly(canvas, n, off, scaleX, scaleY, fill, stroke, selected);
+      if (n.rx != 0 || n.ry != 0 || n.rz != 0) {
+        _paintPoseAt(canvas, n, outX * scaleX, outY * scaleY, 18);
+      }
       return;
     }
     final drawW = n.w * (isCamera ? 1.0 : pScale);
     final drawH = n.h * (isCamera ? 1.0 : pScale);
+    final showPose = selected || n.rx != 0 || n.ry != 0 || n.rz != 0;
+
+    canvas.save();
+    canvas.translate(outX * scaleX, outY * scaleY);
+    canvas.rotate(n.rz * math.pi / 180.0);
+    if (!isCamera) {
+      // Yaw / pitch read as foreshorten on the flat stage (min so it never vanishes).
+      canvas.scale(
+        math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0),
+        math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0),
+      );
+    }
     final rect = Rect.fromCenter(
-      center: Offset(outX * scaleX, outY * scaleY),
+      center: Offset.zero,
       width: drawW * scaleX,
       height: drawH * scaleY,
     );
@@ -261,34 +276,78 @@ class SceneStagePainter extends CustomPainter {
         ..strokeWidth = selected ? 2.5 : 1.2,
     );
 
-    final cx = rect.center.dx;
-    final cy = rect.center.dy;
     final glyph = Paint()
       ..color = Colors.white.withValues(alpha: 0.9)
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1.5;
     if (isCamera) {
-      canvas.drawCircle(Offset(cx, cy), 6, glyph);
+      canvas.drawCircle(Offset.zero, 6, glyph);
+      if (showPose) _paintLocalAxes(canvas, 16);
+      canvas.restore();
+      // Frustum stays in stage space; roll it around the lens.
+      canvas.save();
+      canvas.translate(outX * scaleX, outY * scaleY);
+      canvas.rotate(n.rz * math.pi / 180.0);
+      canvas.translate(-outX * scaleX, -outY * scaleY);
       _paintCameraFrustum(canvas, n, scaleX, scaleY, selected);
+      canvas.restore();
       return;
     }
 
     final g = 10.0 * pScale;
     canvas.drawRect(
-      Rect.fromCenter(center: Offset(cx, cy), width: g, height: g),
+      Rect.fromCenter(center: Offset.zero, width: g, height: g),
       glyph,
     );
     if (n.mesh.isNotEmpty && SceneMeshes.normalize(n.mesh).isNotEmpty) {
       final badge = Path()
-        ..moveTo(cx, cy - 8)
-        ..lineTo(cx + 7, cy + 5)
-        ..lineTo(cx - 7, cy + 5)
+        ..moveTo(0, -8)
+        ..lineTo(7, 5)
+        ..lineTo(-7, 5)
         ..close();
       canvas.drawPath(
         badge,
         Paint()..color = Colors.white.withValues(alpha: 0.85),
       );
     }
+    if (showPose) {
+      final axis = math.max(12.0, math.min(rect.width, rect.height) * 0.35);
+      _paintLocalAxes(canvas, axis);
+    }
+    canvas.restore();
+  }
+
+  /// Local +X (red) / +Y (green, stage-down). Call inside the node transform.
+  void _paintLocalAxes(Canvas canvas, double len) {
+    final xPaint = Paint()
+      ..color = const Color(0xFFFF5252)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    final yPaint = Paint()
+      ..color = const Color(0xFF69F0AE)
+      ..strokeWidth = 1.6
+      ..strokeCap = StrokeCap.round;
+    canvas.drawLine(Offset.zero, Offset(len, 0), xPaint);
+    canvas.drawLine(Offset.zero, Offset(0, len), yPaint);
+  }
+
+  /// Orientation gnomon for polygon nodes (verts stay unrotated).
+  void _paintPoseAt(
+    Canvas canvas,
+    SceneNode n,
+    double cx,
+    double cy,
+    double len,
+  ) {
+    canvas.save();
+    canvas.translate(cx, cy);
+    canvas.rotate(n.rz * math.pi / 180.0);
+    canvas.scale(
+      math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0),
+      math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0),
+    );
+    _paintLocalAxes(canvas, len);
+    canvas.restore();
   }
 
   void _paintPoly(
