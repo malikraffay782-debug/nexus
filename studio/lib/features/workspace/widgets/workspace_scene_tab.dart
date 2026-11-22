@@ -1,3 +1,5 @@
+import 'dart:math' as math;
+
 import 'package:flutter/material.dart';
 import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
@@ -44,7 +46,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   final FocusNode _playFocus = FocusNode(debugLabel: 'scenePlay');
   final Set<LogicalKeyboardKey> _playKeys = {};
 
-  // Coalesce pointer nudges to one setState per frame (kills swipe lag).
+  /// True while a corner or the rotate handle owns the pointer.
+  /// Stops the body-drag recognizer from also translating the node.
+  bool _poseDrag = false;
   double _pendingNudgeDx = 0;
   double _pendingNudgeDy = 0;
   bool _nudgeFrameScheduled = false;
@@ -875,11 +879,26 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     required double h,
     double? x,
     double? y,
+    bool lockCenter = false,
   }) {
     final doc = _doc;
     if (doc == null) return;
     final nodes = doc.nodes.map((n) {
       if (n.id != id) return n;
+      if (lockCenter) {
+        // Rotation is around the center — keep that pivot while scaling.
+        var nw = w.clamp(24.0, 512.0);
+        var nh = h.clamp(24.0, 512.0);
+        if (nw > doc.width) nw = doc.width.toDouble();
+        if (nh > doc.height) nh = doc.height.toDouble();
+        final cx = n.x + n.w / 2;
+        final cy = n.y + n.h / 2;
+        final maxX = math.max(0.0, doc.width - nw);
+        final maxY = math.max(0.0, doc.height - nh);
+        final nx = (cx - nw / 2).clamp(0.0, maxX);
+        final ny = (cy - nh / 2).clamp(0.0, maxY);
+        return n.copyWith(x: nx, y: ny, w: nw, h: nh);
+      }
       var nx = x ?? n.x;
       var ny = y ?? n.y;
       var nw = w;
@@ -2408,12 +2427,13 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     }
 
     // --- Rect mode (default) ---
-    final mw = (n.w * scaleX).clamp(16.0, stageW);
-    final mh = (n.h * scaleY).clamp(16.0, stageH);
-    final left =
-        (n.x * scaleX).clamp(0.0, (stageW - mw).clamp(0.0, stageW));
-    final top =
-        (n.y * scaleY).clamp(0.0, (stageH - mh).clamp(0.0, stageH));
+    // Layout box matches the unrotated model. Rotate + foreshorten are the
+    // same as SceneStagePainter so the grab shape matches the paint.
+    final mw = math.max(n.w * scaleX, 1.0);
+    final mh = math.max(n.h * scaleY, 1.0);
+    final left = n.x * scaleX;
+    final top = n.y * scaleY;
+    final squash = _poseSquash(n);
 
     Widget body = paintBody
         ? Container(
@@ -2445,58 +2465,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
           )
         : SizedBox(width: mw, height: mh);
 
-    if (selected) {
-      body = Stack(
-        clipBehavior: Clip.none,
-        children: [
-          body,
-          _resizeHandle(
-            n: n,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            fill: fill,
-            visual: handleVisual,
-            hit: handleHit,
-            corner: _ResizeCorner.tl,
-          ),
-          _resizeHandle(
-            n: n,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            fill: fill,
-            visual: handleVisual,
-            hit: handleHit,
-            corner: _ResizeCorner.tr,
-          ),
-          _resizeHandle(
-            n: n,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            fill: fill,
-            visual: handleVisual,
-            hit: handleHit,
-            corner: _ResizeCorner.bl,
-          ),
-          _resizeHandle(
-            n: n,
-            scaleX: scaleX,
-            scaleY: scaleY,
-            fill: fill,
-            visual: handleVisual,
-            hit: handleHit,
-            corner: _ResizeCorner.br,
-          ),
-        ],
-      );
-    }
-
     return Positioned(
       left: left,
       top: top,
       child: GestureDetector(
-        behavior: HitTestBehavior.opaque,
+        behavior: HitTestBehavior.deferToChild,
         onTap: () => _selectNode(n.id),
         onPanUpdate: (details) {
+          if (_poseDrag) return;
           SceneNode? cur;
           final nodes = _doc?.nodes;
           if (nodes != null) {
@@ -2508,52 +2484,128 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             }
           }
           if (cur == null) return;
+          // Parent of the rotate transform — delta stays in stage space.
           final newX = cur.x + details.delta.dx / scaleX;
           final newY = cur.y + details.delta.dy / scaleY;
           _moveNode(n.id, newX, newY);
         },
-        child: body,
+        child: Transform.rotate(
+          angle: n.rz * math.pi / 180.0,
+          alignment: Alignment.center,
+          child: SizedBox(
+            width: mw,
+            height: mh,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Transform(
+                  alignment: Alignment.center,
+                  transform: Matrix4.diagonal3Values(squash.$1, squash.$2, 1),
+                  child: body,
+                ),
+                if (selected) ...[
+                  for (final corner in _ResizeCorner.values)
+                    _resizeHandle(
+                      n: n,
+                      scaleX: scaleX,
+                      scaleY: scaleY,
+                      boxW: mw,
+                      boxH: mh,
+                      fill: fill,
+                      visual: handleVisual,
+                      hit: handleHit,
+                      corner: corner,
+                    ),
+                  ..._rotateHandle(
+                    n: n,
+                    boxW: mw,
+                    boxH: mh,
+                    fill: fill,
+                    visual: handleVisual,
+                    hit: handleHit,
+                  ),
+                ],
+              ],
+            ),
+          ),
+        ),
       ),
     );
+  }
+
+  /// Pitch/yaw foreshorten. Same clamp as [SceneStagePainter].
+  (double, double) _poseSquash(SceneNode n) {
+    if (n.isCamera) return (1.0, 1.0);
+    final sx = math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0);
+    final sy = math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0);
+    return (sx, sy);
+  }
+
+  bool _hasPose(SceneNode n) =>
+      n.rx.abs() > 0.01 || n.ry.abs() > 0.01 || n.rz.abs() > 0.01;
+
+  void _beginPoseDrag() => _poseDrag = true;
+
+  void _endPoseDrag() => _poseDrag = false;
+
+  /// Point the orbit handle at [globalPointer]. Absolute angle, so it does not
+  /// depend on whether drag delta is local or screen space.
+  void _spinNodeTo(String id, Offset globalPointer, Offset globalCenter) {
+    final v = globalPointer - globalCenter;
+    if (v.distanceSquared < 36) return;
+    final deg = (math.atan2(v.dy, v.dx) + math.pi / 2) * 180.0 / math.pi;
+    if (_selectedNodeId != id) return;
+    _updateSelectedNode((node) => node.copyWith(rz: deg));
   }
 
   Widget _resizeHandle({
     required SceneNode n,
     required double scaleX,
     required double scaleY,
+    required double boxW,
+    required double boxH,
     required Color fill,
     required double visual,
     required double hit,
     required _ResizeCorner corner,
   }) {
-    double? left, top, right, bottom;
+    final squash = _poseSquash(n);
+    final hx = boxW / 2 * squash.$1;
+    final hy = boxH / 2 * squash.$2;
+    final cx = boxW / 2;
+    final cy = boxH / 2;
+    // Sit on the foreshortened corner (outside the scale transform) so the
+    // 40dp hit does not collapse when pitch/yaw squash the rect.
+    late final double cornerX;
+    late final double cornerY;
     switch (corner) {
       case _ResizeCorner.tl:
-        left = -hit / 2 + 2;
-        top = -hit / 2 + 2;
+        cornerX = cx - hx + 2;
+        cornerY = cy - hy + 2;
         break;
       case _ResizeCorner.tr:
-        right = -hit / 2 + 2;
-        top = -hit / 2 + 2;
+        cornerX = cx + hx - 2;
+        cornerY = cy - hy + 2;
         break;
       case _ResizeCorner.bl:
-        left = -hit / 2 + 2;
-        bottom = -hit / 2 + 2;
+        cornerX = cx - hx + 2;
+        cornerY = cy + hy - 2;
         break;
       case _ResizeCorner.br:
-        right = -hit / 2 + 2;
-        bottom = -hit / 2 + 2;
+        cornerX = cx + hx - 2;
+        cornerY = cy + hy - 2;
         break;
     }
     return Positioned(
-      left: left,
-      top: top,
-      right: right,
-      bottom: bottom,
+      left: cornerX - hit / 2,
+      top: cornerY - hit / 2,
       width: hit,
       height: hit,
       child: GestureDetector(
         behavior: HitTestBehavior.opaque,
+        onPanStart: (_) => _beginPoseDrag(),
+        onPanEnd: (_) => _endPoseDrag(),
+        onPanCancel: _endPoseDrag,
         onPanUpdate: (details) {
           SceneNode? cur;
           final nodes = _doc?.nodes;
@@ -2566,11 +2618,20 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
             }
           }
           if (cur == null) return;
-          final dx = details.delta.dx / scaleX;
-          final dy = details.delta.dy / scaleY;
+          // Delta is already in model-local axes (parent Transform.rotate
+          // undoes roll). Divide by foreshorten so the corner tracks the finger.
+          final sq = _poseSquash(cur);
+          final dx = details.delta.dx / (scaleX * sq.$1);
+          final dy = details.delta.dy / (scaleY * sq.$2);
+          final lock = _hasPose(cur);
           switch (corner) {
             case _ResizeCorner.br:
-              _resizeNode(n.id, w: cur.w + dx, h: cur.h + dy);
+              _resizeNode(
+                n.id,
+                w: cur.w + dx,
+                h: cur.h + dy,
+                lockCenter: lock,
+              );
               break;
             case _ResizeCorner.bl:
               _resizeNode(
@@ -2578,6 +2639,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 w: cur.w - dx,
                 h: cur.h + dy,
                 x: cur.x + dx,
+                lockCenter: lock,
               );
               break;
             case _ResizeCorner.tr:
@@ -2586,6 +2648,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 w: cur.w + dx,
                 h: cur.h - dy,
                 y: cur.y + dy,
+                lockCenter: lock,
               );
               break;
             case _ResizeCorner.tl:
@@ -2595,6 +2658,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 h: cur.h - dy,
                 x: cur.x + dx,
                 y: cur.y + dy,
+                lockCenter: lock,
               );
               break;
           }
@@ -2618,6 +2682,79 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         ),
       ),
     );
+  }
+
+  /// Amber orbit handle above the visual top edge. Rolls with [Transform.rotate].
+  /// Direct [Positioned] children — a nested stack would be 0×0 and drop hits.
+  List<Widget> _rotateHandle({
+    required SceneNode n,
+    required double boxW,
+    required double boxH,
+    required Color fill,
+    required double visual,
+    required double hit,
+  }) {
+    final sy = _poseSquash(n).$2;
+    final orbit = boxH / 2 * sy + 22;
+    return [
+      Positioned(
+        left: boxW / 2 - 1,
+        top: boxH / 2 - orbit,
+        width: 2,
+        height: 22,
+        child: const IgnorePointer(
+          child: ColoredBox(color: Color(0xFFFFC107)),
+        ),
+      ),
+      Positioned(
+        left: boxW / 2 - hit / 2,
+        top: boxH / 2 - orbit - hit / 2,
+        width: hit,
+        height: hit,
+        child: Builder(
+          builder: (handleContext) {
+            return GestureDetector(
+              behavior: HitTestBehavior.opaque,
+              onPanStart: (_) => _beginPoseDrag(),
+              onPanEnd: (_) => _endPoseDrag(),
+              onPanCancel: _endPoseDrag,
+              onPanUpdate: (details) {
+                final box = handleContext.findRenderObject() as RenderBox?;
+                if (box == null || !box.hasSize) return;
+                // Layout +Y from the handle center is the node center.
+                final center = box.localToGlobal(
+                  Offset(hit / 2, hit / 2 + orbit),
+                );
+                _spinNodeTo(n.id, details.globalPosition, center);
+              },
+              child: Center(
+                child: Container(
+                  width: visual,
+                  height: visual,
+                  alignment: Alignment.center,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFFFC107),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: fill, width: 2),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withValues(alpha: 0.4),
+                        blurRadius: 4,
+                      ),
+                    ],
+                  ),
+                  child: const Icon(
+                    Icons.rotate_right,
+                    size: 14,
+                    color: Colors.black,
+                  ),
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    ];
   }
 }
 
