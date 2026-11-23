@@ -26,6 +26,23 @@ class RunOutputPanel extends StatelessWidget {
         RunPhase.cancelled => state.errorMessage ?? 'Stopped',
       };
 
+  /// Fixed height budget so parent Column never overflows when the soft
+  /// keyboard or landscape leaves little vertical space.
+  ///
+  /// Landscape phones often have usable height ~360–420 after system bars +
+  /// AppBar + TabBar. Keep the panel small enough that Scene/Code still has
+  /// a usable canvas.
+  static double heightFor(BuildContext context) {
+    final h = MediaQuery.sizeOf(context).height;
+    final viewInsets = MediaQuery.viewInsetsOf(context).bottom;
+    // Prefer the space that remains after keyboard when it is open.
+    final available = (h - viewInsets).clamp(0.0, h);
+    if (available < 380) return 110;
+    if (available < 500) return 140;
+    if (available < 640) return 170;
+    return 200;
+  }
+
   @override
   Widget build(BuildContext context) {
     final theme = Theme.of(context);
@@ -45,10 +62,8 @@ class RunOutputPanel extends StatelessWidget {
       if (state.stderr.isNotEmpty) '[stderr]\n${state.stderr}',
     ].join('\n');
 
-    // Fixed height budget so parent Column never gets bottom overflow
-    // when the soft keyboard or landscape leaves little vertical space.
-    final screenH = MediaQuery.sizeOf(context).height;
-    final panelH = screenH < 500 ? 140.0 : 200.0;
+    final panelH = heightFor(context);
+    final compact = panelH <= 140;
 
     return Material(
       elevation: 6,
@@ -59,13 +74,15 @@ class RunOutputPanel extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
             Padding(
-              padding: const EdgeInsets.fromLTRB(12, 6, 4, 4),
+              padding: EdgeInsets.fromLTRB(12, compact ? 4 : 6, 4, compact ? 2 : 4),
               child: Row(
                 children: [
                   Expanded(
                     child: Text(
                       _phaseLabel,
-                      style: theme.textTheme.titleSmall,
+                      style: compact
+                          ? theme.textTheme.labelLarge
+                          : theme.textTheme.titleSmall,
                       overflow: TextOverflow.ellipsis,
                     ),
                   ),
@@ -78,10 +95,20 @@ class RunOutputPanel extends StatelessWidget {
                     ),
                   if (state.phase == RunPhase.starting ||
                       state.phase == RunPhase.running)
-                    TextButton(onPressed: onStop, child: const Text('Stop')),
+                    TextButton(
+                      onPressed: onStop,
+                      style: compact
+                          ? TextButton.styleFrom(
+                              visualDensity: VisualDensity.compact,
+                              padding: const EdgeInsets.symmetric(horizontal: 8),
+                            )
+                          : null,
+                      child: const Text('Stop'),
+                    ),
                   IconButton(
                     tooltip: 'Copy',
-                    icon: const Icon(Icons.copy, size: 18),
+                    icon: Icon(Icons.copy, size: compact ? 16 : 18),
+                    visualDensity: VisualDensity.compact,
                     onPressed: body.isEmpty
                         ? null
                         : () {
@@ -98,7 +125,8 @@ class RunOutputPanel extends StatelessWidget {
                           state.phase == RunPhase.idle))
                     IconButton(
                       tooltip: 'Close',
-                      icon: const Icon(Icons.close, size: 18),
+                      icon: Icon(Icons.close, size: compact ? 16 : 18),
+                      visualDensity: VisualDensity.compact,
                       onPressed: onClose,
                     ),
                 ],
@@ -107,7 +135,7 @@ class RunOutputPanel extends StatelessWidget {
             const Divider(height: 1),
             Expanded(
               child: SingleChildScrollView(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+                padding: EdgeInsets.fromLTRB(12, compact ? 4 : 8, 12, compact ? 8 : 12),
                 child: SelectableText(
                   body.isEmpty ? '…' : body,
                   style: mono,

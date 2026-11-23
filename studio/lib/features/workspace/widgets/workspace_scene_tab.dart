@@ -1198,6 +1198,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   }
 
   /// Fixed-height bottom inspector — never grows into the stage.
+  /// Shrinks on short / landscape heights so the canvas keeps usable room.
   Widget _phoneInspector(ColorScheme scheme) {
     final doc = _doc;
     SceneNode? node;
@@ -1211,16 +1212,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     }
     if (node == null) return const SizedBox.shrink();
     final n = node;
+    final screenH = MediaQuery.sizeOf(context).height;
+    final inspectorH = screenH < 420 ? 120.0 : (screenH < 560 ? 140.0 : 158.0);
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.92),
       elevation: 4,
       child: SafeArea(
         top: false,
         child: SizedBox(
-          // Name row + tools + RX/RY/RZ. Fixed heights so the stage stays king.
-          height: 158,
+          // Name row + tools + RX/RY/RZ. Bounded so the stage stays king.
+          height: inspectorH,
           child: Padding(
-            padding: const EdgeInsets.fromLTRB(12, 8, 8, 6),
+            padding: EdgeInsets.fromLTRB(12, screenH < 420 ? 4 : 8, 8, 6),
             child: Column(
               children: [
                 Row(
@@ -1420,6 +1423,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   }
 
   /// Large video-editor style pad: left tool rail + full swipe surface.
+  /// Height scales down in landscape / short viewports so the stage is not buried.
   Widget _pointsControlPad(ColorScheme scheme) {
     final node = _pointsEditNode;
     final idx = _editPointIndex;
@@ -1427,6 +1431,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     final pts = node.points!;
     if (idx < 0 || idx >= pts.length) return const SizedBox.shrink();
     final p = pts[idx];
+    final screenH = MediaQuery.sizeOf(context).height;
+    final padH = screenH < 420
+        ? 180.0
+        : (screenH < 560 ? 240.0 : 320.0);
     return Material(
       color: scheme.surfaceContainerHighest.withValues(alpha: 0.98),
       elevation: 8,
@@ -1434,7 +1442,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         top: false,
         child: SizedBox(
           // Full-bleed swipe zone under the title (fills dock, not a small inset card).
-          height: 320,
+          height: padH,
           child: Column(
             children: [
               // Title bar

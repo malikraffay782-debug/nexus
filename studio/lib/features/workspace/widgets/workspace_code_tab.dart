@@ -30,13 +30,19 @@ class _WorkspaceCodeTabState extends State<WorkspaceCodeTab>
       context: context,
       isScrollControlled: true,
       showDragHandle: true,
-      builder: (ctx) => SizedBox(
-        height: MediaQuery.of(ctx).size.height * 0.7,
-        child: FileTreePanel(
-          controller: controller,
-          onFileOpened: () => Navigator.of(ctx).pop(),
-        ),
-      ),
+      builder: (ctx) {
+        final h = MediaQuery.sizeOf(ctx).height;
+        // Landscape / short screens: cap so the sheet does not eat the whole
+        // viewport; portrait phones keep ~70%.
+        final sheetH = h < 500 ? (h * 0.85).clamp(180.0, 320.0) : h * 0.7;
+        return SizedBox(
+          height: sheetH,
+          child: FileTreePanel(
+            controller: controller,
+            onFileOpened: () => Navigator.of(ctx).pop(),
+          ),
+        );
+      },
     );
   }
 
