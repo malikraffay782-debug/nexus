@@ -10,7 +10,9 @@ enum SceneProjectMode { soft, ndc }
 
 /// Resolved camera + stage constants for one frame (no node refs held).
 ///
-/// Convention: eye at (cx, cy, cz), look **+Z**, depth = z - cz.
+/// Convention: eye at (cx, cy, cz), default look **+Z**, depth = z - cz.
+/// Optional [rx]/[ry]/[rz] (degrees) orient the NDC view matrix only;
+/// soft path stays axis-aligned for low-end cost.
 class SceneCamFrame {
   const SceneCamFrame({
     required this.cx,
@@ -21,6 +23,9 @@ class SceneCamFrame {
     required this.fovDeg,
     required this.stageW,
     required this.stageH,
+    this.rx = 0,
+    this.ry = 0,
+    this.rz = 0,
   });
 
   final double cx;
@@ -31,6 +36,10 @@ class SceneCamFrame {
   final double fovDeg;
   final double stageW;
   final double stageH;
+  /// Camera orientation degrees (same fields as [SceneNode]).
+  final double rx;
+  final double ry;
+  final double rz;
 
   /// Resolve play/edit camera from [nodes].
   ///
@@ -72,10 +81,13 @@ class SceneCamFrame {
       fovDeg: pick.fov.clamp(1.0, 179.0),
       stageW: stageW,
       stageH: stageH,
+      rx: pick.rx,
+      ry: pick.ry,
+      rz: pick.rz,
     );
   }
 
-  /// Same lens / depth, new eye XY (play follow — does not mutate nodes).
+  /// Same lens / depth / pose, new eye XY (play follow — does not mutate nodes).
   SceneCamFrame withEyeXy(double x, double y) => SceneCamFrame(
         cx: x,
         cy: y,
@@ -85,6 +97,9 @@ class SceneCamFrame {
         fovDeg: fovDeg,
         stageW: stageW,
         stageH: stageH,
+        rx: rx,
+        ry: ry,
+        rz: rz,
       );
 
   double get aspect => stageH > 0 ? stageW / stageH : 1.0;
@@ -106,8 +121,12 @@ class SceneCamFrame {
   /// Strict near/far slab (NDC / true frustum).
   bool inDepthSlab(double depth) => depth >= near && depth <= far;
 
-  /// View matrix: stage (x, y_down, z) → camera (x, y_up, depth), look +Z.
-  SceneMat4 viewMatrix() => SceneMat4.viewLookPlusZ(cx, cy, cz);
+  /// View matrix: stage (x, y_down, z) → camera (x, y_up, depth).
+  ///
+  /// Default look +Z. When [rx]/[ry]/[rz] are set, applies inverse camera
+  /// rotation after the eye translate (NDC path only).
+  SceneMat4 viewMatrix() =>
+      SceneMat4.viewLookPlusZ(cx, cy, cz, rx: rx, ry: ry, rz: rz);
 
   /// Perspective projection (OpenGL-style clip, z → NDC −1…+1).
   SceneMat4 projectionMatrix() =>
@@ -133,13 +152,64 @@ class SceneMat4 {
         0, 0, 0, 1,
       ]);
 
-  /// Stage → camera: translate −eye, then flip Y (stage down → camera up).
-  static SceneMat4 viewLookPlusZ(double eyeX, double eyeY, double eyeZ) {
-    return SceneMat4(<double>[
+  /// Stage → camera: translate −eye, flip Y (stage down → camera up), then
+  /// optional inverse camera Euler (degrees: [rx] pitch, [ry] yaw, [rz] roll).
+  ///
+  /// Camera world pose is treated as R_cam = Ry(ry)·Rx(rx)·Rz(rz). View uses
+  /// R_cam⁻¹ = Rz(−rz)·Rx(−rx)·Ry(−ry) after the fixed look-+Z frame.
+  static SceneMat4 viewLookPlusZ(
+    double eyeX,
+    double eyeY,
+    double eyeZ, {
+    double rx = 0,
+    double ry = 0,
+    double rz = 0,
+  }) {
+    final base = SceneMat4(<double>[
       1, 0, 0, 0,
       0, -1, 0, 0,
       0, 0, 1, 0,
       -eyeX, eyeY, -eyeZ, 1,
+    ]);
+    if (rx == 0 && ry == 0 && rz == 0) return base;
+    // inv = Rz(-rz) · Rx(-rx) · Ry(-ry)
+    final inv = rotationZ(-rz).mul(rotationX(-rx)).mul(rotationY(-ry));
+    return inv.mul(base);
+  }
+
+  static SceneMat4 rotationX(double deg) {
+    final a = deg * math.pi / 180.0;
+    final c = math.cos(a);
+    final s = math.sin(a);
+    return SceneMat4(<double>[
+      1, 0, 0, 0,
+      0, c, s, 0,
+      0, -s, c, 0,
+      0, 0, 0, 1,
+    ]);
+  }
+
+  static SceneMat4 rotationY(double deg) {
+    final a = deg * math.pi / 180.0;
+    final c = math.cos(a);
+    final s = math.sin(a);
+    return SceneMat4(<double>[
+      c, 0, -s, 0,
+      0, 1, 0, 0,
+      s, 0, c, 0,
+      0, 0, 0, 1,
+    ]);
+  }
+
+  static SceneMat4 rotationZ(double deg) {
+    final a = deg * math.pi / 180.0;
+    final c = math.cos(a);
+    final s = math.sin(a);
+    return SceneMat4(<double>[
+      c, s, 0, 0,
+      -s, c, 0, 0,
+      0, 0, 1, 0,
+      0, 0, 0, 1,
     ]);
   }
 
