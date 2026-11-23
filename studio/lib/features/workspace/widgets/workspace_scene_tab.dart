@@ -2279,13 +2279,15 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     const handleHit = 40.0;
 
     // --- Polygon (edit-points) mode ---
+    // Layout box matches the unrotated model bounds. Rotate + foreshorten match
+    // SceneStagePainter so vertex handles sit on the painted pose.
     if (n.hasPoints) {
       final pts = n.points!;
-      // Bounding box in stage pixels for the Positioned host.
       final left = (n.x * scaleX).clamp(0.0, stageW);
       final top = (n.y * scaleY).clamp(0.0, stageH);
       final mw = (n.w * scaleX).clamp(8.0, stageW);
       final mh = (n.h * scaleY).clamp(8.0, stageH);
+      final squash = _poseSquash(n);
 
       // Body is drawn by SceneStagePainter; this layer is hit-targets + handles.
       final polyChildren = <Widget>[
@@ -2316,7 +2318,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                   final nodes = _doc?.nodes;
                   if (nodes != null) {
                     for (final e in nodes) {
-                      if (e.id == n.id && e.hasPoints &&
+                      if (e.id == n.id &&
+                          e.hasPoints &&
                           i < e.points!.length) {
                         cx = e.points![i].x;
                         cy = e.points![i].y;
@@ -2324,6 +2327,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       }
                     }
                   }
+                  // Inside rotate + scale transforms: global→local already
+                  // undoes pose, so only stage scale maps to model units.
                   final nx = cx + details.delta.dx / scaleX;
                   final ny = cy + details.delta.dy / scaleY;
                   _movePoint(n.id, i, nx, ny);
@@ -2392,6 +2397,30 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         }
       }
 
+      final stackChildren = <Widget>[
+        Transform(
+          alignment: Alignment.center,
+          transform: Matrix4.diagonal3Values(squash.$1, squash.$2, 1),
+          child: SizedBox(
+            width: mw,
+            height: mh,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: polyChildren,
+            ),
+          ),
+        ),
+        if (selected)
+          ..._rotateHandle(
+            n: n,
+            boxW: mw,
+            boxH: mh,
+            fill: fill,
+            visual: handleVisual,
+            hit: handleHit,
+          ),
+      ];
+
       return Positioned(
         left: left,
         top: top,
@@ -2399,6 +2428,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
           behavior: HitTestBehavior.opaque,
           onTap: () => _selectNode(n.id),
           onPanUpdate: (details) {
+            if (_poseDrag) return;
             SceneNode? cur;
             final nodes = _doc?.nodes;
             if (nodes != null) {
@@ -2410,16 +2440,21 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
               }
             }
             if (cur == null) return;
+            // Outside rotate transform — delta stays in stage space.
             final newX = cur.x + details.delta.dx / scaleX;
             final newY = cur.y + details.delta.dy / scaleY;
             _moveNode(n.id, newX, newY);
           },
-          child: SizedBox(
-            width: mw,
-            height: mh,
-            child: Stack(
-              clipBehavior: Clip.none,
-              children: polyChildren,
+          child: Transform.rotate(
+            angle: n.rz * math.pi / 180.0,
+            alignment: Alignment.center,
+            child: SizedBox(
+              width: mw,
+              height: mh,
+              child: Stack(
+                clipBehavior: Clip.none,
+                children: stackChildren,
+              ),
             ),
           ),
         ),
@@ -2533,12 +2568,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     );
   }
 
-  /// Pitch/yaw foreshorten. Same clamp as [SceneStagePainter].
+  /// Pitch/yaw foreshorten. Shared with [SceneStagePainter] via [SceneNode.foreshorten].
   (double, double) _poseSquash(SceneNode n) {
     if (n.isCamera) return (1.0, 1.0);
-    final sx = math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0);
-    final sy = math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0);
-    return (sx, sy);
+    return SceneNode.foreshorten(n.rx, n.ry);
   }
 
   bool _hasPose(SceneNode n) =>
