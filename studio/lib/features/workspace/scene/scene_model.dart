@@ -91,8 +91,9 @@ class ScenePoint {
 /// 3D foundation (additive, backward-compatible):
 /// - [z] depth in scene units (default 0). Used later for sort / projection.
 /// - [zDepth] AABB thickness along Z.
-/// - [rx] / [ry] / [rz] orientation in degrees (default 0). Rects and cameras
-///   paint them; polygon verts stay in scene space (gnomon only).
+/// - [rx] / [ry] / [rz] orientation in degrees (default 0).
+///   Rects, cameras, and polygons paint them around the bounds center.
+///   Polygon verts stay stored in scene space; the pose is visual.
 /// - [fov] / [near] / [far] are meaningful on camera nodes; sprites ignore them
 ///   in the 2D painter but still persist for future 3D run path.
 class SceneNode {
@@ -186,6 +187,13 @@ class SceneNode {
     final bw = (maxX - minX).clamp(24.0, 4096.0);
     final bh = (maxY - minY).clamp(24.0, 4096.0);
     return (minX, minY, bw, bh);
+  }
+
+  /// Pitch/yaw foreshorten used by the stage and the grab layer. Never 0.
+  static (double x, double y) foreshorten(double rx, double ry) {
+    final sx = math.cos(ry * math.pi / 180.0).abs().clamp(0.22, 1.0);
+    final sy = math.cos(rx * math.pi / 180.0).abs().clamp(0.22, 1.0);
+    return (sx, sy);
   }
 
   /// Wrap degrees into (-180, 180]. Non-finite → 0.

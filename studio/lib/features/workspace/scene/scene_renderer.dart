@@ -238,10 +238,21 @@ class SceneStagePainter extends CustomPainter {
     final stroke = selected ? Colors.white : fill;
 
     if (n.hasPoints) {
-      _paintPoly(canvas, n, off, scaleX, scaleY, fill, stroke, selected);
-      if (n.rx != 0 || n.ry != 0 || n.rz != 0) {
-        _paintPoseAt(canvas, n, outX * scaleX, outY * scaleY, 18);
-      }
+      _paintPoly(
+        canvas,
+        n,
+        off,
+        scaleX,
+        scaleY,
+        fill,
+        stroke,
+        selected,
+        pivotX: outX,
+        pivotY: outY,
+        midX: midX,
+        midY: midY,
+        depthScale: isCamera ? 1.0 : pScale,
+      );
       return;
     }
     final drawW = n.w * (isCamera ? 1.0 : pScale);
@@ -253,10 +264,8 @@ class SceneStagePainter extends CustomPainter {
     canvas.rotate(n.rz * math.pi / 180.0);
     if (!isCamera) {
       // Yaw / pitch read as foreshorten on the flat stage (min so it never vanishes).
-      canvas.scale(
-        math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0),
-        math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0),
-      );
+      final sq = SceneNode.foreshorten(n.rx, n.ry);
+      canvas.scale(sq.$1, sq.$2);
     }
     final rect = Rect.fromCenter(
       center: Offset.zero,
@@ -331,25 +340,6 @@ class SceneStagePainter extends CustomPainter {
     canvas.drawLine(Offset.zero, Offset(0, len), yPaint);
   }
 
-  /// Orientation gnomon for polygon nodes (verts stay unrotated).
-  void _paintPoseAt(
-    Canvas canvas,
-    SceneNode n,
-    double cx,
-    double cy,
-    double len,
-  ) {
-    canvas.save();
-    canvas.translate(cx, cy);
-    canvas.rotate(n.rz * math.pi / 180.0);
-    canvas.scale(
-      math.cos(n.ry * math.pi / 180.0).abs().clamp(0.22, 1.0),
-      math.cos(n.rx * math.pi / 180.0).abs().clamp(0.22, 1.0),
-    );
-    _paintLocalAxes(canvas, len);
-    canvas.restore();
-  }
-
   void _paintPoly(
     Canvas canvas,
     SceneNode n,
@@ -358,28 +348,31 @@ class SceneStagePainter extends CustomPainter {
     double scaleY,
     Color fill,
     Color stroke,
-    bool selected,
-  ) {
+    bool selected, {
+    required double pivotX,
+    required double pivotY,
+    required double midX,
+    required double midY,
+    required double depthScale,
+  }) {
     final pts = n.points!;
+    final sq = SceneNode.foreshorten(n.rx, n.ry);
+    // Same order as rects: roll, then foreshorten, around the bounds center.
+    // [pivot] is the projected center in play; in edit it is [mid].
+    canvas.save();
+    canvas.translate(pivotX * scaleX, pivotY * scaleY);
+    canvas.rotate(n.rz * math.pi / 180.0);
+    canvas.scale(sq.$1 * depthScale, sq.$2 * depthScale);
     final path = Path();
-    final applyProj = _cam != null;
+    final local = <Offset>[];
     for (var i = 0; i < pts.length; i++) {
-      var x = pts[i].x + off.dx;
-      var y = pts[i].y + off.dy;
-      if (applyProj) {
-        final pr = _project(x, y, n.z);
-        // Out-of-frustum points stay at ortho position (dimmed via fill alpha).
-        if (pr.visible) {
-          x = pr.x;
-          y = pr.y;
-        }
-      }
-      final px = x * scaleX;
-      final py = y * scaleY;
+      final lx = (pts[i].x + off.dx - midX) * scaleX;
+      final ly = (pts[i].y + off.dy - midY) * scaleY;
+      local.add(Offset(lx, ly));
       if (i == 0) {
-        path.moveTo(px, py);
+        path.moveTo(lx, ly);
       } else {
-        path.lineTo(px, py);
+        path.lineTo(lx, ly);
       }
     }
     path.close();
@@ -391,21 +384,21 @@ class SceneStagePainter extends CustomPainter {
         ..style = PaintingStyle.stroke
         ..strokeWidth = selected ? 2.5 : 1.2,
     );
-    // Vertex handles only in edit mode (play hides selection chrome upstream).
+    if (selected || n.rx != 0 || n.ry != 0 || n.rz != 0) {
+      _paintLocalAxes(canvas, 18);
+    }
+    // Vertex dots only in edit (play hides selection chrome upstream).
     if (selected && playTime <= 0) {
-      for (var i = 0; i < pts.length; i++) {
+      for (var i = 0; i < local.length; i++) {
         final active = editPointIndex == i;
         canvas.drawCircle(
-          Offset(
-            (pts[i].x + off.dx) * scaleX,
-            (pts[i].y + off.dy) * scaleY,
-          ),
+          local[i],
           active ? 7 : 5,
-          Paint()
-            ..color = active ? const Color(0xFF69F0AE) : Colors.white,
+          Paint()..color = active ? const Color(0xFF69F0AE) : Colors.white,
         );
       }
     }
+    canvas.restore();
   }
 
   /// 2D FOV wedge hint (along +Y). Visual only — not the run-path +Z volume.
