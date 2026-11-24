@@ -171,21 +171,40 @@ Primary code: `files/workspace_paths.dart`, `files/workspace_file_service.dart`,
 
 ## 6. Build & APK (compute-safe)
 
-**CI does not build on every push.**  
+**APK CI does not run on every push.**  
 Workflow: `.github/workflows/build-debug-apk.yml` → **`workflow_dispatch` only**.
 
 - Code push → no APK  
 - APK only when someone **explicitly** runs the workflow (or asks for “APK ready”)
+
+**Light CI on push** (studio paths): `.github/workflows/flutter-check.yml`  
+→ `flutter analyze` + `flutter test` only (no APK).
 
 Local:
 
 ```bash
 cd studio
 flutter pub get
+flutter test
+flutter analyze
 flutter build apk --debug
 ```
 
 Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow builds).
+
+### Unit tests
+
+| File | Covers |
+|------|--------|
+| `studio/test/scene_project_test.dart` | Soft/NDC project, frustum, AABB visibility, camera pick |
+| `studio/test/scene_model_test.dart` | Node/doc JSON round-trip, degrees, foreshorten, mesh |
+
+### Scene tab structure
+
+| File | Role |
+|------|------|
+| `widgets/workspace_scene_tab.dart` | Scene tab state + UI (still large — further split next) |
+| `widgets/play_touch_stick.dart` | Play-mode virtual stick (extracted) |
 
 ---
 
@@ -213,11 +232,11 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ## 9. Suggested next steps (priority order)
 
-1. **Stronger 3D** — real shared editor↔run transform, depth sort polish, later true mesh samples  
-2. **Touch / play feel** polish on low-end  
-3. **Assets** pipeline for user-added content  
-4. Device crash hunts from screen recordings  
-5. Optional languages on demand  
+1. **Finish scene-tab split** — canvas / inspector / play into smaller files (behavior unchanged)  
+2. **Shared editor↔run transform** — one tested function; Python consumes same results  
+3. **Touch / play feel** — dt-based move, stick dead-zone  
+4. **Assets** pipeline (image import + size limit)  
+5. Optional languages on demand / real mesh loader later  
 
 ---
 

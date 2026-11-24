@@ -1,0 +1,47 @@
+# Light CI: analyze + unit tests only. No APK (saves compute).
+name: Flutter check
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'studio/**'
+      - '.github/workflows/flutter-check.yml'
+  pull_request:
+    branches: [main]
+    paths:
+      - 'studio/**'
+      - '.github/workflows/flutter-check.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: flutter-check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: analyze + test
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    defaults:
+      run:
+        working-directory: studio
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+          cache: true
+
+      - name: pub get
+        run: flutter pub get
+
+      - name: analyze
+        run: flutter analyze --no-fatal-infos
+
+      - name: test
+        run: flutter test
