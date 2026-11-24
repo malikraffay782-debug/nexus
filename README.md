@@ -209,11 +209,12 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 | File | Role |
 |------|------|
-| `widgets/workspace_scene_tab.dart` | Scene tab orchestration + canvas/handles (~2.2k lines) |
+| `widgets/workspace_scene_tab.dart` | Scene tab orchestration + canvas/handles (~1.8k lines) |
 | `widgets/play_touch_stick.dart` | Play-mode virtual stick |
 | `widgets/scene_phone_inspector.dart` | Phone inspector + RX/RY/RZ steps |
 | `widgets/scene_points_pad.dart` | Points edit dock (swipe pad) |
 | `widgets/scene_node_list.dart` | Desktop node list + reorder |
+| `widgets/scene_node_chrome.dart` | Edit handles (resize/rotate/points) |
 | `scene/scene_play_controller.dart` | Play ticker, steer, Soft/NDC mode |
 | `scene/scene_play_state.dart` | Runtime Player pose/velocity (no JSON write) |
 
@@ -243,7 +244,7 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ## 9. Suggested next steps (priority order)
 
-1. **Finish scene-tab split** — canvas + gesture handles still in `workspace_scene_tab.dart` (~2.2k lines)  
+1. **Finish scene-tab split** — canvas + gesture handles still in `workspace_scene_tab.dart` (~1.8k lines)  
 2. **Deeper Dart↔Python golden** — full soft/NDC numeric vectors, not only visibility  
 3. **Stick dead-zone + feel polish** on low-end (dt path already real)  
 4. **Assets** pipeline (image import + size limit)  
