@@ -55,6 +55,23 @@ void main() {
   });
 
   group('SceneProject.ndc frustum', () {
+    test('look +Z: center at depth 50 has clip w > 0 and is inside frustum',
+        () {
+      final c = cam(cz: 0, near: 1, far: 500);
+      final depth = 50.0;
+      final worldZ = c.cz + depth;
+      // Raw VP must produce positive w for points in front (look +Z).
+      final vp = c.viewProjectionMatrix();
+      final clip = vp.transformPoint(c.cx, c.cy, worldZ);
+      expect(clip.$4, greaterThan(0),
+          reason: 'clip w must be +depth for look +Z, not OpenGL −z');
+      final ndc = SceneProject.toNdc(c, c.cx, c.cy, worldZ, viewProjection: vp);
+      expect(ndc, isNotNull);
+      expect(ndc!.$1, closeTo(0, 0.05));
+      expect(ndc.$2, closeTo(0, 0.05));
+      expect(SceneProject.inNdcFrustum(c, c.cx, c.cy, worldZ), isTrue);
+    });
+
     test('point in front of camera near center is inside frustum', () {
       final c = cam(cz: 0, near: 1, far: 500);
       // Point slightly in front along +Z from eye.
@@ -107,13 +124,14 @@ void main() {
 
     test('ndc: small box in front near center is visible', () {
       final c = cam(cz: 0, near: 1, far: 500);
+      // At depth 200, a 10×10 stage box stays inside 60° FOV lateral bounds.
       final vis = SceneProject.aabbVisible(
         c,
-        c.cx - 20,
-        c.cy - 20,
-        40,
-        40,
-        40,
+        c.cx - 5,
+        c.cy - 5,
+        10,
+        10,
+        200,
         mode: SceneProjectMode.ndc,
       );
       expect(vis, isTrue);

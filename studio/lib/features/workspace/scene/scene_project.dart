@@ -213,7 +213,13 @@ class SceneMat4 {
     ]);
   }
 
-  /// Symmetric perspective; [fovDeg] vertical; [aspect] = width/height.
+  /// Symmetric perspective for **look +Z** (camera-space depth = +z).
+  ///
+  /// Classic OpenGL perspective assumes look −Z (clip w = −z_cam). Our view
+  /// maps world depth to **+z_cam**, so w must be **+depth**. The z-row maps
+  /// near→NDC −1 and far→NDC +1 after the perspective divide.
+  ///
+  /// [fovDeg] vertical; [aspect] = width/height.
   static SceneMat4 perspective(
     double fovDeg,
     double aspect,
@@ -224,12 +230,13 @@ class SceneMat4 {
     final safeNear = near <= 1e-6 ? 1e-6 : near;
     final safeFar = far > safeNear + 1e-6 ? far : safeNear + 1e-6;
     final f = 1.0 / math.tan(fovDeg * math.pi / 360.0);
-    final a = (safeFar + safeNear) / (safeNear - safeFar);
-    final b = (2.0 * safeFar * safeNear) / (safeNear - safeFar);
+    // nz = a + b/depth with w = +depth; near→−1, far→+1.
+    final a = (safeFar + safeNear) / (safeFar - safeNear);
+    final b = (-2.0 * safeFar * safeNear) / (safeFar - safeNear);
     return SceneMat4(<double>[
       f / safeAspect, 0, 0, 0,
       0, f, 0, 0,
-      0, 0, a, -1,
+      0, 0, a, 1, // +1 ⇒ clip w = +z_cam (look +Z)
       0, 0, b, 0,
     ]);
   }
