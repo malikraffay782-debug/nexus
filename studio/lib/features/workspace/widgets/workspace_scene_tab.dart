@@ -163,11 +163,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       setState(() {});
       return;
     }
+    // Dispose any leftover ticker before starting (rapid toggle / race).
+    _playTicker?.dispose();
+    _playTicker = null;
     _playTime.value = 0;
     _playSteer = Offset.zero;
     _playKeys.clear();
     _playTicker = createTicker((elapsed) {
-      if (!mounted) return;
+      if (!mounted || !_playing) return;
       // Stage-only rebuild via ListenableBuilder (not the whole tab).
       // ~30 fps is enough for bob/depth on low-end; skips duplicate ticks.
       final t = elapsed.inMilliseconds / 1000.0;
@@ -2107,18 +2110,21 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         const pad = 12.0;
         final maxW = (constraints.maxWidth - pad * 2).clamp(40.0, double.infinity);
         final maxH = (constraints.maxHeight - pad * 2 - 24).clamp(40.0, double.infinity);
-        final aspect = doc.width / doc.height;
+        // Corrupt / zero scene size must not produce NaN layout or infinite scale.
+        final docW = doc.width <= 0 ? 1.0 : doc.width.toDouble();
+        final docH = doc.height <= 0 ? 1.0 : doc.height.toDouble();
+        final aspect = docW / docH;
         double w = maxW;
         double h = w / aspect;
         if (h > maxH) {
           h = maxH;
           w = h * aspect;
         }
-        if (w <= 0 || h <= 0) {
+        if (w <= 0 || h <= 0 || !w.isFinite || !h.isFinite) {
           return const SizedBox.shrink();
         }
-        final scaleX = w / doc.width;
-        final scaleY = h / doc.height;
+        final scaleX = w / docW;
+        final scaleY = h / docH;
 
         return Center(
           child: Column(

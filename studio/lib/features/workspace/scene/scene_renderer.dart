@@ -303,20 +303,22 @@ class SceneStagePainter extends CustomPainter {
       return;
     }
 
-    final g = 10.0 * pScale;
-    canvas.drawRect(
-      Rect.fromCenter(center: Offset.zero, width: g, height: g),
-      glyph,
-    );
-    if (n.mesh.isNotEmpty && SceneMeshes.normalize(n.mesh).isNotEmpty) {
-      final badge = Path()
-        ..moveTo(0, -8)
-        ..lineTo(7, 5)
-        ..lineTo(-7, 5)
-        ..close();
-      canvas.drawPath(
-        badge,
-        Paint()..color = Colors.white.withValues(alpha: 0.85),
+    final meshId = SceneMeshes.normalize(n.mesh);
+    if (meshId.isNotEmpty) {
+      // Mesh silhouette in local node space (shared pose already applied).
+      _paintMeshSilhouette(
+        canvas,
+        meshId,
+        drawW * scaleX,
+        drawH * scaleY,
+        fill,
+        selected,
+      );
+    } else {
+      final g = 10.0 * pScale;
+      canvas.drawRect(
+        Rect.fromCenter(center: Offset.zero, width: g, height: g),
+        glyph,
       );
     }
     if (showPose) {
@@ -324,6 +326,111 @@ class SceneStagePainter extends CustomPainter {
       _paintLocalAxes(canvas, axis);
     }
     canvas.restore();
+  }
+
+  /// Studio-side mesh hint (not GPU meshes). Drawn inside the node pose so
+  /// editor and play share the same transform path (rx/ry/rz + depth scale).
+  void _paintMeshSilhouette(
+    Canvas canvas,
+    String meshId,
+    double bw,
+    double bh,
+    Color fill,
+    bool selected,
+  ) {
+    final stroke = Paint()
+      ..color = Colors.white.withValues(alpha: selected ? 0.95 : 0.75)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = selected ? 1.8 : 1.3
+      ..strokeJoin = StrokeJoin.round;
+    final fillP = Paint()..color = fill.withValues(alpha: selected ? 0.55 : 0.4);
+    final hx = bw * 0.42;
+    final hy = bh * 0.42;
+    switch (meshId) {
+      case SceneMeshes.crate:
+      case SceneMeshes.metalcase:
+        // Box: front face + top/side perspective lines (isometric-ish).
+        final front = RRect.fromRectAndRadius(
+          Rect.fromCenter(center: Offset.zero, width: hx * 1.6, height: hy * 1.6),
+          const Radius.circular(3),
+        );
+        canvas.drawRRect(front, fillP);
+        canvas.drawRRect(front, stroke);
+        final depth = math.min(hx, hy) * 0.35;
+        final path = Path()
+          ..moveTo(-hx * 0.8, -hy * 0.8)
+          ..lineTo(-hx * 0.8 + depth, -hy * 0.8 - depth)
+          ..lineTo(hx * 0.8 + depth, -hy * 0.8 - depth)
+          ..lineTo(hx * 0.8, -hy * 0.8);
+        canvas.drawPath(path, stroke);
+        canvas.drawLine(
+          Offset(hx * 0.8, -hy * 0.8),
+          Offset(hx * 0.8 + depth, -hy * 0.8 - depth),
+          stroke,
+        );
+        if (meshId == SceneMeshes.metalcase) {
+          // Horizontal ribs
+          canvas.drawLine(
+            Offset(-hx * 0.65, -hy * 0.15),
+            Offset(hx * 0.65, -hy * 0.15),
+            stroke,
+          );
+          canvas.drawLine(
+            Offset(-hx * 0.65, hy * 0.15),
+            Offset(hx * 0.65, hy * 0.15),
+            stroke,
+          );
+        } else {
+          // Crate cross
+          canvas.drawLine(
+            Offset(-hx * 0.55, -hy * 0.55),
+            Offset(hx * 0.55, hy * 0.55),
+            stroke,
+          );
+          canvas.drawLine(
+            Offset(hx * 0.55, -hy * 0.55),
+            Offset(-hx * 0.55, hy * 0.55),
+            stroke,
+          );
+        }
+      case SceneMeshes.chest:
+        final body = RRect.fromRectAndRadius(
+          Rect.fromLTWH(-hx * 0.85, -hy * 0.2, hx * 1.7, hy * 1.0),
+          const Radius.circular(4),
+        );
+        canvas.drawRRect(body, fillP);
+        canvas.drawRRect(body, stroke);
+        // Lid arc
+        final lid = Path()
+          ..moveTo(-hx * 0.85, -hy * 0.2)
+          ..quadraticBezierTo(0, -hy * 0.95, hx * 0.85, -hy * 0.2);
+        canvas.drawPath(lid, stroke);
+        canvas.drawCircle(Offset(0, hy * 0.15), 3, stroke);
+      case SceneMeshes.sword:
+        // Blade up + crossguard + pommel
+        final blade = Path()
+          ..moveTo(0, -hy * 0.95)
+          ..lineTo(hx * 0.18, -hy * 0.15)
+          ..lineTo(hx * 0.08, -hy * 0.15)
+          ..lineTo(hx * 0.08, hy * 0.35)
+          ..lineTo(-hx * 0.08, hy * 0.35)
+          ..lineTo(-hx * 0.08, -hy * 0.15)
+          ..lineTo(-hx * 0.18, -hy * 0.15)
+          ..close();
+        canvas.drawPath(blade, fillP);
+        canvas.drawPath(blade, stroke);
+        canvas.drawLine(
+          Offset(-hx * 0.4, -hy * 0.12),
+          Offset(hx * 0.4, -hy * 0.12),
+          stroke,
+        );
+        canvas.drawCircle(Offset(0, hy * 0.48), 4, stroke);
+      default:
+        canvas.drawRect(
+          Rect.fromCenter(center: Offset.zero, width: 10, height: 10),
+          stroke,
+        );
+    }
   }
 
   /// Local +X (red) / +Y (green, stage-down). Call inside the node transform.

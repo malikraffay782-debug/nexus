@@ -126,6 +126,8 @@ nexus/
 | Node rotation rx/ry/rz on stage + handles | Yes |
 | AABB frustum (flat + zDepth) + skip-draw outside | Yes |
 | Play sample: node named `Player` + WASD + **touch stick** | Yes (preview only) |
+| Mesh ids on sprites (`sword` / `crate` / `chest` / `metalcase`) | Yes (JSON + UI picker) |
+| Studio mesh silhouette (wireframe in node pose) | Yes (not GPU mesh) |
 | Full Unity camera / GPU mesh / animation states | **No** |
 | Auto ground / default level | **No** (by design) |
 
@@ -144,6 +146,8 @@ Implemented so daily use on phones in landscape does not bury the stage or code 
 | **Scene phone inspector** | ~120–158 px depending on screen height. | `widgets/workspace_scene_tab.dart` → `_phoneInspector` |
 | **Scene points pad** | ~180–320 px depending on screen height. | `widgets/workspace_scene_tab.dart` → `_pointsControlPad` |
 | **Scene wide layout** | Side-by-side sidebar only if width ≥ 560 **and** height ≥ 300; else stacked phone layout. | `widgets/workspace_scene_tab.dart` build |
+| **Zero-size scene guard** | `doc.width/height <= 0` → safe aspect; no NaN scale | `widgets/workspace_scene_tab.dart` → `_buildCanvas` |
+| **Play ticker race** | Dispose old ticker before start; tick ignores if not playing | `widgets/workspace_scene_tab.dart` → `_togglePlay` |
 
 AndroidManifest already allows orientation changes (`configChanges` includes orientation/screenSize). App does **not** lock to portrait.
 
@@ -209,10 +213,10 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ## 9. Suggested next steps (priority order)
 
-1. **Stability (device)** — crash hunts from screen recordings, edge cases on real phones  
-2. **Stronger 3D** — mesh draw path, shared editor/run transform story  
-3. **Touch / play feel** polish on low-end  
-4. **Assets** pipeline for user-added content  
+1. **Stronger 3D** — real shared editor↔run transform, depth sort polish, later true mesh samples  
+2. **Touch / play feel** polish on low-end  
+3. **Assets** pipeline for user-added content  
+4. Device crash hunts from screen recordings  
 5. Optional languages on demand  
 
 ---
