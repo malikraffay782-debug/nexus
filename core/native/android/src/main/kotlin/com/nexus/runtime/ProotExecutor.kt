@@ -24,7 +24,7 @@ class ProotExecutor(
 
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
-        private const val MAX_OUTPUT_CHARS = 2 * 1024 * 1024
+        private const val MAX_OUTPUT_CHARS = 200_000  // match Dart kMaxOutputChars; avoid multi-MB spike on 2 GB
         private const val MAX_TIMEOUT_SEC = 3600L
     }
 
