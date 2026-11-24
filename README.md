@@ -57,20 +57,59 @@ NDC / soft projection, frustum cull, and matrices are **tools in the studio**, n
 
 ---
 
-## 3. Repo layout (short)
+## 3. Repo layout (where things live)
 
 ```
 nexus/
 ├── README.md
 ├── .github/workflows/build-debug-apk.yml   ← APK: workflow_dispatch ONLY
-├── core/native/…                          ← Kotlin runtime / proot
+├── core/native/…                          ← Kotlin runtime / proot / bootstrap
 ├── studio/                                ← Flutter app
-│   └── lib/features/
-│       ├── projects/                      ← create/load projects
-│       ├── workspace/scene/               ← scene model, project, painter
-│       └── runtime_debug/
+│   ├── android/                           ← Manifest, MainActivity, native libs
+│   └── lib/
+│       ├── main.dart / app.dart
+│       ├── core/                          ← router, theme, shell
+│       ├── services/                      ← embedded_runtime bridge
+│       └── features/
+│           ├── projects/                  ← list / create / project model
+│           ├── runtime_debug/             ← Initialize, Install Python, debug
+│           ├── settings/
+│           └── workspace/
+│               ├── presentation/
+│               │   └── workspace_screen.dart   ← tabs + Run button + run panel host
+│               ├── scene/
+│               │   ├── scene_model.dart        ← SceneDoc, SceneNode, types
+│               │   ├── scene_project.dart      ← soft / NDC projection
+│               │   ├── scene_renderer.dart
+│               │   └── scene_service.dart      ← load/save scene JSON
+│               ├── files/
+│               │   ├── workspace_paths.dart    ← sandbox allow-list (keep safe)
+│               │   ├── workspace_files_*.dart
+│               │   └── …
+│               ├── run/
+│               │   ├── run_session.dart
+│               │   ├── run_session_controller.dart
+│               │   └── run_gateway.dart
+│               └── widgets/
+│                   ├── workspace_scene_tab.dart  ← scene UI, play, phone docks
+│                   ├── workspace_code_tab.dart
+│                   ├── run_output_panel.dart     ← adaptive run console
+│                   ├── run_guard.dart            ← unsaved-changes before Run
+│                   ├── code_editor_panel.dart
+│                   └── file_tree_panel.dart
 └── scripts/
 ```
+
+**Quick map for common work**
+
+| Task | Primary files |
+|------|----------------|
+| Run panel / landscape height | `widgets/run_output_panel.dart`, `presentation/workspace_screen.dart` |
+| Scene editor / play / inspector | `widgets/workspace_scene_tab.dart` |
+| Projection / camera matrices | `scene/scene_project.dart`, `scene/scene_model.dart` |
+| Path sandbox | `files/workspace_paths.dart` |
+| proot / Python bootstrap | `core/native/…`, `runtime_debug/` |
+| Unsaved guard before Run | `widgets/run_guard.dart` |
 
 ---
 
@@ -81,6 +120,8 @@ nexus/
 | Scene JSON + nodes (sprite/camera, z, zDepth, fov, near, far) | Yes |
 | Soft projection (default, low-end) | Yes |
 | NDC + view/projection matrices + lateral cull | Yes (opt-in Soft/NDC toggle) |
+| Camera rx/ry/rz orient NDC view matrix | Yes |
+| Node rotation rx/ry/rz on stage + handles | Yes |
 | AABB frustum (flat + zDepth) + skip-draw outside | Yes |
 | Play sample: node named `Player` + WASD + **touch stick** | Yes (preview only) |
 | Full Unity camera / GPU mesh / animation states | **No** |
@@ -90,7 +131,23 @@ Play projection modes: **Soft** (default) or **NDC**. Run template can use `proj
 
 ---
 
-## 5. Build & APK (compute-safe)
+## 5. UI stability (landscape / short height)
+
+Implemented so daily use on phones in landscape does not bury the stage or code editor.
+
+| Area | Behavior | File |
+|------|----------|------|
+| **Run output panel** | Height from available space (keyboard-aware): ~110 / 140 / 170 / 200. Compact header when short. | `widgets/run_output_panel.dart` → `heightFor()` |
+| **Code tab Files sheet** | On short/landscape height, sheet height is capped instead of always 70% of screen. | `widgets/workspace_code_tab.dart` |
+| **Scene phone inspector** | ~120–158 px depending on screen height. | `widgets/workspace_scene_tab.dart` → `_phoneInspector` |
+| **Scene points pad** | ~180–320 px depending on screen height. | `widgets/workspace_scene_tab.dart` → `_pointsControlPad` |
+| **Scene wide layout** | Side-by-side sidebar only if width ≥ 560 **and** height ≥ 300; else stacked phone layout. | `widgets/workspace_scene_tab.dart` build |
+
+AndroidManifest already allows orientation changes (`configChanges` includes orientation/screenSize). App does **not** lock to portrait.
+
+---
+
+## 6. Build & APK (compute-safe)
 
 **CI does not build on every push.**  
 Workflow: `.github/workflows/build-debug-apk.yml` → **`workflow_dispatch` only**.
@@ -110,37 +167,39 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ---
 
-## 6. Device smoke
+## 7. Device smoke
 
 1. Install debug APK (uninstall older signed builds if needed).  
 2. Runtime → Initialize → Install Python.  
 3. Create **Game** project → Scene is a **dark void**.  
 4. Add sprite/camera; rename a sprite to `Player` → Play → stick / WASD.  
-5. Run → `src/main.py` in proot.
+5. Run → `src/main.py` in proot.  
+6. **Landscape check:** rotate phone — Run panel and scene docks should shrink; stage/editor stay usable.
 
 ---
 
-## 7. Working rules (stable)
+## 8. Working rules (stable)
 
 1. One concrete step at a time unless asked otherwise.  
 2. Small commits; push when asked. **No APK** unless explicitly requested.  
 3. proot ≠ Flutter scene loop — don’t collapse the boundary.  
-4. Keep workspace path sandboxing when adding folders.  
+4. Keep workspace path sandboxing when adding folders (`workspace_paths.dart`).  
 5. Prefer fixing blockers on the 3D path and daily usability.  
 6. Core camera/render is **not** complete — don’t document it as finished.
 
 ---
 
-## 8. Suggested next steps
+## 9. Suggested next steps (priority order)
 
-1. **Stability** — landscape, run panel, edge cases  
-2. **Touch / play feel** polish on low-end  
-3. **Assets** pipeline for user-added content  
-4. Stronger 3D (mesh draw, shared editor/run path)  
-5. Optional languages on demand  
+1. **Stability (remaining)** — path safety edges, run-panel close/busy races, crash hunts from device recordings  
+2. **Workspace flexibility** — nested folders + controlled root-level notes (extend allow-lists deliberately)  
+3. **Stronger 3D** — mesh draw path, shared editor/run transform story  
+4. **Touch / play feel** polish on low-end  
+5. **Assets** pipeline for user-added content  
+6. Optional languages on demand  
 
 ---
 
-## 9. License / intent
+## 10. License / intent
 
 Built to become a serious open or productized mobile studio. Keep the stage empty and dark so **large games are user-built**, not template-filled.
