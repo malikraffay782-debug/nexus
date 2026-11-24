@@ -85,9 +85,19 @@ class RunSessionController extends ChangeNotifier {
     // Final phase comes from run() completion.
   }
 
-  /// Call when leaving the project screen.
+  /// Clear the run panel after a finished / failed / cancelled run.
+  /// Does not touch the gateway (process already ended). Safe while idle too.
+  void clear() {
+    if (_state.phase.isBusy) return;
+    _generation++;
+    _stopRequested = false;
+    _emit(const RunSessionState(phase: RunPhase.idle));
+  }
+
+  /// Call when leaving the project screen. Cancels an in-flight run if any.
   Future<void> detach() async {
     _generation++;
+    _stopRequested = false;
     final wasBusy = _state.phase.isBusy;
     _emit(const RunSessionState(phase: RunPhase.idle));
     if (wasBusy) await _gateway.stop();

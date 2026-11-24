@@ -243,8 +243,9 @@ class _WorkspaceViewState extends ConsumerState<_WorkspaceView> {
                   state: runState,
                   onStop: () => _runCtrl.stop(),
                   onClose: () {
+                    // Finished panel only — clear() does not call gateway.stop.
                     if (!runState.phase.isBusy) {
-                      _runCtrl.detach();
+                      _runCtrl.clear();
                     }
                   },
                 );

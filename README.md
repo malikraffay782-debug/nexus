@@ -110,6 +110,7 @@ nexus/
 | Path sandbox | `files/workspace_paths.dart` |
 | proot / Python bootstrap | `core/native/…`, `runtime_debug/` |
 | Unsaved guard before Run | `widgets/run_guard.dart` |
+| Run session / panel close | `run/run_session_controller.dart` (`clear` vs `detach`) |
 
 ---
 
