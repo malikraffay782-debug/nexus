@@ -117,21 +117,24 @@ nexus/
 
 ## 4. Scene / 3D foundation (current, partial)
 
-| Piece | Status |
-|-------|--------|
-| Scene JSON + nodes (sprite/camera, z, zDepth, fov, near, far) | Yes |
-| Soft projection (default, low-end) | Yes |
-| NDC + view/projection matrices + lateral cull | Yes (opt-in Soft/NDC toggle) |
-| Camera rx/ry/rz orient NDC view matrix | Yes |
-| Node rotation rx/ry/rz on stage + handles | Yes |
-| AABB frustum (flat + zDepth) + skip-draw outside | Yes |
-| Play sample: node named `Player` + WASD + **touch stick** | Yes (preview only) |
-| Mesh ids on sprites (`sword` / `crate` / `chest` / `metalcase`) | Yes (JSON + UI picker) |
-| Studio mesh silhouette (wireframe in node pose) | Yes (not GPU mesh) |
-| Full Unity camera / GPU mesh / animation states | **No** |
-| Auto ground / default level | **No** (by design) |
+| Piece | Status | Covered by tests? |
+|-------|--------|-------------------|
+| Scene JSON + nodes (sprite/camera, z, zDepth, fov, near, far) | Yes | Yes (`scene_model_test`) |
+| Soft projection (default, low-end) | Yes | Yes (`scene_project_test` + golden) |
+| NDC look **+Z** perspective (`w=+depth`) + lateral cull | Yes | Yes (sign + frustum + golden) |
+| NDC size scale from 1/depth (not soft mix) | Yes | Yes |
+| Camera rx/ry/rz orient NDC view matrix | Yes | Partial (rotated frustum test) |
+| Node rotation rx/ry/rz on stage + handles | Yes | UI only (no widget test) |
+| AABB frustum (flat + zDepth) | Yes | Yes |
+| **ScenePlayState** real dt + steer (no sin/cos roam) | Yes | Yes (`scene_play_state_test`) |
+| Stick release does **not** snap Player back | Yes | Yes |
+| Camera follows Player **runtime** center in play | Yes | Code path; on-device visual TBD |
+| Mesh ids + studio wireframe silhouette | Yes | Model normalize tested; paint not |
+| `scene_draw.py` asset + preferred camera | Yes | Python golden on CI |
+| Full Unity camera / GPU mesh / animation | **No** | — |
+| Auto ground / default level | **No** (by design) | — |
 
-Play projection modes: **Soft** (default) or **NDC**. Run template can use `projectMode` / `NEXUS_PROJECT_MODE`.
+Play modes: **Soft** (default) or **NDC**. New cameras default to `z=-240` so sprites at `z≈0` sit in front of near. Shared Dart↔Python transform is **partial** (visibility golden), not full matrix parity for every rotation.
 
 ---
 
@@ -196,18 +199,23 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 | File | Covers |
 |------|--------|
-| `studio/test/scene_project_test.dart` | Soft/NDC project, frustum, AABB visibility, camera pick |
+| `studio/test/scene_project_test.dart` | Soft/NDC project, frustum, AABB, perspective scale |
 | `studio/test/scene_model_test.dart` | Node/doc JSON round-trip, degrees, foreshorten, mesh |
+| `studio/test/scene_play_state_test.dart` | Real dt move, release no-snap, bounds, dt clamp |
+| `studio/test/workspace_paths_test.dart` | Sandbox reject/allow path cases |
+| `studio/test/projection_golden_test.dart` + `test/python/` | Shared visibility golden |
 
 ### Scene tab structure
 
 | File | Role |
 |------|------|
-| `widgets/workspace_scene_tab.dart` | Scene tab orchestration + stage/chrome (~2.3k lines) |
+| `widgets/workspace_scene_tab.dart` | Scene tab orchestration + canvas/handles (~2.2k lines) |
 | `widgets/play_touch_stick.dart` | Play-mode virtual stick |
 | `widgets/scene_phone_inspector.dart` | Phone inspector + RX/RY/RZ steps |
 | `widgets/scene_points_pad.dart` | Points edit dock (swipe pad) |
+| `widgets/scene_node_list.dart` | Desktop node list + reorder |
 | `scene/scene_play_controller.dart` | Play ticker, steer, Soft/NDC mode |
+| `scene/scene_play_state.dart` | Runtime Player pose/velocity (no JSON write) |
 
 ---
 
@@ -235,9 +243,9 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ## 9. Suggested next steps (priority order)
 
-1. **Finish scene-tab split** — canvas / inspector / play into smaller files (behavior unchanged)  
-2. **Shared editor↔run transform** — one tested function; Python consumes same results  
-3. **Touch / play feel** — dt-based move, stick dead-zone  
+1. **Finish scene-tab split** — canvas + gesture handles still in `workspace_scene_tab.dart` (~2.2k lines)  
+2. **Deeper Dart↔Python golden** — full soft/NDC numeric vectors, not only visibility  
+3. **Stick dead-zone + feel polish** on low-end (dt path already real)  
 4. **Assets** pipeline (image import + size limit)  
 5. Optional languages on demand / real mesh loader later  
 
