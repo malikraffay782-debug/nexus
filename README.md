@@ -3,6 +3,7 @@
 **Mobile game + code studio** on device: Flutter Studio UI, embedded Linux (proot) for Python/tools, and a **3D-oriented scene foundation** you fill yourself.
 
 - **Repo:** https://github.com/malikraffay782-debug/nexus  
+- **Bug hunt:** see **§11** (open bug list, severity + suggested fix order)  
 - **Package ID:** `com.nexus.studio`  
 - **Min SDK 26 · Target 34 · Compile 35** · primary ABI `arm64-v8a`
 
@@ -255,3 +256,93 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 ## 10. License / intent
 
 Built to become a serious open or productized mobile studio. Keep the stage empty and dark so **large games are user-built**, not template-filled.
+
+---
+
+## 11. Bug hunt report — 2026-11-24 (static review, nothing fixed yet)
+
+**Scope / method.** Read-only code review of commit `4dac66a` (`refactor(scene): extract SceneNodeChrome`),
+done in Termux. Files reviewed: `workspace_paths.dart`, `workspace_file_service.dart`, `workspace_files_controller.dart`,
+`code_text_controller.dart`, `run_session*.dart`, `run_gateway.dart`, `run_guard.dart`, `run_output_panel.dart`,
+`workspace_screen.dart` (run part), `scene_project.dart`, `scene_play_state.dart`, `scene_play_controller.dart`,
+`scene_service.dart`, `scene_renderer.dart` (allocation scan only), `ProotExecutor.kt`, `ProjectMount.kt`, `NexusRuntime.kt`,
+`RuntimePlugin.kt`, manifest / gradle / CI / `.gitignore`.
+**Not done:** no `flutter analyze` / `flutter test` / device run (heavy work stays in GitHub Actions). Not reviewed:
+`workspace_scene_tab.dart` (1.8k lines), `scene_model.dart`, `BootstrapManager.kt`, `PackageManager.kt`, installers.
+Items marked *(verify)* need a device check.
+**Status of every item below: OPEN** (no code was changed in this step).
+
+Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear perf risk, **L** = small / hygiene.
+
+### 11.1 Stability — run / stop (priority A)
+
+| ID | Sev | Where | Problem | Suggested fix |
+|----|-----|-------|---------|---------------|
+| B1 | H | `RuntimePlugin.kt` `"stopRun"`, `ProotExecutor.stopActive/killProcessTree` | `stopRun` runs **synchronously on the Flutter platform (main) thread**, and `killProcessTree` spawns `sh -c "kill…; sleep 0.15; kill -KILL…"` and waits up to 2 s + 2 s. Tapping Stop can freeze the UI (worst case ~4 s, ANR risk on slow phones). | Run `stopActive()` on a dedicated small thread (not the shared 2-thread pool, which may be busy with the run) and reply via `mainHandler`. |
+| B2 | H | `ProotExecutor.spawnOnce` (`stopRequested = false` at spawn), `RuntimePlugin` `"stopRun"`, `run_session_controller.stop`, AppBar in `workspace_screen.dart` | **Stop can be lost**: if Stop arrives before the process exists, or while `runProject` is still waiting on `runMutex` (e.g. a package install holds it), `activeProcess == null` → `stopped:false`. The controller has already switched to `stopping`; in that phase the Stop button is hidden and Run is disabled, so the UI is stuck until the run ends by timeout (60 s + 15 s Dart timeout). | Latch the stop request (run token checked right after `pb.start()` and after `runMutex.lock()`), and let the controller fall back to `cancelled`/idle when `stop()` returns `false`. |
+| B3 | H (2 GB) | `ProotExecutor.MAX_OUTPUT_CHARS = 2 MB` per stream | Kotlin buffers up to 2 M chars for stdout **and** stderr in `StringBuilder` (UTF-16 ≈ 4 MB each, doubling growth, then `toString()` copy, then MethodChannel encode/decode copy). Dart then throws away everything above 200 k (`kMaxOutputChars`). A runaway `print` loop (up to 60 s) creates a tens-of-MB spike for output that is discarded anyway. | Cap in Kotlin at the same ~200 k chars (or keep head + tail only). |
+| B14 | M *(verify)* | `RuntimePlugin.executor` (core 2, max 4, queue 32) | `ThreadPoolExecutor` only grows past core size when the queue is full, so effectively **2 workers**. A long install + a Run occupy both; any other native call queues behind them and hits its Dart-side timeout. | Separate executor for long jobs (install/run) vs. short probes. |
+| B24 | L | `run_session_controller.dart` `run()/stop()` | After Stop in `checking`, `_launching` stays `true` until the old readiness call returns, so an immediate re-tap on Run is silently ignored. | Tie the `_launching` reset to the generation that owns it. |
+| B27 | L | `RuntimePlugin.onWorker` | If the plugin detaches after the work finished, `if (destroyed) return@post` drops the reply and the Dart `Future` never completes. | Reply with `NATIVE_DETACHED`. |
+| B23 | L | `embedded_runtime.dart` (default 30), `run_session_controller.dart` (60), `RuntimePlugin` (default 30, clamp 1..120), `NexusRuntime` (clamp 1..120), `ProotExecutor.MAX_TIMEOUT_SEC` (3600) | Timeout defaults/limits disagree; the 3600 s limit is unreachable. | One constant, one place. |
+| B22 | L | `application/project_runner.dart` | **Dead code** (`ProjectRunner` is not referenced anywhere) with a stale 30 s timeout and a wrong hint (`pkg install python`). | Delete in its own small commit. |
+
+### 11.2 3D foundation (priority C / D)
+
+| ID | Sev | Where | Problem | Suggested fix |
+|----|-----|-------|---------|---------------|
+| B4 | H | `scene_project.dart` `toNdc()` and `aabbVisible()` | Near/far slab test uses `depth = z - cam.cz` (**ignores camera rx/ry/rz**), while the projection matrix uses the *rotated* view. With a rotated camera, objects that are really in front are rejected by `depth < near` (and vice versa). Existing tests only cover a lightly rotated frustum. | Use view-space depth (clip `w` after the view matrix) for the near/far test; add tests with yaw 90° / pitch. |
+| B5 | H | `scene_project.dart` `aabbVisible()` (NDC mode) | "Visible if **any corner** is inside the frustum" → a large/close box (floor, background wall, big mesh) whose corners are all outside the view but which covers the screen is **culled wrongly**. | Proper AABB-vs-frustum test (clip-space plane test or projected-rect overlap). |
+| B7 | M | `SceneProject.perspectiveScale` | NDC size scale = `softRef / depth`, **independent of `fovDeg`**. Changing FOV moves sprite positions (matrix) but not their size, so perspective looks inconsistent. | Derive scale from the projection (`f * stageH/2 / depth`) with a defined reference depth. |
+| B8 | M | `scene_play_state.dart` `update()` | Player bounds clamp uses a hard-coded **64×64** footprint instead of the node's real `w/h`; bigger sprites leave the stage, smaller ones cannot reach the edge. | Store node size in `ScenePlayState` and clamp with it. |
+| B9 | M | `scene_play_state.dart` `update()` | Any stick magnitude above 0.05 is **normalised to full speed**; partial deflection does not give slower movement and there is no dead-zone shaping (README step 9.3). | Use `mag.clamp(0,1)` as speed factor with a re-scaled dead zone. |
+| B10 | M | `scene_play_controller.dart` | `_keys` is only cleared on `stop()`. If focus is lost while a key is held (KeyUp never arrives) the steer stays stuck. | Clear keys on focus loss / app pause. |
+| B25 | gap | `ScenePlayState` | Play state is **XY-only**; the Player cannot move in Z and there is no mesh pipeline. Not a bug — keeps README §4 honest ("foundation"). | Next 3D steps. |
+| B26 | L | cull box | Node rotation (rx/ry/rz) is ignored by the cull box, so rotated sprites can be culled slightly too early. | Use a rotated/inflated box once B5 is fixed. |
+
+### 11.3 Data safety & files (priority B)
+
+| ID | Sev | Where | Problem | Suggested fix |
+|----|-----|-------|---------|---------------|
+| B6 | H (2 GB) | `scene_service.dart` `save()` / `create()` | Scene JSON is written **in place** (`writeAsString`) — not atomic. On 2 GB phones the OS kills apps often; a kill during the write corrupts the scene file. `WorkspaceFileService.writeText` already does temp + rename correctly. | Reuse the same temp-file + rename write (shared helper). |
+| B20 | L | `workspace_file_service.writeText` | Leftover `*.nexus_tmp` files (after a crash) are valid segment names and show in the tree; two parallel saves share the same tmp name. | Hide/clean `.nexus_tmp` on listing; unique tmp name or per-file save lock. |
+| B18 | L | `workspace_paths.dart` | `_canonicalRoot()` resolves symlinks, so `_isLink(root)` in `resolve()` can **never** be true — the "Project folder is a symlink" check is dead code (Kotlin `ProjectMount` does reject symlinks, so Run is safe; the editor is not). | Check the *unresolved* root for a link before canonicalising. |
+| B19 | L | `WorkspacePaths.validateName`, `ProotExecutor.safeWorkingDir` | Any name containing `..` is rejected, including harmless names like `my..file.py` (false positive). | Reject only the exact segments `.` / `..`. |
+| B21 | L | `workspace_file_service.listTree` | Listing has a write side-effect (creates missing top folders) and silently truncates at 2000 entries. | Create folders at project creation; show a "list truncated" row. |
+| B28 | L | `scene_service.load` | No size cap when reading a scene file (the code editor has a 1 MB cap). | Add a cap (e.g. 1–2 MB). |
+
+### 11.4 Low-end (2 GB) performance
+
+| ID | Sev | Where | Problem | Suggested fix |
+|----|-----|-------|---------|---------------|
+| B11 | M | `scene_renderer.dart` `paint()` (`List.of` + `sort` + many `Paint()` per node per frame); `code_text_controller.dart` `buildTextSpan` (regex + new spans on every build, up to 60 k chars) | Per-frame allocations — breaks LOW-END rule 7. | Cache sorted order / reusable `Paint` objects; cache highlight spans per text version. |
+| B12 | M *(verify)* | `workspace_file_service.maxEditableBytes = 1 MB`, `workspace_files_controller._onTextChanged` | Editor accepts 1 MB text and compares full strings on every keystroke. A 1 MB `TextField` is heavy on a 2 GB phone. | Lower cap (e.g. 256 KB), compare lengths/hash first. |
+| B13 | M *(verify)* | `run_output_panel.dart` | One `SelectableText` with up to 200 k chars in a 110–200 px panel — large layout cost / jank. | Show only the last N k chars in the panel, keep full text for Copy. |
+| B16 | M *(verify)* | `AndroidManifest.xml` | No `android:allowBackup="false"`; the app's private data (runtime rootfs = hundreds of MB, projects) can be pulled into backups. | Set `allowBackup=false` (or explicit backup rules). |
+| B29 | L | `jniLibs/arm64-v8a` | `libtalloc.so` and `libandroid-shmem.so` (~48 KB) are shipped although `ProotExecutor` documents a static proot that needs neither. | Remove after checking the CI verify step. |
+
+### 11.5 Repo / CI hygiene
+
+| ID | Sev | Where | Problem | Suggested fix |
+|----|-----|-------|---------|---------------|
+| B15 | M | `.gitignore` (last lines) | Missing newline: `secrets/` and `studio/assets/runtime/__pycache__/` are glued into **one** pattern, so **`secrets/` is not ignored** and `__pycache__` is not ignored either. Also `libproot*.so` / `libtalloc*.so` / `libandroid-shmem*.so` are ignored but five of them are **tracked** (force-added) — policy is contradictory. | Put each pattern on its own line; decide whether the `.so` files are tracked or fetched by `scripts/ci-prepare-runtime.sh`. |
+| B17 | info | `studio/android/keystore/debug.keystore` | Debug keystore is committed on purpose (stable CI installs). Fine for debug, **never** use it for release / Play Store. Keep this repo private. | — |
+
+### 11.6 Checked and OK (no action)
+
+- `SceneMat4.perspective()` math for look **+Z** is correct (near → −1, far → +1, `w = +depth`).
+- `ProjectMount.resolve()` validation (id regex, canonical parent check, symlink rejects, entry check) is solid.
+- `ProotExecutor.drainCapped` keeps draining after the cap, so a chatty child cannot block on a full pipe.
+- `confirmRunWithUnsavedChanges` correctly handles an in-flight save (re-checks `dirty` after `save()`).
+- `WorkspacePaths` allow-list (`topDirs`, `rootFiles`, depth 8, segment rules) is intact — nothing was widened.
+
+### 11.7 Suggested fix order (one step per turn)
+
+1. **B1 + B2** — Stop path (main-thread block + lost stop / stuck `stopping`).
+2. **B3** — match Kotlin output cap to Dart (small, safe, helps 2 GB).
+3. **B6** — atomic scene save.
+4. **B4 + B5** — NDC culling correctness (add tests first).
+5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
+6. B7–B10 (3D feel), then B11–B13 (allocations / perf), then the L items.
+
+*Last updated by bug hunt pass 1. Update the status of an item when it is fixed (add the commit hash).*
