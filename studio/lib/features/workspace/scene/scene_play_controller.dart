@@ -2,13 +2,15 @@ import 'package:flutter/scheduler.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter/widgets.dart';
 
+import 'scene_model.dart';
+import 'scene_play_state.dart';
 import 'scene_project.dart';
 
 /// Play-preview loop for the scene stage (Flutter ticker — not proot).
 ///
-/// Owns time, steer, keyboard focus helpers, and Soft/NDC mode.
-/// UI calls [toggle] / [stop]; stage listens to [playTime] only for cheap
-/// repaints (~30 fps).
+/// Owns time, steer, keyboard focus helpers, Soft/NDC mode, and
+/// [ScenePlayState] (real dt integration). UI calls [toggle] / [stop];
+/// stage listens to [playTime] for repaints.
 class ScenePlayController extends ChangeNotifier {
   ScenePlayController(this._vsync);
 
@@ -25,8 +27,12 @@ class ScenePlayController extends ChangeNotifier {
   Offset _steer = Offset.zero;
   Offset get steer => _steer;
 
+  ScenePlayState? _playState;
+  ScenePlayState? get playState => _playState;
+
   final Set<LogicalKeyboardKey> _keys = {};
   Ticker? _ticker;
+  Duration _lastElapsed = Duration.zero;
   bool _disposed = false;
 
   /// Unit steer from keyboard (WASD / arrows). Touch stick calls [setSteer].
@@ -90,26 +96,38 @@ class ScenePlayController extends ChangeNotifier {
     _playing = false;
     _steer = Offset.zero;
     _keys.clear();
+    _playState = null;
+    _lastElapsed = Duration.zero;
     if (playTime.value != 0) {
       playTime.value = 0;
     }
     if (notify && was) notifyListeners();
   }
 
-  /// Start or stop. Returns whether play is active after the call.
-  bool toggle() {
+  /// Start or stop. Pass [doc] when starting so runtime state can snapshot.
+  /// Returns whether play is active after the call.
+  bool toggle([SceneDoc? doc]) {
     if (_playing) {
       stop();
       return false;
     }
+    if (doc == null) return false;
     _ticker?.dispose();
     _ticker = null;
     playTime.value = 0;
     _steer = Offset.zero;
     _keys.clear();
+    _lastElapsed = Duration.zero;
+    _playState = ScenePlayState.fromDoc(doc);
     _ticker = _vsync.createTicker((elapsed) {
       if (_disposed || !_playing) return;
+      final rawDt =
+          (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
+      _lastElapsed = elapsed;
+      final dt = rawDt.clamp(0.0, ScenePlayState.maxDt);
+      _playState?.update(dt, _steer);
       final t = elapsed.inMilliseconds / 1000.0;
+      // ~30 fps paint throttle for low-end; state still stepped every tick.
       if ((t - playTime.value).abs() < 1 / 30) return;
       playTime.value = t;
     })

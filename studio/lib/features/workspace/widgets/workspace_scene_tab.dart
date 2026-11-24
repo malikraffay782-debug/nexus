@@ -92,7 +92,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
 
   void _togglePlay() {
     if (_doc == null) return;
-    final nowPlaying = _play.toggle();
+    final nowPlaying = _play.toggle(_doc);
     setState(() {
       if (nowPlaying) _editPointIndex = null;
     });
@@ -1751,8 +1751,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               showGrid: doc.showGrid,
                               playTime: _playing ? _play.playTime.value : 0.0,
                               projectMode: _play.projectMode,
-                              playerSteer:
-                                  _playing ? _play.steer : Offset.zero,
+                              playState: _playing ? _play.playState : null,
                             ),
                           );
                         },

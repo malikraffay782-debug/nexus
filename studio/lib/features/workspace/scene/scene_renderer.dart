@@ -3,15 +3,16 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import 'scene_model.dart';
+import 'scene_play_state.dart';
 import 'scene_project.dart';
 
 /// Graphical 2D stage painter — sprites / cameras / polys.
 ///
 /// Edit mode (`playTime <= 0`): ortho paint so drag handles match model coords.
-/// Play preview (`playTime > 0`): non-destructive bob + camera projection
+/// Play preview (`playTime > 0`): draws [playState] poses + camera projection
 /// via [SceneProject] (default [SceneProjectMode.soft] for low-end).
-/// Active camera eye XY follows node named Player when present; lens/z stay
-/// on the camera node. Does not mutate [doc].
+/// Simulation lives in [ScenePlayState]; this painter only draws.
+/// Active camera eye XY follows Player runtime center when present.
 ///
 /// Low-end notes:
 /// - [SceneCamFrame] resolved once per [paint].
@@ -26,7 +27,7 @@ class SceneStagePainter extends CustomPainter {
     this.showGrid = true,
     this.playTime = 0.0,
     this.projectMode = SceneProjectMode.soft,
-    this.playerSteer = Offset.zero,
+    this.playState,
   });
 
   final SceneDoc doc;
@@ -36,38 +37,20 @@ class SceneStagePainter extends CustomPainter {
   final double playTime;
   /// Soft = default low-end; ndc = Unity-style space (opt-in).
   final SceneProjectMode projectMode;
-  /// WASD/arrows unit steer for node named Player (play only).
-  final Offset playerSteer;
+  /// Runtime poses from [ScenePlayController] (null in edit mode).
+  final ScenePlayState? playState;
 
   /// Play-frame camera (null in edit mode or when no camera node).
   SceneCamFrame? _cam;
   /// Cached P×V for NDC mode (once per paint).
   SceneMat4? _viewProjection;
 
-  /// Non-destructive play motion (does not write [doc]).
-  ///
-  /// Sample loop: node named "Player" (any case) gets a larger roam so play
-  /// mode shows a readable game-tick. Other sprites keep a light bob.
+  /// Runtime offset from [playState] (no simulation here).
   Offset _previewOffset(SceneNode n) {
     if (playTime <= 0 || n.isCamera) return Offset.zero;
-    if (_isPlayer(n)) {
-      // Idle roam + keyboard steer (non-destructive sample loop).
-      final dx = math.sin(playTime * 1.7) * 48.0 + playerSteer.dx * 56.0;
-      final dy = math.cos(playTime * 1.1) * 28.0 + playerSteer.dy * 56.0;
-      return Offset(dx, dy);
-    }
-    final phase = playTime * 2.4 + n.x * 0.02 + n.y * 0.015;
-    return Offset(math.cos(phase * 0.7) * 4.0, math.sin(phase) * 10.0);
-  }
-
-  static bool _isPlayer(SceneNode n) => n.name.toLowerCase() == 'player';
-
-  /// First sprite named Player (play sample target for camera follow).
-  SceneNode? _findPlayer() {
-    for (final n in doc.nodes) {
-      if (!n.isCamera && _isPlayer(n)) return n;
-    }
-    return null;
+    final state = playState;
+    if (state == null) return Offset.zero;
+    return state.runtimeOffset(n);
   }
 
   /// Project stage point; identity when no cam / edit mode.
@@ -102,13 +85,10 @@ class SceneStagePainter extends CustomPainter {
         preferredId: selectedId,
       );
       if (cam != null) {
-        final player = _findPlayer();
-        if (player != null) {
-          final off = _previewOffset(player);
-          final px = player.x + player.w * 0.5 + off.dx;
-          final py = player.y + player.h * 0.5 + off.dy;
-          // Sample follow: eye XY locks to Player; lens/z stay on camera node.
-          cam = cam.withEyeXy(px, py);
+        final center = playState?.playerCenter(doc);
+        if (center != null) {
+          // Follow Player runtime center; lens/z stay on camera node.
+          cam = cam.withEyeXy(center.dx, center.dy);
         }
       }
     }
@@ -566,7 +546,7 @@ class SceneStagePainter extends CustomPainter {
         old.editPointIndex != editPointIndex ||
         old.showGrid != showGrid ||
         old.projectMode != projectMode ||
-        old.playerSteer != playerSteer) {
+        old.playState != playState) {
       return true;
     }
     // ~120 Hz threshold: skip repaint if time delta is tiny (duplicate ticks).
