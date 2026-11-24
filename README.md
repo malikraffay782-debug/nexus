@@ -293,10 +293,10 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 |----|-----|-------|---------|---------------|
 | B4 | H | `scene_project.dart` `toNdc()` | FIXED — near/far uses clip w (view-space depth), not world `z - cz`. Rotated cameras correct. | — |
 | B5 | H | `scene_project.dart` `aabbVisible()` | FIXED — NDC path uses 6-plane clip test on corners (large covering AABB no longer false-culled). | — |
-| B7 | M | `SceneProject.perspectiveScale` | NDC size scale = `softRef / depth`, **independent of `fovDeg`**. Changing FOV moves sprite positions (matrix) but not their size, so perspective looks inconsistent. | Derive scale from the projection (`f * stageH/2 / depth`) with a defined reference depth. |
-| B8 | M | `scene_play_state.dart` `update()` | Player bounds clamp uses a hard-coded **64×64** footprint instead of the node's real `w/h`; bigger sprites leave the stage, smaller ones cannot reach the edge. | Store node size in `ScenePlayState` and clamp with it. |
-| B9 | M | `scene_play_state.dart` `update()` | Any stick magnitude above 0.05 is **normalised to full speed**; partial deflection does not give slower movement and there is no dead-zone shaping (README step 9.3). | Use `mag.clamp(0,1)` as speed factor with a re-scaled dead zone. |
-| B10 | M | `scene_play_controller.dart` | `_keys` is only cleared on `stop()`. If focus is lost while a key is held (KeyUp never arrives) the steer stays stuck. | Clear keys on focus loss / app pause. |
+| B7 | M | `SceneProject.perspectiveScale` | FIXED — scale tracks vertical FOV (`f/f60 * softRef/depth`); FOV 60 keeps legacy feel. | — |
+| B8 | M | `scene_play_state.dart` `update()` | FIXED — clamp uses real player `w/h` from node, not hard-coded 64×64. | — |
+| B9 | M | `scene_play_state.dart` `update()` | FIXED — dead-zone reshape; partial stick = slower speed. | — |
+| B10 | M | `scene_play_controller.dart` | FIXED — clear keys on focus loss so steer does not stick. | — |
 | B25 | gap | `ScenePlayState` | Play state is **XY-only**; the Player cannot move in Z and there is no mesh pipeline. Not a bug — keeps README §4 honest ("foundation"). | Next 3D steps. |
 | B26 | L | cull box | Node rotation (rx/ry/rz) is ignored by the cull box, so rotated sprites can be culled slightly too early. | Use a rotated/inflated box once B5 is fixed. |
 
@@ -343,6 +343,6 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 3. ~~**B6** — atomic scene save~~ **DONE**.
 4. ~~**B4 + B5** — NDC culling correctness~~ **DONE**.
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
-6. B7–B10 (3D feel), then B11–B13 (allocations / perf), then the L items.
+6. ~~B7–B10 (3D feel)~~ **DONE**. Then B11–B13 (allocations / perf), then the L items.
 
 *Last updated: B1+B2 fixed. Update status of an item when it is fixed (add the commit hash).*

@@ -16,6 +16,8 @@ class ScenePlayState {
     required Map<String, Offset> positions,
     required Map<String, Offset> velocities,
     required this.playerId,
+    required this.playerW,
+    required this.playerH,
   })  : _positions = positions,
         _velocities = velocities;
 
@@ -24,12 +26,16 @@ class ScenePlayState {
     final positions = <String, Offset>{};
     final velocities = <String, Offset>{};
     String? playerId;
+    var playerW = 64.0;
+    var playerH = 64.0;
     for (final n in doc.nodes) {
       if (n.isCamera) continue;
       positions[n.id] = Offset(n.x, n.y);
       velocities[n.id] = Offset.zero;
       if (playerId == null && n.name.toLowerCase() == 'player') {
         playerId = n.id;
+        playerW = n.w > 0 ? n.w : 64.0;
+        playerH = n.h > 0 ? n.h : 64.0;
       }
     }
     return ScenePlayState._(
@@ -38,12 +44,18 @@ class ScenePlayState {
       positions: positions,
       velocities: velocities,
       playerId: playerId,
+      playerW: playerW,
+      playerH: playerH,
     );
   }
 
   final double stageW;
   final double stageH;
   final String? playerId;
+
+  /// Player node footprint at play start (for stage clamp).
+  final double playerW;
+  final double playerH;
 
   final Map<String, Offset> _positions;
   final Map<String, Offset> _velocities;
@@ -101,10 +113,12 @@ class ScenePlayState {
     final sy = steer.dy.clamp(-1.0, 1.0);
     final mag = math.sqrt(sx * sx + sy * sy);
 
-    if (mag > 0.05) {
-      // Direct velocity toward stick (responsive on low-end, no accel lag).
+    // Dead-zone 0.05; above it, magnitude shapes speed (partial stick = slower).
+    const dead = 0.05;
+    if (mag > dead) {
+      final shaped = ((mag - dead) / (1.0 - dead)).clamp(0.0, 1.0);
       final inv = 1.0 / mag;
-      vel = Offset(sx * inv * moveSpeed, sy * inv * moveSpeed);
+      vel = Offset(sx * inv * shaped * moveSpeed, sy * inv * shaped * moveSpeed);
     } else {
       // Release: damp velocity; do not snap position back to authored pose.
       final vMag = vel.distance;
@@ -119,10 +133,10 @@ class ScenePlayState {
 
     pos = Offset(pos.dx + vel.dx * step, pos.dy + vel.dy * step);
 
-    // Clamp top-left of a default 64×64-ish footprint; keep on stage.
+    // Clamp top-left using the player's real footprint.
     const margin = 8.0;
-    final maxX = math.max(margin, stageW - 64 - margin);
-    final maxY = math.max(margin, stageH - 64 - margin);
+    final maxX = math.max(margin, stageW - playerW - margin);
+    final maxY = math.max(margin, stageH - playerH - margin);
     pos = Offset(
       pos.dx.clamp(margin, maxX),
       pos.dy.clamp(margin, maxY),

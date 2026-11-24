@@ -452,13 +452,17 @@ class SceneProject {
     return (x, y);
   }
 
-  /// Perspective size scale for NDC path: ~1 at [refDepth], falls as 1/depth.
+  /// Perspective size scale for NDC path: ~1 at [softRef] depth when FOV is 60°,
+  /// falls as 1/depth, and tracks vertical FOV (wider FOV → smaller on-screen size).
   ///
-  /// Uses the same depth axis as the projection matrix (not [depthScale] soft).
+  /// [depth] should be **view-space** depth (clip w for look +Z), not world z−cz.
   static double perspectiveScale(SceneCamFrame cam, double depth) {
     final d = depth < cam.near ? cam.near : depth;
     final ref = cam.softRef > 1e-9 ? cam.softRef : 100.0;
-    final s = ref / d;
+    // f = 1/tan(fov/2); f60 ≈ 1.732 at the legacy default FOV.
+    final f = 1.0 / math.tan(cam.fovDeg * math.pi / 360.0);
+    const f60 = 1.7320508075688772;
+    final s = (f / f60) * (ref / d);
     if (!s.isFinite) return 1.0;
     return s.clamp(0.05, 8.0);
   }
@@ -490,8 +494,9 @@ class SceneProject {
       return SceneProjected(x: x, y: y, scale: 1, visible: false);
     }
     final (sx, sy) = ndcToStage(cam, nx, ny);
-    final depth = cam.depthOf(z);
-    final s = perspectiveScale(cam, depth);
+    // View-space depth (clip w) so scale matches rotated cameras + FOV.
+    final (_, _, _, cw) = vp.transformPoint(x, y, z);
+    final s = perspectiveScale(cam, cw);
     return SceneProjected(x: sx, y: sy, scale: s, visible: true);
   }
 }

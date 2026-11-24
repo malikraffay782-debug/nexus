@@ -255,6 +255,25 @@ void main() {
     });
   });
 
+
+  group('SceneProject.perspectiveScale FOV (B7)', () {
+    test('wider FOV yields smaller scale at same depth', () {
+      final narrow = cam(fov: 40);
+      final wide = cam(fov: 90);
+      const depth = 200.0;
+      final sn = SceneProject.perspectiveScale(narrow, depth);
+      final sw = SceneProject.perspectiveScale(wide, depth);
+      expect(sw, lessThan(sn));
+    });
+
+    test('at FOV 60 scale matches legacy softRef/depth roughly', () {
+      final c = cam(fov: 60);
+      final depth = c.softRef;
+      final s = SceneProject.perspectiveScale(c, depth);
+      expect(s, closeTo(1.0, 0.05));
+    });
+  });
+
   group('SceneCamFrame.fromNodes', () {
     test('prefers preferredId camera when present', () {
       final nodes = [

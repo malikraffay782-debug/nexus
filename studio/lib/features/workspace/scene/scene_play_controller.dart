@@ -12,7 +12,9 @@ import 'scene_project.dart';
 /// [ScenePlayState] (real dt integration). UI calls [toggle] / [stop];
 /// stage listens to [playTime] for repaints.
 class ScenePlayController extends ChangeNotifier {
-  ScenePlayController(this._vsync);
+  ScenePlayController(this._vsync) {
+    focusNode.addListener(_onFocusChange);
+  }
 
   final TickerProvider _vsync;
 
@@ -89,6 +91,14 @@ class ScenePlayController extends ChangeNotifier {
     return KeyEventResult.ignored;
   }
 
+  /// Clear stuck keys when focus is lost (KeyUp may never arrive).
+  void _onFocusChange() {
+    if (focusNode.hasFocus) return;
+    if (_keys.isEmpty) return;
+    _keys.clear();
+    _syncSteerFromKeys();
+  }
+
   void stop({bool notify = true}) {
     _ticker?.dispose();
     _ticker = null;
@@ -147,6 +157,7 @@ class ScenePlayController extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    focusNode.removeListener(_onFocusChange);
     stop(notify: false);
     focusNode.dispose();
     playTime.dispose();
