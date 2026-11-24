@@ -304,7 +304,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
-| B6 | H (2 GB) | `scene_service.dart` `save()` / `create()` | Scene JSON is written **in place** (`writeAsString`) — not atomic. On 2 GB phones the OS kills apps often; a kill during the write corrupts the scene file. `WorkspaceFileService.writeText` already does temp + rename correctly. | Reuse the same temp-file + rename write (shared helper). |
+| B6 | H (2 GB) | `scene_service.dart` `save()` / `create()` | FIXED — temp + rename atomic write (same pattern as WorkspaceFileService). | — |
 | B20 | L | `workspace_file_service.writeText` | Leftover `*.nexus_tmp` files (after a crash) are valid segment names and show in the tree; two parallel saves share the same tmp name. | Hide/clean `.nexus_tmp` on listing; unique tmp name or per-file save lock. |
 | B18 | L | `workspace_paths.dart` | `_canonicalRoot()` resolves symlinks, so `_isLink(root)` in `resolve()` can **never** be true — the "Project folder is a symlink" check is dead code (Kotlin `ProjectMount` does reject symlinks, so Run is safe; the editor is not). | Check the *unresolved* root for a link before canonicalising. |
 | B19 | L | `WorkspacePaths.validateName`, `ProotExecutor.safeWorkingDir` | Any name containing `..` is rejected, including harmless names like `my..file.py` (false positive). | Reject only the exact segments `.` / `..`. |
@@ -340,7 +340,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 
 1. ~~**B1 + B2** — Stop path~~ **DONE** (this commit).
 2. ~~**B3** — match Kotlin output cap to Dart~~ **DONE**.
-3. **B6** — atomic scene save.
+3. ~~**B6** — atomic scene save~~ **DONE**.
 4. **B4 + B5** — NDC culling correctness (add tests first).
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
 6. B7–B10 (3D feel), then B11–B13 (allocations / perf), then the L items.

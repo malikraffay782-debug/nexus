@@ -54,7 +54,25 @@ class SceneService {
     final abs = paths.resolve(rel);
     final file = File(abs);
     await file.parent.create(recursive: true);
-    await file.writeAsString(doc.encodePretty(), flush: true);
+    await _atomicWrite(abs, doc.encodePretty());
+  }
+
+  /// Temp file + rename so a kill mid-write cannot corrupt the scene on 2 GB phones.
+  Future<void> _atomicWrite(String abs, String content) async {
+    final tmpPath = '$abs.nexus_tmp';
+    try {
+      final existing = File(tmpPath);
+      if (await existing.exists()) await existing.delete();
+      final tmp = File(tmpPath);
+      await tmp.writeAsString(content, flush: true);
+      await tmp.rename(abs);
+    } on FileSystemException catch (e) {
+      try {
+        final tmp = File(tmpPath);
+        if (await tmp.exists()) await tmp.delete();
+      } catch (_) {}
+      throw WorkspaceException('Scene save failed: ${e.message}');
+    }
   }
 
   /// Creates a new empty scene. Returns the file name (e.g. "level1.json").
@@ -73,7 +91,7 @@ class SceneService {
     final doc = SceneDoc.empty(clean);
     final file = File(abs);
     await file.parent.create(recursive: true);
-    await file.writeAsString(doc.encodePretty(), flush: true);
+    await _atomicWrite(abs, doc.encodePretty());
     return fileName;
   }
 
