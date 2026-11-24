@@ -334,8 +334,9 @@ class SceneProject {
 
   /// World/stage → NDC via view×projection (perspective divide).
   ///
-  /// Returns null if behind the projection (w<=0) or outside near/far depth
-  /// slab. Lateral (|nx|/|ny|) tested separately via [inNdcLateral].
+  /// Returns null if behind the projection (w<=0) or outside near/far
+  /// **view-space** depth. Near/far uses clip w (look +Z ⇒ w ≈ depth),
+  /// not world-axis [SceneCamFrame.depthOf], so rotated cameras stay correct.
   static (double nx, double ny, double nz)? toNdc(
     SceneCamFrame cam,
     double x,
@@ -343,12 +344,11 @@ class SceneProject {
     double z, {
     SceneMat4? viewProjection,
   }) {
-    final depth = cam.depthOf(z);
-    if (depth < cam.near || depth > cam.far) return null;
-
     final vp = viewProjection ?? cam.viewProjectionMatrix();
     final (cx, cy, cz, cw) = vp.transformPoint(x, y, z);
+    // Look +Z: perspective row sets clip w = +viewDepth.
     if (cw <= 1e-9) return null;
+    if (cw < cam.near || cw > cam.far) return null;
     final invW = 1.0 / cw;
     return (cx * invW, cy * invW, cz * invW);
   }
@@ -375,7 +375,9 @@ class SceneProject {
   ///
   /// [zDepth] 0 → flat plane at [z] (4 corners).
   /// [zDepth] > 0 → thickness around [z]: z±zDepth/2 (8 corners).
-  /// Soft: z-extent overlaps soft depth range. NDC: any corner in frustum.
+  /// Soft: world-axis z-extent overlaps soft depth range.
+  /// NDC: clip-space plane test on corners (not "any corner inside") so a
+  /// large wall that covers the screen is not false-culled.
   static bool aabbVisible(
     SceneCamFrame cam,
     double x,
@@ -392,32 +394,50 @@ class SceneProject {
     final half = zd * 0.5;
     final z0 = z - half;
     final z1 = z + half;
-    final d0 = cam.depthOf(z0);
-    final d1 = cam.depthOf(z1);
-    final dMin = math.min(d0, d1);
-    final dMax = math.max(d0, d1);
 
     if (mode == SceneProjectMode.soft) {
+      final d0 = cam.depthOf(z0);
+      final d1 = cam.depthOf(z1);
+      final dMin = math.min(d0, d1);
+      final dMax = math.max(d0, d1);
       return dMax >= 0 && dMin <= cam.far;
     }
-    if (dMax < cam.near || dMin > cam.far) return false;
 
+    // NDC: transform corners to clip space and test the 6 frustum planes.
+    // Culled only if all corners are outside the *same* plane.
     final vp = viewProjection ?? cam.viewProjectionMatrix();
     final x1 = x + w;
     final y1 = y + h;
-    bool corner(double px, double py, double pz) =>
-        inNdcFrustum(cam, px, py, pz, viewProjection: vp);
-    if (corner(x, y, z0)) return true;
-    if (corner(x1, y, z0)) return true;
-    if (corner(x, y1, z0)) return true;
-    if (corner(x1, y1, z0)) return true;
-    if (half > 0) {
-      if (corner(x, y, z1)) return true;
-      if (corner(x1, y, z1)) return true;
-      if (corner(x, y1, z1)) return true;
-      if (corner(x1, y1, z1)) return true;
+    final zs = half > 0 ? <double>[z0, z1] : <double>[z0];
+    final corners = <(double, double, double, double)>[];
+    for (final pz in zs) {
+      corners.add(vp.transformPoint(x, y, pz));
+      corners.add(vp.transformPoint(x1, y, pz));
+      corners.add(vp.transformPoint(x, y1, pz));
+      corners.add(vp.transformPoint(x1, y1, pz));
     }
-    return false;
+
+    bool allOut(bool Function((double, double, double, double) c) outside) {
+      for (final c in corners) {
+        if (!outside(c)) return false;
+      }
+      return true;
+    }
+
+    // Left:  x + w >= 0
+    if (allOut((c) => c.$1 + c.$4 < 0)) return false;
+    // Right: w - x >= 0
+    if (allOut((c) => c.$4 - c.$1 < 0)) return false;
+    // Bottom: y + w >= 0
+    if (allOut((c) => c.$2 + c.$4 < 0)) return false;
+    // Top: w - y >= 0
+    if (allOut((c) => c.$4 - c.$2 < 0)) return false;
+    // Near: view depth (clip w) >= near
+    if (allOut((c) => c.$4 < cam.near)) return false;
+    // Far: view depth (clip w) <= far
+    if (allOut((c) => c.$4 > cam.far)) return false;
+
+    return true;
   }
 
   /// NDC → stage pixels (top-left origin, Y-down like Flutter).

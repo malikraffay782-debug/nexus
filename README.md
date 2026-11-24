@@ -291,8 +291,8 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
-| B4 | H | `scene_project.dart` `toNdc()` and `aabbVisible()` | Near/far slab test uses `depth = z - cam.cz` (**ignores camera rx/ry/rz**), while the projection matrix uses the *rotated* view. With a rotated camera, objects that are really in front are rejected by `depth < near` (and vice versa). Existing tests only cover a lightly rotated frustum. | Use view-space depth (clip `w` after the view matrix) for the near/far test; add tests with yaw 90° / pitch. |
-| B5 | H | `scene_project.dart` `aabbVisible()` (NDC mode) | "Visible if **any corner** is inside the frustum" → a large/close box (floor, background wall, big mesh) whose corners are all outside the view but which covers the screen is **culled wrongly**. | Proper AABB-vs-frustum test (clip-space plane test or projected-rect overlap). |
+| B4 | H | `scene_project.dart` `toNdc()` | FIXED — near/far uses clip w (view-space depth), not world `z - cz`. Rotated cameras correct. | — |
+| B5 | H | `scene_project.dart` `aabbVisible()` | FIXED — NDC path uses 6-plane clip test on corners (large covering AABB no longer false-culled). | — |
 | B7 | M | `SceneProject.perspectiveScale` | NDC size scale = `softRef / depth`, **independent of `fovDeg`**. Changing FOV moves sprite positions (matrix) but not their size, so perspective looks inconsistent. | Derive scale from the projection (`f * stageH/2 / depth`) with a defined reference depth. |
 | B8 | M | `scene_play_state.dart` `update()` | Player bounds clamp uses a hard-coded **64×64** footprint instead of the node's real `w/h`; bigger sprites leave the stage, smaller ones cannot reach the edge. | Store node size in `ScenePlayState` and clamp with it. |
 | B9 | M | `scene_play_state.dart` `update()` | Any stick magnitude above 0.05 is **normalised to full speed**; partial deflection does not give slower movement and there is no dead-zone shaping (README step 9.3). | Use `mag.clamp(0,1)` as speed factor with a re-scaled dead zone. |
@@ -341,7 +341,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 1. ~~**B1 + B2** — Stop path~~ **DONE** (this commit).
 2. ~~**B3** — match Kotlin output cap to Dart~~ **DONE**.
 3. ~~**B6** — atomic scene save~~ **DONE**.
-4. **B4 + B5** — NDC culling correctness (add tests first).
+4. ~~**B4 + B5** — NDC culling correctness~~ **DONE**.
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
 6. B7–B10 (3D feel), then B11–B13 (allocations / perf), then the L items.
 

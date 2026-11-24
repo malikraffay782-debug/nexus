@@ -13,6 +13,9 @@ void main() {
     double near = 0.1,
     double far = 1000,
     double fov = 60,
+    double rx = 0,
+    double ry = 0,
+    double rz = 0,
   }) {
     return SceneCamFrame(
       cx: cx,
@@ -23,6 +26,9 @@ void main() {
       fovDeg: fov,
       stageW: stageW,
       stageH: stageH,
+      rx: rx,
+      ry: ry,
+      rz: rz,
     );
   }
 
@@ -187,6 +193,65 @@ void main() {
         mode: SceneProjectMode.ndc,
       );
       expect(vis, isTrue);
+    });
+  });
+
+
+  // --- B4 / B5: rotated camera depth + large AABB covering frustum ---
+  group('SceneProject.ndc rotation + aabb (B4/B5)', () {
+    test('B4: yaw 90 — point in front of rotated camera is not rejected by world depth', () {
+      // Camera ry=+90: view uses Ry(-90), so world −X maps to +depth.
+      // Point (−50, 0, 0): world depthOf = 0 (would fail near=1), but
+      // view-space depth ≈ 50 — must be accepted.
+      final c = cam(cx: 0, cy: 0, cz: 0, near: 1, far: 500, ry: 90);
+      final ndc = SceneProject.toNdc(c, -50, 0, 0);
+      expect(ndc, isNotNull,
+          reason: 'view-space depth must be used, not world z - cz');
+      expect(SceneProject.inNdcFrustum(c, -50, 0, 0), isTrue);
+    });
+
+    test('B4: yaw 90 — point on world +X is behind rotated camera', () {
+      final c = cam(cx: 0, cy: 0, cz: 0, near: 1, far: 500, ry: 90);
+      // World +X maps to −depth after Ry(-90) — must be rejected.
+      final ndc = SceneProject.toNdc(c, 50, 0, 0);
+      expect(ndc, isNull);
+      expect(SceneProject.inNdcFrustum(c, 50, 0, 0), isFalse);
+    });
+
+    test('B5: large box covering view with all corners outside stays visible', () {
+      // Camera at center looking +Z. Huge wall in front whose 4 corners lie
+      // outside the FOV, but the wall covers the entire near plane.
+      final c = cam(cx: 360, cy: 640, cz: 0, near: 1, far: 500);
+      // At depth 10, FOV 60° vertical half-angle ~5.77 units at depth 10 for
+      // stage aspect — use a box far larger than the frustum cross-section.
+      const depth = 10.0;
+      const half = 5000.0; // corners way outside lateral NDC
+      final vis = SceneProject.aabbVisible(
+        c,
+        360 - half,
+        640 - half,
+        half * 2,
+        half * 2,
+        depth,
+        mode: SceneProjectMode.ndc,
+      );
+      expect(vis, isTrue,
+          reason: 'AABB covering the frustum must not be culled by corner-only test');
+    });
+
+    test('B5: box completely beside the frustum is culled', () {
+      final c = cam(cx: 360, cy: 640, cz: 0, near: 1, far: 500);
+      // Far to the right, small box at moderate depth.
+      final vis = SceneProject.aabbVisible(
+        c,
+        360 + 5000,
+        640,
+        10,
+        10,
+        50,
+        mode: SceneProjectMode.ndc,
+      );
+      expect(vis, isFalse);
     });
   });
 
