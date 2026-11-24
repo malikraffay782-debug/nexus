@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../files/workspace_file_service.dart';
 import '../files/workspace_files_controller.dart';
+import '../files/workspace_paths.dart';
 
 /// Asks whether unsaved changes may be thrown away.
 Future<bool> confirmDiscardChanges(BuildContext context) async {
@@ -53,6 +54,38 @@ class FileTreePanel extends StatelessWidget {
                       'Files',
                       style: Theme.of(context).textTheme.titleMedium,
                     ),
+                  ),
+                  PopupMenuButton<String>(
+                    tooltip: 'Project root notes',
+                    icon: const Icon(Icons.note_add_outlined),
+                    onSelected: (v) {
+                      if (v.isEmpty) return;
+                      _createRoot(context, v);
+                    },
+                    itemBuilder: (_) {
+                      final existing = controller.visibleEntries
+                          .where((e) => !e.isDir && e.depth == 0)
+                          .map((e) => e.name)
+                          .toSet();
+                      final items = <PopupMenuEntry<String>>[
+                        for (final name in WorkspacePaths.rootFiles)
+                          if (!existing.contains(name))
+                            PopupMenuItem(
+                              value: name,
+                              child: Text('Add $name'),
+                            ),
+                      ];
+                      if (items.isEmpty) {
+                        return const [
+                          PopupMenuItem(
+                            enabled: false,
+                            value: '',
+                            child: Text('Root notes already added'),
+                          ),
+                        ];
+                      }
+                      return items;
+                    },
                   ),
                   IconButton(
                     tooltip: 'Refresh',
@@ -201,6 +234,23 @@ class FileTreePanel extends StatelessWidget {
     if (isFolder) return;
 
     // Open the new file; ask first if the current one has unsaved edits.
+    if (!context.mounted) return;
+    if (controller.dirty && !await confirmDiscardChanges(context)) return;
+    final err = await controller.openFile(result.relPath!);
+    if (err != null) {
+      messenger.showSnackBar(SnackBar(content: Text(err)));
+    } else {
+      onFileOpened?.call();
+    }
+  }
+
+  Future<void> _createRoot(BuildContext context, String name) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final result = await controller.createRootFile(name);
+    if (!result.ok) {
+      messenger.showSnackBar(SnackBar(content: Text(result.error!)));
+      return;
+    }
     if (!context.mounted) return;
     if (controller.dirty && !await confirmDiscardChanges(context)) return;
     final err = await controller.openFile(result.relPath!);

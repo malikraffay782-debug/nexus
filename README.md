@@ -107,7 +107,8 @@ nexus/
 | Run panel / landscape height | `widgets/run_output_panel.dart`, `presentation/workspace_screen.dart` |
 | Scene editor / play / inspector | `widgets/workspace_scene_tab.dart` |
 | Projection / camera matrices | `scene/scene_project.dart`, `scene/scene_model.dart` |
-| Path sandbox | `files/workspace_paths.dart` |
+| Path sandbox | `files/workspace_paths.dart` (`topDirs` + `rootFiles`) |
+| File tree / root notes | `widgets/file_tree_panel.dart`, `files/workspace_file_service.dart` |
 | proot / Python bootstrap | `core/native/…`, `runtime_debug/` |
 | Unsaved guard before Run | `widgets/run_guard.dart` |
 | Run session / panel close | `run/run_session_controller.dart` (`clear` vs `detach`) |
@@ -145,6 +146,22 @@ Implemented so daily use on phones in landscape does not bury the stage or code 
 | **Scene wide layout** | Side-by-side sidebar only if width ≥ 560 **and** height ≥ 300; else stacked phone layout. | `widgets/workspace_scene_tab.dart` build |
 
 AndroidManifest already allows orientation changes (`configChanges` includes orientation/screenSize). App does **not** lock to portrait.
+
+---
+
+## 5b. Workspace paths & flexibility
+
+Sandbox stays closed; allow-lists grow **deliberately**.
+
+| Rule | Detail |
+|------|--------|
+| **Top folders** | `src`, `assets`, `scenes`, `screens`, `notes` only |
+| **Nested folders** | Allowed under those tops, max depth **8** (list + resolve) |
+| **Root files** | Only `README.md` and `NOTES.md` at project root (not arbitrary root listing) |
+| **Rejected** | `..`, absolute paths, empty segments (`a//b`), trailing `/`, symlinks, names with bad chars |
+| **UI** | Files panel → note icon → “Add README.md / NOTES.md” when missing |
+
+Primary code: `files/workspace_paths.dart`, `files/workspace_file_service.dart`, `widgets/file_tree_panel.dart`.
 
 ---
 
@@ -192,12 +209,11 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 ## 9. Suggested next steps (priority order)
 
-1. **Stability (remaining)** — path safety edges, run-panel close/busy races, crash hunts from device recordings  
-2. **Workspace flexibility** — nested folders + controlled root-level notes (extend allow-lists deliberately)  
-3. **Stronger 3D** — mesh draw path, shared editor/run transform story  
-4. **Touch / play feel** polish on low-end  
-5. **Assets** pipeline for user-added content  
-6. Optional languages on demand  
+1. **Stability (device)** — crash hunts from screen recordings, edge cases on real phones  
+2. **Stronger 3D** — mesh draw path, shared editor/run transform story  
+3. **Touch / play feel** polish on low-end  
+4. **Assets** pipeline for user-added content  
+5. Optional languages on demand  
 
 ---
 

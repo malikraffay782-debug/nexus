@@ -33,10 +33,23 @@ class WorkspaceFileService {
 
   static const int maxEditableBytes = 1024 * 1024; // 1 MB
   static const int _maxEntries = 2000;
-  static const int _maxDepth = 8;
 
   Future<List<WorkspaceEntry>> listTree() async {
     final out = <WorkspaceEntry>[];
+
+    // Controlled root-level files (README.md, NOTES.md) — not arbitrary root.
+    for (final name in WorkspacePaths.rootFiles) {
+      final abs = '${paths.root}/$name';
+      if (WorkspacePaths.typeOf(abs) == FileSystemEntityType.file) {
+        out.add(WorkspaceEntry(
+          name: name,
+          relPath: name,
+          isDir: false,
+          depth: 0,
+        ));
+      }
+    }
+
     for (final top in WorkspacePaths.topDirs) {
       final abs = '${paths.root}/$top';
       // Ensure allowed top-level folders exist (old projects get notes, etc.).
@@ -62,7 +75,7 @@ class WorkspaceFileService {
     int depth,
     List<WorkspaceEntry> out,
   ) async {
-    if (depth > _maxDepth || out.length >= _maxEntries) return;
+    if (depth > WorkspacePaths.maxDepth || out.length >= _maxEntries) return;
 
     final raw = <_RawChild>[];
     try {
@@ -161,6 +174,26 @@ class WorkspaceFileService {
       throw WorkspaceException('Could not create folder: ${e.message}');
     }
     return rel;
+  }
+
+  /// Creates a controlled root-level file (README.md / NOTES.md only).
+  Future<String> createRootFile(String name) async {
+    final clean = WorkspacePaths.validateName(name);
+    if (!WorkspacePaths.isRootFile(clean)) {
+      throw const WorkspaceException(
+        'Only README.md or NOTES.md can be created at project root',
+      );
+    }
+    final abs = paths.resolve(clean);
+    if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.notFound) {
+      throw const WorkspaceException('A file with that name already exists');
+    }
+    try {
+      await File(abs).create(exclusive: true);
+    } on FileSystemException catch (e) {
+      throw WorkspaceException('Could not create file: ${e.message}');
+    }
+    return clean;
   }
 
   Future<String> _childRel(String parentRel, String name) async {

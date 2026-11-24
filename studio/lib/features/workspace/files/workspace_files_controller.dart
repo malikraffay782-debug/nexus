@@ -175,6 +175,19 @@ class WorkspaceFilesController extends ChangeNotifier {
     }
   }
 
+  /// Controlled root file only (README.md / NOTES.md).
+  Future<FileActionResult> createRootFile(String name) async {
+    try {
+      final rel = await service.createRootFile(name);
+      await refreshTree();
+      return FileActionResult(relPath: rel);
+    } on WorkspaceException catch (e) {
+      return FileActionResult(error: e.message);
+    } catch (_) {
+      return const FileActionResult(error: 'Could not create file');
+    }
+  }
+
   Future<String?> deleteFile(String relPath) async {
     try {
       await service.deleteFile(relPath);
