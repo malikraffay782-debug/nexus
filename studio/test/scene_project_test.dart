@@ -93,6 +93,58 @@ void main() {
     });
   });
 
+
+  group('SceneProject.ndc project consistency', () {
+    test('off-center point stays visible and scale uses 1/depth', () {
+      final c = cam(cz: -240, near: 1, far: 2000);
+      final z = 0.0; // depth = 240
+      final p = SceneProject.project(
+        c,
+        c.cx + 30,
+        c.cy + 20,
+        z,
+        mode: SceneProjectMode.ndc,
+      );
+      expect(p.visible, isTrue);
+      final depth = c.depthOf(z);
+      expect(p.scale, closeTo(SceneProject.perspectiveScale(c, depth), 1e-6));
+      expect(p.scale, isNot(closeTo(SceneProject.depthScale(c, depth), 1e-3)));
+    });
+
+    test('rotated camera still projects center in front', () {
+      final c = SceneCamFrame(
+        cx: 360,
+        cy: 640,
+        cz: -200,
+        near: 1,
+        far: 2000,
+        fovDeg: 60,
+        stageW: stageW,
+        stageH: stageH,
+        rx: 8,
+        ry: -12,
+        rz: 5,
+      );
+      final ok = SceneProject.inNdcFrustum(c, 360, 640, 0);
+      expect(ok, isTrue);
+      final p = SceneProject.project(c, 360, 640, 0, mode: SceneProjectMode.ndc);
+      expect(p.visible, isTrue);
+    });
+
+    test('behind camera is culled', () {
+      final c = cam(cz: 0, near: 1, far: 500);
+      // world z behind eye → depth negative
+      final p = SceneProject.project(
+        c,
+        c.cx,
+        c.cy,
+        c.cz - 10,
+        mode: SceneProjectMode.ndc,
+      );
+      expect(p.visible, isFalse);
+    });
+  });
+
   group('SceneProject.aabbVisible', () {
     test('soft: box overlapping depth range is visible', () {
       final c = cam(cz: 0, far: 200);

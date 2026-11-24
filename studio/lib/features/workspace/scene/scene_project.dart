@@ -6,6 +6,13 @@ import 'scene_model.dart';
 ///
 /// [soft] — cheap depth scale (default, low-end friendly; matches scene_draw.py).
 /// [ndc]  — perspective → NDC → stage pixels (Unity-style space; opt-in).
+///
+/// ## Units
+/// - **Stage XY**: pixel-like coordinates on the scene document
+///   (`SceneDoc.width` × `height`, origin top-left, Y down).
+/// - **Depth Z**: same numeric units as [SceneCamFrame.near] / [far]
+///   (not forced to pixels). `depth = worldZ - cam.cz` with look **+Z**.
+/// - Default gameplay: sprites at z≈0, camera at **negative z** so depth > near.
 enum SceneProjectMode { soft, ndc }
 
 /// Resolved camera + stage constants for one frame (no node refs held).
@@ -425,10 +432,22 @@ class SceneProject {
     return (x, y);
   }
 
+  /// Perspective size scale for NDC path: ~1 at [refDepth], falls as 1/depth.
+  ///
+  /// Uses the same depth axis as the projection matrix (not [depthScale] soft).
+  static double perspectiveScale(SceneCamFrame cam, double depth) {
+    final d = depth < cam.near ? cam.near : depth;
+    final ref = cam.softRef > 1e-9 ? cam.softRef : 100.0;
+    final s = ref / d;
+    if (!s.isFinite) return 1.0;
+    return s.clamp(0.05, 8.0);
+  }
+
   /// Dispatch by [mode]. Default soft for low-end frames.
   ///
   /// - [SceneProjectMode.soft]: soft depth scale (no matrices).
-  /// - [SceneProjectMode.ndc]: view×projection → NDC + lateral unit square.
+  /// - [SceneProjectMode.ndc]: view×projection → NDC + lateral unit square;
+  ///   size scale from [perspectiveScale] (1/depth), not soft.
   static SceneProjected project(
     SceneCamFrame cam,
     double x,
@@ -451,9 +470,8 @@ class SceneProject {
       return SceneProjected(x: x, y: y, scale: 1, visible: false);
     }
     final (sx, sy) = ndcToStage(cam, nx, ny);
-    // Size scale from depth (same soft weight) so rects still shrink.
     final depth = cam.depthOf(z);
-    final s = depthScale(cam, depth);
+    final s = perspectiveScale(cam, depth);
     return SceneProjected(x: sx, y: sy, scale: s, visible: true);
   }
 }

@@ -283,7 +283,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       name: isCam ? 'Camera ${n + 1}' : 'Sprite ${n + 1}',
       x: 80.0 + col * 120,
       y: 80.0 + row * 120,
-      z: 0,
+      // Cameras sit behind the stage (negative z) so sprites at z≈0 have
+      // depth > near and show up in NDC mode without hand-tuning.
+      z: isCam ? -240 : 0,
       w: isCam ? 48 : 64,
       h: isCam ? 48 : 64,
       color: ScenePalette.forType(t),
