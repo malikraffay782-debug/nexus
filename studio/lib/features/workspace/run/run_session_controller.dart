@@ -74,6 +74,7 @@ class RunSessionController extends ChangeNotifier {
     }
     if (phase != RunPhase.starting && phase != RunPhase.running) return;
 
+    final gen = _generation;
     _stopRequested = true;
     _emit(RunSessionState(
       phase: RunPhase.stopping,
@@ -81,8 +82,21 @@ class RunSessionController extends ChangeNotifier {
       stdout: _state.stdout,
       stderr: _state.stderr,
     ));
-    await _gateway.stop();
-    // Final phase comes from run() completion.
+    final nativeStopped = await _gateway.stop();
+    // If native had nothing to kill (race / already ended) and run() has not
+    // finished yet, do not leave the UI stuck in stopping forever.
+    if (!_isCurrent(gen)) return;
+    if (_state.phase == RunPhase.stopping && !nativeStopped) {
+      _emit(RunSessionState(
+        phase: RunPhase.cancelled,
+        startedAt: _state.startedAt,
+        stdout: _state.stdout,
+        stderr: _state.stderr,
+        errorMessage: 'Stopped by user',
+        endedAt: DateTime.now(),
+      ));
+    }
+    // Otherwise final phase still comes from run() completion (_finish).
   }
 
   /// Clear the run panel after a finished / failed / cancelled run.

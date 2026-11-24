@@ -363,9 +363,18 @@ class ProotExecutor(
             val pbEnv = pb.environment()
             pbEnv.putAll(env)
             pb.redirectErrorStream(false)
+            // Capture any stop that arrived before we own the process, then clear.
+            val stopBeforeStart = stopRequested
             stopRequested = false
             process = pb.start()
             activeProcess = process
+
+            // Honour stop that raced with start (before or right after activeProcess set).
+            if (stopBeforeStart || stopRequested) {
+                stopRequested = true
+                killProcessTree(process!!)
+                return SpawnResult(-1, "", "Stopped by user", timedOut = false, stoppedByUser = true)
+            }
 
             val stdoutFuture = readerExecutor.submit {
                 drainCapped(process!!.inputStream, stdout)
@@ -466,18 +475,19 @@ class ProotExecutor(
     }
 
     /**
-     * Best-effort kill of proot and children.
-     * Avoid Process.toHandle()/ProcessHandle — not in the Android SDK stubs,
-     * so it fails compileDebugKotlin even when minSdk is 26+.
-     */
-    /**
      * Best-effort stop of the active proot process (TERM then KILL via killProcessTree).
+     * Always latches stopRequested so a process that starts a moment later is also killed.
      * Safe to call without holding runMutex; only signals the process.
+     * Returns true if a stop was accepted (latched and/or process signalled).
+     * Avoid Process.toHandle()/ProcessHandle — not in the Android SDK stubs.
      */
     fun stopActive(): Boolean {
-        val p = activeProcess ?: return false
         stopRequested = true
-        if (!p.isAlive) return false
+        val p = activeProcess
+        if (p == null || !p.isAlive) {
+            // No live process yet — latch is enough; spawnOnce will see the flag.
+            return true
+        }
         killProcessTree(p)
         return true
     }
@@ -498,8 +508,8 @@ class ProotExecutor(
                             "kill -KILL $pid 2>/dev/null || true"
                     )
                 )
-                // Best-effort: process group may not apply; force-kill killer if it hangs.
-                val killerDone = killer.waitFor(2, TimeUnit.SECONDS)
+                // Short wait only — never block the caller (esp. Flutter platform thread) long.
+                val killerDone = killer.waitFor(400, TimeUnit.MILLISECONDS)
                 if (!killerDone) {
                     try { killer.destroyForcibly() } catch (_: Exception) {}
                 }
@@ -513,8 +523,8 @@ class ProotExecutor(
         }
         try { process.destroy() } catch (_: Exception) {}
         try { process.destroyForcibly() } catch (_: Exception) {}
-        // Give the process a moment to exit so the runMutex holder can finish.
-        try { process.waitFor(2, TimeUnit.SECONDS) } catch (_: Exception) {}
+        // Brief yield so the run thread can observe exit; keep short for low-end / ANR safety.
+        try { process.waitFor(300, TimeUnit.MILLISECONDS) } catch (_: Exception) {}
     }
 
     /** Reflective pid for Android's java.lang.Process (no public API on all levels). */

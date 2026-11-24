@@ -278,8 +278,8 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
-| B1 | H | `RuntimePlugin.kt` `"stopRun"`, `ProotExecutor.stopActive/killProcessTree` | `stopRun` runs **synchronously on the Flutter platform (main) thread**, and `killProcessTree` spawns `sh -c "kill…; sleep 0.15; kill -KILL…"` and waits up to 2 s + 2 s. Tapping Stop can freeze the UI (worst case ~4 s, ANR risk on slow phones). | Run `stopActive()` on a dedicated small thread (not the shared 2-thread pool, which may be busy with the run) and reply via `mainHandler`. |
-| B2 | H | `ProotExecutor.spawnOnce` (`stopRequested = false` at spawn), `RuntimePlugin` `"stopRun"`, `run_session_controller.stop`, AppBar in `workspace_screen.dart` | **Stop can be lost**: if Stop arrives before the process exists, or while `runProject` is still waiting on `runMutex` (e.g. a package install holds it), `activeProcess == null` → `stopped:false`. The controller has already switched to `stopping`; in that phase the Stop button is hidden and Run is disabled, so the UI is stuck until the run ends by timeout (60 s + 15 s Dart timeout). | Latch the stop request (run token checked right after `pb.start()` and after `runMutex.lock()`), and let the controller fall back to `cancelled`/idle when `stop()` returns `false`. |
+| B1 | H | `RuntimePlugin.kt` / `ProotExecutor` | FIXED — stopRun on dedicated `nexus-stop` daemon thread; kill waits cut to ~400ms+300ms (was ~4s). | — |
+| B2 | H | `ProotExecutor.spawnOnce` / `run_session_controller` | FIXED — stop always latches; spawn checks pre/post-start race; Dart forces cancelled if native reports idle while still stopping. | — |
 | B3 | H (2 GB) | `ProotExecutor.MAX_OUTPUT_CHARS = 2 MB` per stream | Kotlin buffers up to 2 M chars for stdout **and** stderr in `StringBuilder` (UTF-16 ≈ 4 MB each, doubling growth, then `toString()` copy, then MethodChannel encode/decode copy). Dart then throws away everything above 200 k (`kMaxOutputChars`). A runaway `print` loop (up to 60 s) creates a tens-of-MB spike for output that is discarded anyway. | Cap in Kotlin at the same ~200 k chars (or keep head + tail only). |
 | B14 | M *(verify)* | `RuntimePlugin.executor` (core 2, max 4, queue 32) | `ThreadPoolExecutor` only grows past core size when the queue is full, so effectively **2 workers**. A long install + a Run occupy both; any other native call queues behind them and hits its Dart-side timeout. | Separate executor for long jobs (install/run) vs. short probes. |
 | B24 | L | `run_session_controller.dart` `run()/stop()` | After Stop in `checking`, `_launching` stays `true` until the old readiness call returns, so an immediate re-tap on Run is silently ignored. | Tie the `_launching` reset to the generation that owns it. |
@@ -338,11 +338,11 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 
 ### 11.7 Suggested fix order (one step per turn)
 
-1. **B1 + B2** — Stop path (main-thread block + lost stop / stuck `stopping`).
+1. ~~**B1 + B2** — Stop path~~ **DONE** (this commit).
 2. **B3** — match Kotlin output cap to Dart (small, safe, helps 2 GB).
 3. **B6** — atomic scene save.
 4. **B4 + B5** — NDC culling correctness (add tests first).
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
 6. B7–B10 (3D feel), then B11–B13 (allocations / perf), then the L items.
 
-*Last updated by bug hunt pass 1. Update the status of an item when it is fixed (add the commit hash).*
+*Last updated: B1+B2 fixed. Update status of an item when it is fixed (add the commit hash).*

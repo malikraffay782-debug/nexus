@@ -288,12 +288,27 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             }
 
             "stopRun" -> {
-                // Synchronous: only signals process; must not block on runMutex
-                try {
-                    result.success(runtime.stopRun())
-                } catch (e: Exception) {
-                    result.error("stop_failed", e.message, null)
+                // Off platform thread: killProcessTree still does short waits;
+                // never risk ANR on low-end phones. Dedicated thread so the
+                // shared 2-worker pool (which may be busy with the run) is free.
+                if (destroyed) {
+                    try { result.error("NATIVE_DETACHED", "stopRun: plugin is detached", null) } catch (_: Throwable) {}
+                    return
                 }
+                Thread({
+                    try {
+                        val map = runtime.stopRun()
+                        mainHandler.post {
+                            if (destroyed) return@post
+                            try { result.success(map) } catch (_: Throwable) {}
+                        }
+                    } catch (e: Exception) {
+                        mainHandler.post {
+                            if (destroyed) return@post
+                            try { result.error("stop_failed", e.message, null) } catch (_: Throwable) {}
+                        }
+                    }
+                }, "nexus-stop").apply { isDaemon = true; start() }
             }
 
 
