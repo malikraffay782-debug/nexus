@@ -20,8 +20,8 @@ class RunSessionController extends ChangeNotifier {
 
   Future<void> run(String projectId, {int timeoutSec = 60}) async {
     if (_launching || _state.phase.isBusy) return;
-    _launching = true;
     final gen = ++_generation;
+    _launching = true;
     _stopRequested = false;
 
     try {
@@ -59,7 +59,8 @@ class RunSessionController extends ChangeNotifier {
         _fail(gen, 'Could not start run. $e');
       }
     } finally {
-      _launching = false;
+      // Only the generation that set _launching may clear it (Stop-in-checking race).
+      if (gen == _generation) _launching = false;
     }
   }
 

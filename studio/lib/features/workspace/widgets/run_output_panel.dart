@@ -62,6 +62,13 @@ class RunOutputPanel extends StatelessWidget {
       if (state.stderr.isNotEmpty) '[stderr]\n${state.stderr}',
     ].join('\n');
 
+    // Panel shows only a tail — full body kept for Copy (2 GB layout cost).
+    const panelMaxChars = 32000;
+    final displayBody = body.length <= panelMaxChars
+        ? body
+        : '…[earlier output truncated]
+' + body.substring(body.length - panelMaxChars);
+
     final panelH = heightFor(context);
     final compact = panelH <= 140;
 
@@ -137,7 +144,7 @@ class RunOutputPanel extends StatelessWidget {
               child: SingleChildScrollView(
                 padding: EdgeInsets.fromLTRB(12, compact ? 4 : 8, 12, compact ? 8 : 12),
                 child: SelectableText(
-                  body.isEmpty ? '…' : body,
+                  displayBody.isEmpty ? '…' : displayBody,
                   style: mono,
                 ),
               ),

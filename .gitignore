@@ -38,4 +38,5 @@ flutter_*.png
 *.log
 .token
 .env
-secrets/studio/assets/runtime/__pycache__/
+secrets/
+studio/assets/runtime/__pycache__/

@@ -25,7 +25,7 @@ class ProotExecutor(
     companion object {
         private const val DEFAULT_TIMEOUT_SEC = 60L
         private const val MAX_OUTPUT_CHARS = 200_000  // match Dart kMaxOutputChars; avoid multi-MB spike on 2 GB
-        private const val MAX_TIMEOUT_SEC = 3600L
+        private const val MAX_TIMEOUT_SEC = 120L  // match Dart/RuntimePlugin clamp
     }
 
     data class CommandResult(
@@ -44,8 +44,8 @@ class ProotExecutor(
             .replace(Regex("/+"), "/")
             .trim()
 
-        if (sanitized.contains("..")) {
-            RuntimeLogger.w("workingDir rejected (contains ..): $raw")
+        if (sanitized.split('/').any { it == ".." || it == "." }) {
+            RuntimeLogger.w("workingDir rejected (dot segment): $raw")
             return defaultGuest
         }
 

@@ -16,8 +16,14 @@ class WorkspaceException implements Exception {
 /// allowed top-level folders **or** a controlled root-level file.
 /// Rejects '..', absolute paths, empty segments, odd characters and symlinks.
 class WorkspacePaths {
-  WorkspacePaths(String projectPath) : root = _canonicalRoot(projectPath);
+  WorkspacePaths(String projectPath)
+      : _rawRoot = _trimTrailingSlashes(projectPath),
+        root = _canonicalRoot(projectPath);
 
+  /// Unresolved root (symlink check). Prefer [root] for path joins.
+  final String _rawRoot;
+
+  /// Canonical absolute project root (no trailing slash).
   final String root;
 
   /// Allowed top-level folders. Extend deliberately; never open the project root
@@ -69,8 +75,8 @@ class WorkspacePaths {
     if (name.length > maxNameLength) {
       throw const WorkspaceException('Name is too long');
     }
-    if (name == '.' || name.contains('..')) {
-      throw const WorkspaceException('Name cannot contain ".."');
+    if (name == '.' || name == '..') {
+      throw const WorkspaceException('Name cannot be "." or ".."');
     }
     if (name.startsWith('.')) {
       throw const WorkspaceException('Name cannot start with "."');
@@ -123,7 +129,7 @@ class WorkspacePaths {
       );
     }
 
-    if (_isLink(root)) {
+    if (_isLink(_rawRoot) || _isLink(root)) {
       throw const WorkspaceException('Project folder is a symlink');
     }
     var current = root;

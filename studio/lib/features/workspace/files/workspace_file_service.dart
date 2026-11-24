@@ -31,7 +31,7 @@ class WorkspaceFileService {
 
   final WorkspacePaths paths;
 
-  static const int maxEditableBytes = 1024 * 1024; // 1 MB
+  static const int maxEditableBytes = 256 * 1024; // 256 KB — 2 GB phones
   static const int _maxEntries = 2000;
 
   Future<List<WorkspaceEntry>> listTree() async {
@@ -84,6 +84,7 @@ class WorkspaceFileService {
         // Bound memory while scanning, not only after sort.
         if (raw.length >= _maxEntries) break;
         final name = e.path.substring(e.path.lastIndexOf('/') + 1);
+        if (name.endsWith('.nexus_tmp')) continue; // crash leftovers
         if (!WorkspacePaths.isValidSegment(name)) continue;
         raw.add(_RawChild(name, e is Directory));
       }
@@ -136,7 +137,7 @@ class WorkspaceFileService {
     if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.file) {
       throw const WorkspaceException('File no longer exists');
     }
-    final tmpPath = '$abs.nexus_tmp';
+    final tmpPath = '$abs.${DateTime.now().microsecondsSinceEpoch}.nexus_tmp';
     try {
       if (WorkspacePaths.typeOf(tmpPath) != FileSystemEntityType.notFound) {
         await File(tmpPath).delete();

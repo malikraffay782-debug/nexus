@@ -40,6 +40,12 @@ class SceneStagePainter extends CustomPainter {
   /// Runtime poses from [ScenePlayController] (null in edit mode).
   final ScenePlayState? playState;
 
+  // Reused paints — avoid per-frame Paint() on low-end (B11).
+  static final Paint _bgPaint = _bgPaint;
+  static final Paint _gridPaint = Paint()
+    ..color = const Color(0x3AFFFFFF)
+    ..strokeWidth = 1;
+
   /// Play-frame camera (null in edit mode or when no camera node).
   SceneCamFrame? _cam;
   /// Cached P×V for NDC mode (once per paint).
@@ -134,9 +140,7 @@ class SceneStagePainter extends CustomPainter {
   }
 
   void _paintGrid(Canvas canvas, Size size, double scaleX, double scaleY) {
-    final paint = Paint()
-      ..color = const Color(0x3AFFFFFF)
-      ..strokeWidth = 1;
+    final paint = _gridPaint;
     const step = 40.0;
     final maxX = doc.width.toDouble();
     final maxY = doc.height.toDouble();

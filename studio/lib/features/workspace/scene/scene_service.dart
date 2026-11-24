@@ -45,6 +45,11 @@ class SceneService {
     if (!await file.exists()) {
       throw const WorkspaceException('Scene file not found');
     }
+    final len = await file.length();
+    // Match editor budget; oversized scene JSON is rejected (2 GB safety).
+    if (len > 2 * 1024 * 1024) {
+      throw const WorkspaceException('Scene file is too large (max 2 MB)');
+    }
     final text = await file.readAsString();
     return SceneDoc.decode(text);
   }
@@ -59,7 +64,7 @@ class SceneService {
 
   /// Temp file + rename so a kill mid-write cannot corrupt the scene on 2 GB phones.
   Future<void> _atomicWrite(String abs, String content) async {
-    final tmpPath = '$abs.nexus_tmp';
+    final tmpPath = '$abs.${DateTime.now().microsecondsSinceEpoch}.nexus_tmp';
     try {
       final existing = File(tmpPath);
       if (await existing.exists()) await existing.delete();

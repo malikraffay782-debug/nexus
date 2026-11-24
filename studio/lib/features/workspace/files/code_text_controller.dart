@@ -9,6 +9,11 @@ class CodeTextController extends TextEditingController {
 
   static const int _maxHighlightLength = 60000;
 
+  String? _cacheText;
+  TextSpan? _cacheSpan;
+  TextStyle? _cacheStyle;
+  bool _cacheDark = false;
+
   // Groups: 1 comment, 2 string, 3 keyword, 4 number.
   static final RegExp _py = RegExp(
     r'(#[^\n]*)'
@@ -39,6 +44,12 @@ class CodeTextController extends TextEditingController {
     }
 
     final dark = Theme.of(context).brightness == Brightness.dark;
+    if (_cacheText == text &&
+        _cacheSpan != null &&
+        _cacheDark == dark &&
+        _cacheStyle == style) {
+      return _cacheSpan!;
+    }
     final comment = dark ? const Color(0xFF6A9955) : const Color(0xFF2E7D32);
     final string = dark ? const Color(0xFFCE9178) : const Color(0xFFB5502B);
     final keyword = dark ? const Color(0xFFC586C0) : const Color(0xFF7B1FA2);
@@ -66,6 +77,11 @@ class CodeTextController extends TextEditingController {
     if (last < text.length) {
       spans.add(TextSpan(text: text.substring(last)));
     }
-    return TextSpan(style: style, children: spans);
+    final span = TextSpan(style: style, children: spans);
+    _cacheText = text;
+    _cacheSpan = span;
+    _cacheStyle = style;
+    _cacheDark = dark;
+    return span;
   }
 }

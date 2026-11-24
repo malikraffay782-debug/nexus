@@ -281,11 +281,11 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | B1 | H | `RuntimePlugin.kt` / `ProotExecutor` | FIXED — stopRun on dedicated `nexus-stop` daemon thread; kill waits cut to ~400ms+300ms (was ~4s). | — |
 | B2 | H | `ProotExecutor.spawnOnce` / `run_session_controller` | FIXED — stop always latches; spawn checks pre/post-start race; Dart forces cancelled if native reports idle while still stopping. | — |
 | B3 | H (2 GB) | `ProotExecutor.MAX_OUTPUT_CHARS` | FIXED — capped at 200_000 chars to match Dart `kMaxOutputChars` (was 2 MB per stream). | — |
-| B14 | M *(verify)* | `RuntimePlugin.executor` (core 2, max 4, queue 32) | `ThreadPoolExecutor` only grows past core size when the queue is full, so effectively **2 workers**. A long install + a Run occupy both; any other native call queues behind them and hits its Dart-side timeout. | Separate executor for long jobs (install/run) vs. short probes. |
-| B24 | L | `run_session_controller.dart` `run()/stop()` | After Stop in `checking`, `_launching` stays `true` until the old readiness call returns, so an immediate re-tap on Run is silently ignored. | Tie the `_launching` reset to the generation that owns it. |
-| B27 | L | `RuntimePlugin.onWorker` | If the plugin detaches after the work finished, `if (destroyed) return@post` drops the reply and the Dart `Future` never completes. | Reply with `NATIVE_DETACHED`. |
-| B23 | L | `embedded_runtime.dart` (default 30), `run_session_controller.dart` (60), `RuntimePlugin` (default 30, clamp 1..120), `NexusRuntime` (clamp 1..120), `ProotExecutor.MAX_TIMEOUT_SEC` (3600) | Timeout defaults/limits disagree; the 3600 s limit is unreachable. | One constant, one place. |
-| B22 | L | `application/project_runner.dart` | **Dead code** (`ProjectRunner` is not referenced anywhere) with a stale 30 s timeout and a wrong hint (`pkg install python`). | Delete in its own small commit. |
+| B14 | M | RuntimePlugin executors | FIXED — longExecutor for install/run; short pool for probes. | — |
+| B24 | L | run_session_controller | FIXED — _launching cleared only by owning generation. | — |
+| B27 | L | RuntimePlugin.onWorker | FIXED — always reply NATIVE_DETACHED if destroyed after work. | — |
+| B23 | L | timeouts | FIXED — ProotExecutor MAX_TIMEOUT_SEC 3600→120 (matches clamps). | — |
+| B22 | L | project_runner.dart | FIXED — dead code deleted. | — |
 
 ### 11.2 3D foundation (priority C / D)
 
@@ -305,27 +305,27 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
 | B6 | H (2 GB) | `scene_service.dart` `save()` / `create()` | FIXED — temp + rename atomic write (same pattern as WorkspaceFileService). | — |
-| B20 | L | `workspace_file_service.writeText` | Leftover `*.nexus_tmp` files (after a crash) are valid segment names and show in the tree; two parallel saves share the same tmp name. | Hide/clean `.nexus_tmp` on listing; unique tmp name or per-file save lock. |
-| B18 | L | `workspace_paths.dart` | `_canonicalRoot()` resolves symlinks, so `_isLink(root)` in `resolve()` can **never** be true — the "Project folder is a symlink" check is dead code (Kotlin `ProjectMount` does reject symlinks, so Run is safe; the editor is not). | Check the *unresolved* root for a link before canonicalising. |
-| B19 | L | `WorkspacePaths.validateName`, `ProotExecutor.safeWorkingDir` | Any name containing `..` is rejected, including harmless names like `my..file.py` (false positive). | Reject only the exact segments `.` / `..`. |
+| B20 | L | writeText / listTree | FIXED — hide *.nexus_tmp; unique tmp names. | — |
+| B18 | L | workspace_paths | FIXED — symlink check uses unresolved _rawRoot. | — |
+| B19 | L | validateName / safeWorkingDir | FIXED — only exact `.` / `..` segments rejected. | — |
 | B21 | L | `workspace_file_service.listTree` | Listing has a write side-effect (creates missing top folders) and silently truncates at 2000 entries. | Create folders at project creation; show a "list truncated" row. |
-| B28 | L | `scene_service.load` | No size cap when reading a scene file (the code editor has a 1 MB cap). | Add a cap (e.g. 1–2 MB). |
+| B28 | L | scene_service.load | FIXED — 2 MB size cap on scene JSON read. | — |
 
 ### 11.4 Low-end (2 GB) performance
 
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
-| B11 | M | `scene_renderer.dart` `paint()` (`List.of` + `sort` + many `Paint()` per node per frame); `code_text_controller.dart` `buildTextSpan` (regex + new spans on every build, up to 60 k chars) | Per-frame allocations — breaks LOW-END rule 7. | Cache sorted order / reusable `Paint` objects; cache highlight spans per text version. |
-| B12 | M *(verify)* | `workspace_file_service.maxEditableBytes = 1 MB`, `workspace_files_controller._onTextChanged` | Editor accepts 1 MB text and compares full strings on every keystroke. A 1 MB `TextField` is heavy on a 2 GB phone. | Lower cap (e.g. 256 KB), compare lengths/hash first. |
-| B13 | M *(verify)* | `run_output_panel.dart` | One `SelectableText` with up to 200 k chars in a 110–200 px panel — large layout cost / jank. | Show only the last N k chars in the panel, keep full text for Copy. |
-| B16 | M *(verify)* | `AndroidManifest.xml` | No `android:allowBackup="false"`; the app's private data (runtime rootfs = hundreds of MB, projects) can be pulled into backups. | Set `allowBackup=false` (or explicit backup rules). |
+| B11 | M | renderer / code highlight | FIXED — reused bg/grid Paint; CodeTextController caches spans per text. | — |
+| B12 | M | maxEditableBytes | FIXED — 1 MB → 256 KB for 2 GB phones. | — |
+| B13 | M | run_output_panel | FIXED — panel shows last 32k chars; Copy keeps full body. | — |
+| B16 | M | AndroidManifest | FIXED — allowBackup=false. | — |
 | B29 | L | `jniLibs/arm64-v8a` | `libtalloc.so` and `libandroid-shmem.so` (~48 KB) are shipped although `ProotExecutor` documents a static proot that needs neither. | Remove after checking the CI verify step. |
 
 ### 11.5 Repo / CI hygiene
 
 | ID | Sev | Where | Problem | Suggested fix |
 |----|-----|-------|---------|---------------|
-| B15 | M | `.gitignore` (last lines) | Missing newline: `secrets/` and `studio/assets/runtime/__pycache__/` are glued into **one** pattern, so **`secrets/` is not ignored** and `__pycache__` is not ignored either. Also `libproot*.so` / `libtalloc*.so` / `libandroid-shmem*.so` are ignored but five of them are **tracked** (force-added) — policy is contradictory. | Put each pattern on its own line; decide whether the `.so` files are tracked or fetched by `scripts/ci-prepare-runtime.sh`. |
+| B15 | M | .gitignore | FIXED — secrets/ and __pycache__ on separate lines. | — |
 | B17 | info | `studio/android/keystore/debug.keystore` | Debug keystore is committed on purpose (stable CI installs). Fine for debug, **never** use it for release / Play Store. Keep this repo private. | — |
 
 ### 11.6 Checked and OK (no action)
@@ -343,6 +343,6 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 3. ~~**B6** — atomic scene save~~ **DONE**.
 4. ~~**B4 + B5** — NDC culling correctness~~ **DONE**.
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
-6. ~~B7–B10 (3D feel)~~ **DONE**. Then B11–B13 (allocations / perf), then the L items.
+6. ~~B7–B13 + hygiene L items~~ **DONE** (batch). Remaining: B21 (list truncated UX), B26 (rotated cull inflate), B29 (jniLibs audit).
 
 *Last updated: B1+B2 fixed. Update status of an item when it is fixed (add the commit hash).*

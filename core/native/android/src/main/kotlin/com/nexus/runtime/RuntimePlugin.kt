@@ -22,13 +22,20 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     private lateinit var eventChannel: EventChannel
     private lateinit var runtime: NexusRuntime
 
-    // Allow multiple concurrent commands (install can be long)
+    // Short probes (status) stay responsive while install/run occupy long pool.
     // AbortPolicy: never run heavy work on the Flutter platform thread (ANR risk)
     private val executor = java.util.concurrent.ThreadPoolExecutor(
         2, 4,
         30L, java.util.concurrent.TimeUnit.SECONDS,
         java.util.concurrent.ArrayBlockingQueue(32),
         { r -> Thread(r, "nexus-runtime-worker").apply { isDaemon = true } },
+        java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
+    )
+    private val longExecutor = java.util.concurrent.ThreadPoolExecutor(
+        1, 2,
+        30L, java.util.concurrent.TimeUnit.SECONDS,
+        java.util.concurrent.ArrayBlockingQueue(8),
+        { r -> Thread(r, "nexus-runtime-long").apply { isDaemon = true } },
         java.util.concurrent.ThreadPoolExecutor.AbortPolicy()
     )
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -53,6 +60,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
         eventChannel.setStreamHandler(null)
         progressSink = null
         executor.shutdownNow()
+        longExecutor.shutdownNow()
         try {
             executor.awaitTermination(2, java.util.concurrent.TimeUnit.SECONDS)
         } catch (_: InterruptedException) {
@@ -78,13 +86,14 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
      * Run work on background thread and always complete the Flutter Result
      * (success or error). Prevents Dart Futures from hanging forever.
      */
-    private fun <T> onWorker(result: Result, tag: String, block: () -> T) {
+    private fun <T> onWorker(result: Result, tag: String, longJob: Boolean = false, block: () -> T) {
         if (destroyed) {
             try { result.error("NATIVE_DETACHED", "$tag: plugin is detached", null) } catch (_: Throwable) {}
             return
         }
+        val pool = if (longJob) longExecutor else executor
         try {
-            executor.execute {
+            pool.execute {
                 if (destroyed) {
                     mainHandler.post {
                         try { result.error("NATIVE_DETACHED", "$tag: plugin is detached", null) } catch (_: Throwable) {}
@@ -94,23 +103,29 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                 try {
                     val value = block()
                     mainHandler.post {
-                        if (destroyed) return@post
                         try {
-                            result.success(value)
+                            if (destroyed) {
+                                result.error("NATIVE_DETACHED", "$tag: plugin is detached", null)
+                            } else {
+                                result.success(value)
+                            }
                         } catch (t: Throwable) {
-                            RuntimeLogger.e("Failed to send success for $tag", t)
+                            RuntimeLogger.e("Failed to send result for $tag", t)
                         }
                     }
                 } catch (t: Throwable) {
                     RuntimeLogger.e("Worker error in $tag", t)
                     mainHandler.post {
-                        if (destroyed) return@post
                         try {
-                            result.error(
-                                "NATIVE_ERROR",
-                                "$tag: ${t.javaClass.simpleName}: ${t.message}",
-                                t.stackTraceToString()
-                            )
+                            if (destroyed) {
+                                result.error("NATIVE_DETACHED", "$tag: plugin is detached", null)
+                            } else {
+                                result.error(
+                                    "NATIVE_ERROR",
+                                    "$tag: ${t.javaClass.simpleName}: ${t.message}",
+                                    t.stackTraceToString()
+                                )
+                            }
                         } catch (_: Throwable) {}
                     }
                 }
@@ -126,7 +141,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
     override fun onMethodCall(call: MethodCall, result: Result) {
         when (call.method) {
             "initialize" -> {
-                onWorker(result, "initialize") {
+                onWorker(result, "initialize", longJob = true) {
                     val initResult = runtime.initialize { percent, message ->
                         sendProgress(percent, message)
                     }
@@ -205,7 +220,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     }
                     30L
                 }
-                onWorker(result, "runProject") {
+                onWorker(result, "runProject", longJob = true) {
                     val cmdResult = runtime.runProject(projectId, timeoutSec)
                     mapOf(
                         "exitCode" to cmdResult.exitCode,
@@ -241,7 +256,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
                     result.error("INVALID_ARGS", "packages list required", null)
                     return
                 }
-                onWorker(result, "installPackage") {
+                onWorker(result, "installPackage", longJob = true) {
                     val installResult = runtime.packages.install(packages)
                     mapOf(
                         "success" to installResult.success,
@@ -252,7 +267,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             }
 
             "updatePackages" -> {
-                onWorker(result, "updatePackages") {
+                onWorker(result, "updatePackages", longJob = true) {
                     val updateResult = runtime.packages.update()
                     mapOf(
                         "success" to updateResult.success,
@@ -263,7 +278,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
             }
 
             "installCpp" -> {
-                onWorker(result, "installCpp") {
+                onWorker(result, "installCpp", longJob = true) {
                     val installResult = runtime.installCpp()
                     mapOf(
                         "success" to installResult.success,
@@ -313,7 +328,7 @@ class RuntimePlugin : FlutterPlugin, MethodCallHandler, EventChannel.StreamHandl
 
 
             "wipeRuntime" -> {
-                onWorker(result, "wipeRuntime") {
+                onWorker(result, "wipeRuntime", longJob = true) {
                     val wipe = runtime.wipeRuntime()
                     mapOf(
                         "success" to wipe.success,
