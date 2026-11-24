@@ -1,11 +1,10 @@
 import 'dart:math' as math;
 
 import 'package:flutter/material.dart';
-import 'package:flutter/scheduler.dart';
-import 'package:flutter/services.dart';
 
 import '../files/workspace_paths.dart';
 import '../scene/scene_model.dart';
+import '../scene/scene_play_controller.dart';
 import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
@@ -37,15 +36,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   /// Index of vertex being edited when node.hasPoints.
   int? _editPointIndex;
 
-  /// Graphical 2D preview loop (Flutter ticker — not proot).
-  bool _playing = false;
-  final ValueNotifier<double> _playTime = ValueNotifier(0.0);
-  /// Play projection: soft (low-end default) or NDC (FOV lateral cull).
-  SceneProjectMode _projectMode = SceneProjectMode.soft;
-  /// Keyboard steer for sample Player (non-destructive, play only).
-  Offset _playSteer = Offset.zero;
-  final FocusNode _playFocus = FocusNode(debugLabel: 'scenePlay');
-  final Set<LogicalKeyboardKey> _playKeys = {};
+  /// Play preview (ticker / steer / Soft↔NDC) — see [ScenePlayController].
+  late final ScenePlayController _play;
 
   /// True while a corner or the rotate handle owns the pointer.
   /// Stops the body-drag recognizer from also translating the node.
@@ -53,11 +45,13 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   double _pendingNudgeDx = 0;
   double _pendingNudgeDy = 0;
   bool _nudgeFrameScheduled = false;
-  Ticker? _playTicker;
+
+  bool get _playing => _play.playing;
 
   @override
   void initState() {
     super.initState();
+    _play = ScenePlayController(this);
     _service = SceneService(widget.projectPath);
     _reload();
   }
@@ -67,7 +61,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     super.didUpdateWidget(oldWidget);
     if (oldWidget.projectPath != widget.projectPath) {
       // Project switched without disposing this State — rebind service + reload.
-      _stopPlayLoop(rebuild: true);
+      _play.stop();
       _service = SceneService(widget.projectPath);
       _selected = null;
       _doc = null;
@@ -83,109 +77,28 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     _nudgeFrameScheduled = false;
     _pendingNudgeDx = 0;
     _pendingNudgeDy = 0;
-    _stopPlayLoop();
-    _playFocus.dispose();
-    _playTime.dispose();
+    _play.dispose();
     _nameCtrl.dispose();
     super.dispose();
   }
 
-  void _syncPlaySteer() {
-    var x = 0.0;
-    var y = 0.0;
-    if (_playKeys.contains(LogicalKeyboardKey.arrowLeft) ||
-        _playKeys.contains(LogicalKeyboardKey.keyA)) {
-      x -= 1;
-    }
-    if (_playKeys.contains(LogicalKeyboardKey.arrowRight) ||
-        _playKeys.contains(LogicalKeyboardKey.keyD)) {
-      x += 1;
-    }
-    if (_playKeys.contains(LogicalKeyboardKey.arrowUp) ||
-        _playKeys.contains(LogicalKeyboardKey.keyW)) {
-      y -= 1;
-    }
-    if (_playKeys.contains(LogicalKeyboardKey.arrowDown) ||
-        _playKeys.contains(LogicalKeyboardKey.keyS)) {
-      y += 1;
-    }
-    final next = Offset(x, y);
-    if (next != _playSteer && mounted) {
-      setState(() => _playSteer = next);
-    }
-  }
-
-  KeyEventResult _onPlayKey(FocusNode node, KeyEvent event) {
-    if (!_playing) return KeyEventResult.ignored;
-    final key = event.logicalKey;
-    final interesting = key == LogicalKeyboardKey.arrowLeft ||
-        key == LogicalKeyboardKey.arrowRight ||
-        key == LogicalKeyboardKey.arrowUp ||
-        key == LogicalKeyboardKey.arrowDown ||
-        key == LogicalKeyboardKey.keyA ||
-        key == LogicalKeyboardKey.keyD ||
-        key == LogicalKeyboardKey.keyW ||
-        key == LogicalKeyboardKey.keyS;
-    if (!interesting) return KeyEventResult.ignored;
-    if (event is KeyDownEvent || event is KeyRepeatEvent) {
-      _playKeys.add(key);
-      _syncPlaySteer();
-      return KeyEventResult.handled;
-    }
-    if (event is KeyUpEvent) {
-      _playKeys.remove(key);
-      _syncPlaySteer();
-      return KeyEventResult.handled;
-    }
-    return KeyEventResult.ignored;
-  }
-
-  /// Stops ticker + clears play clock. Use [rebuild] when no later setState
-  /// will run (e.g. project switch) so the play icon does not stick on Stop.
   void _stopPlayLoop({bool rebuild = false}) {
-    _playTicker?.dispose();
-    _playTicker = null;
-    final wasPlaying = _playing;
-    _playing = false;
-    _playSteer = Offset.zero;
-    _playKeys.clear();
-    if (_playTime.value != 0) {
-      _playTime.value = 0;
-    }
-    if (rebuild && wasPlaying && mounted) {
-      setState(() {});
-    }
+    final was = _play.playing;
+    _play.stop();
+    if (rebuild && was && mounted) setState(() {});
   }
 
   void _togglePlay() {
     if (_doc == null) return;
-    if (_playing) {
-      _stopPlayLoop();
-      setState(() {});
-      return;
-    }
-    // Dispose any leftover ticker before starting (rapid toggle / race).
-    _playTicker?.dispose();
-    _playTicker = null;
-    _playTime.value = 0;
-    _playSteer = Offset.zero;
-    _playKeys.clear();
-    _playTicker = createTicker((elapsed) {
-      if (!mounted || !_playing) return;
-      // Stage-only rebuild via ListenableBuilder (not the whole tab).
-      // ~30 fps is enough for bob/depth on low-end; skips duplicate ticks.
-      final t = elapsed.inMilliseconds / 1000.0;
-      if ((t - _playTime.value).abs() < 1 / 30) return;
-      _playTime.value = t;
-    })..start();
+    final nowPlaying = _play.toggle();
     setState(() {
-      _playing = true;
-      _editPointIndex = null;
+      if (nowPlaying) _editPointIndex = null;
     });
-    // Capture arrows/WASD for sample Player steer.
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted && _playing) _playFocus.requestFocus();
-    });
+    if (nowPlaying) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted && _play.playing) _play.focusNode.requestFocus();
+      });
+    }
   }
 
   Future<void> _reload() async {
@@ -217,7 +130,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         _editPointIndex = null;
         _loading = false;
       });
-      _playTime.value = 0;
+      _play.playTime.value = 0;
     } catch (e) {
       if (!mounted) return;
       setState(() {
@@ -2156,26 +2069,21 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       onPressed: _togglePlay,
                     ),
                     IconButton(
-                      tooltip: _projectMode == SceneProjectMode.soft
+                      tooltip: _play.projectMode == SceneProjectMode.soft
                           ? 'Projection: Soft (tap → NDC)'
                           : 'Projection: NDC (tap → Soft)',
                       icon: Icon(
-                        _projectMode == SceneProjectMode.soft
+                        _play.projectMode == SceneProjectMode.soft
                             ? Icons.view_in_ar_outlined
                             : Icons.view_in_ar,
                         size: 18,
-                        color: _projectMode == SceneProjectMode.ndc
+                        color: _play.projectMode == SceneProjectMode.ndc
                             ? scheme.primary
                             : null,
                       ),
                       visualDensity: VisualDensity.compact,
                       onPressed: () {
-                        setState(() {
-                          _projectMode =
-                              _projectMode == SceneProjectMode.soft
-                                  ? SceneProjectMode.ndc
-                                  : SceneProjectMode.soft;
-                        });
+                        setState(() => _play.toggleProjectMode());
                       },
                     ),
                     IconButton(
@@ -2200,16 +2108,17 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 ),
                 clipBehavior: Clip.hardEdge,
                 child: Focus(
-                  focusNode: _playFocus,
+                  focusNode: _play.focusNode,
                   autofocus: _playing,
                   canRequestFocus: _playing,
-                  onKeyEvent: _onPlayKey,
+                  onKeyEvent: _play.onKey,
                   child: Stack(
                   children: [
                     // Graphical 2D stage (play ticker only rebuilds this layer).
                     Positioned.fill(
                       child: ListenableBuilder(
-                        listenable: _playTime,
+                        // playTime for ticks; controller for steer / mode.
+                        listenable: Listenable.merge([_play, _play.playTime]),
                         builder: (context, _) {
                           return CustomPaint(
                             painter: SceneStagePainter(
@@ -2219,9 +2128,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               editPointIndex:
                                   _playing ? null : _editPointIndex,
                               showGrid: doc.showGrid,
-                              playTime: _playing ? _playTime.value : 0.0,
-                              projectMode: _projectMode,
-                              playerSteer: _playing ? _playSteer : Offset.zero,
+                              playTime: _playing ? _play.playTime.value : 0.0,
+                              projectMode: _play.projectMode,
+                              playerSteer:
+                                  _playing ? _play.steer : Offset.zero,
                             ),
                           );
                         },
@@ -2255,14 +2165,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                           scheme: scheme,
                           onSteer: (o) {
                             if (!mounted || !_playing) return;
-                            // Stick release → fall back to WASD keys if held.
-                            if (o == Offset.zero) {
-                              _syncPlaySteer();
-                              return;
-                            }
-                            if (o != _playSteer) {
-                              setState(() => _playSteer = o);
-                            }
+                            _play.setSteer(o);
                           },
                         ),
                       ),

@@ -203,8 +203,9 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 
 | File | Role |
 |------|------|
-| `widgets/workspace_scene_tab.dart` | Scene tab state + UI (still large — further split next) |
-| `widgets/play_touch_stick.dart` | Play-mode virtual stick (extracted) |
+| `widgets/workspace_scene_tab.dart` | Scene tab orchestration + UI (shrinking) |
+| `widgets/play_touch_stick.dart` | Play-mode virtual stick |
+| `scene/scene_play_controller.dart` | Play ticker, steer, Soft/NDC mode |
 
 ---
 
