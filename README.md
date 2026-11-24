@@ -298,7 +298,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | B9 | M | `scene_play_state.dart` `update()` | FIXED — dead-zone reshape; partial stick = slower speed. | — |
 | B10 | M | `scene_play_controller.dart` | FIXED — clear keys on focus loss so steer does not stick. | — |
 | B25 | gap | `ScenePlayState` | Play state is **XY-only**; the Player cannot move in Z and there is no mesh pipeline. Not a bug — keeps README §4 honest ("foundation"). | Next 3D steps. |
-| B26 | L | cull box | Node rotation (rx/ry/rz) is ignored by the cull box, so rotated sprites can be culled slightly too early. | Use a rotated/inflated box once B5 is fixed. |
+| B26 | L | cull box / rotation | FIXED — rotated nodes use diagonal-inflated AABB for cull. | — |
 
 ### 11.3 Data safety & files (priority B)
 
@@ -308,7 +308,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | B20 | L | writeText / listTree | FIXED — hide *.nexus_tmp; unique tmp names. | — |
 | B18 | L | workspace_paths | FIXED — symlink check uses unresolved _rawRoot. | — |
 | B19 | L | validateName / safeWorkingDir | FIXED — only exact `.` / `..` segments rejected. | — |
-| B21 | L | `workspace_file_service.listTree` | Listing has a write side-effect (creates missing top folders) and silently truncates at 2000 entries. | Create folders at project creation; show a "list truncated" row. |
+| B21 | L | listTree | FIXED — truncation marker row when entry cap hit. | — |
 | B28 | L | scene_service.load | FIXED — 2 MB size cap on scene JSON read. | — |
 
 ### 11.4 Low-end (2 GB) performance
@@ -319,7 +319,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | B12 | M | maxEditableBytes | FIXED — 1 MB → 256 KB for 2 GB phones. | — |
 | B13 | M | run_output_panel | FIXED — panel shows last 32k chars; Copy keeps full body. | — |
 | B16 | M | AndroidManifest | FIXED — allowBackup=false. | — |
-| B29 | L | `jniLibs/arm64-v8a` | `libtalloc.so` and `libandroid-shmem.so` (~48 KB) are shipped although `ProotExecutor` documents a static proot that needs neither. | Remove after checking the CI verify step. |
+| B29 | L | jniLibs | FIXED — removed unused libtalloc.so + libandroid-shmem.so (static proot). | — |
 
 ### 11.5 Repo / CI hygiene
 
@@ -343,6 +343,6 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 3. ~~**B6** — atomic scene save~~ **DONE**.
 4. ~~**B4 + B5** — NDC culling correctness~~ **DONE**.
 5. **B15** — `.gitignore` newline fix (tiny; do early before any secrets are added).
-6. ~~B7–B13 + hygiene L items~~ **DONE** (batch). Remaining: B21 (list truncated UX), B26 (rotated cull inflate), B29 (jniLibs audit).
+6. ~~All listed bug-hunt items~~ **DONE** (B25 is intentional foundation gap).
 
 *Last updated: B1+B2 fixed. Update status of an item when it is fixed (add the commit hash).*

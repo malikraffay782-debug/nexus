@@ -9,12 +9,16 @@ class WorkspaceEntry {
     required this.relPath,
     required this.isDir,
     required this.depth,
+    this.isTruncationMarker = false,
   });
 
   final String name;
   final String relPath;
   final bool isDir;
   final int depth;
+
+  /// True when the tree hit [_maxEntries] and listing was cut short.
+  final bool isTruncationMarker;
 }
 
 class _RawChild {
@@ -65,6 +69,15 @@ class WorkspaceFileService {
       }
       out.add(WorkspaceEntry(name: top, relPath: top, isDir: true, depth: 0));
       await _walk(abs, top, 1, out);
+    }
+    if (out.length >= _maxEntries) {
+      out.add(const WorkspaceEntry(
+        name: '… list truncated',
+        relPath: '__nexus_truncated__',
+        isDir: false,
+        depth: 0,
+        isTruncationMarker: true,
+      ));
     }
     return out;
   }

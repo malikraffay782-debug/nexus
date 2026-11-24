@@ -194,12 +194,26 @@ class SceneStagePainter extends CustomPainter {
     var outX = midX;
     var outY = midY;
     if (!isCamera && cam != null) {
+      // Rotated nodes: inflate AABB to diagonal so cull is not too aggressive (B26).
+      var cullX = boundX;
+      var cullY = boundY;
+      var cullW = boundW;
+      var cullH = boundH;
+      if (n.rx != 0 || n.ry != 0 || n.rz != 0) {
+        final diag = math.sqrt(boundW * boundW + boundH * boundH);
+        final cx = boundX + boundW * 0.5;
+        final cy = boundY + boundH * 0.5;
+        cullX = cx - diag * 0.5;
+        cullY = cy - diag * 0.5;
+        cullW = diag;
+        cullH = diag;
+      }
       final visible = SceneProject.aabbVisible(
         cam,
-        boundX,
-        boundY,
-        boundW,
-        boundH,
+        cullX,
+        cullY,
+        cullW,
+        cullH,
         n.z,
         zDepth: n.zDepth,
         mode: projectMode,

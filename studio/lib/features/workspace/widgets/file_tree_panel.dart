@@ -136,6 +136,20 @@ class FileTreePanel extends StatelessWidget {
   }
 
   Widget _row(BuildContext context, WorkspaceEntry e) {
+    if (e.isTruncationMarker) {
+      return ListTile(
+        dense: true,
+        visualDensity: VisualDensity.compact,
+        leading: const Icon(Icons.more_horiz, size: 20),
+        title: Text(
+          e.name,
+          style: TextStyle(
+            fontStyle: FontStyle.italic,
+            color: Theme.of(context).colorScheme.onSurfaceVariant,
+          ),
+        ),
+      );
+    }
     final selected = !e.isDir && e.relPath == controller.openPath;
     final collapsed = controller.isCollapsed(e.relPath);
 

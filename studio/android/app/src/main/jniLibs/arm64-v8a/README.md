@@ -1,8 +1,10 @@
-Place native libraries here:
+Place native libraries here (static proot):
 
 - libproot.so
 - libproot-loader.so
-- libtalloc.so (if needed)
-- libandroid-shmem.so (if needed)
+- libproot-loader32.so (optional)
 
-These must come from a working Termux installation or a trusted build.
+Static proot (green-green-avk / Termux) links talloc in; do **not** ship
+libtalloc.so or libandroid-shmem.so — they are unused and were removed (B29).
+
+These must come from scripts/ci-prepare-runtime.sh or a trusted build.
