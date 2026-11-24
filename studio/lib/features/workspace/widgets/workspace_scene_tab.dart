@@ -9,6 +9,8 @@ import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
 import 'play_touch_stick.dart';
+import 'scene_phone_inspector.dart';
+import 'scene_points_pad.dart';
 
 /// Scene tab: list/create scenes + sized nodes (drag, rename, resize).
 class WorkspaceSceneTab extends StatefulWidget {
@@ -1128,214 +1130,27 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
       }
     }
     if (node == null) return const SizedBox.shrink();
-    final n = node;
-    final screenH = MediaQuery.sizeOf(context).height;
-    final inspectorH = screenH < 420 ? 120.0 : (screenH < 560 ? 140.0 : 158.0);
-    return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.92),
-      elevation: 4,
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          // Name row + tools + RX/RY/RZ. Bounded so the stage stays king.
-          height: inspectorH,
-          child: Padding(
-            padding: EdgeInsets.fromLTRB(12, screenH < 420 ? 4 : 8, 8, 6),
-            child: Column(
-              children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        n.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                    ),
-                    Text(
-                      '${n.x.round()},${n.y.round()} · ${n.w.round()}×${n.h.round()}',
-                      style: TextStyle(fontSize: 12, color: scheme.outline),
-                    ),
-                    if (n.type != SceneNodeTypes.camera) ...[
-                      const SizedBox(width: 4),
-                      FilledButton.tonal(
-                        style: FilledButton.styleFrom(
-                          minimumSize: const Size(0, 40),
-                          padding: const EdgeInsets.symmetric(horizontal: 12),
-                          tapTargetSize: MaterialTapTargetSize.padded,
-                        ),
-                        onPressed: n.hasPoints
-                            ? () {
-                                FocusScope.of(context).unfocus();
-                                setState(() => _editPointIndex = 0);
-                              }
-                            : () {
-                                FocusScope.of(context).unfocus();
-                                _enablePointsOnSelected();
-                              },
-                        child: Text(
-                          n.hasPoints ? 'Points' : 'Edit points',
-                          style: const TextStyle(fontSize: 13),
-                        ),
-                      ),
-                      if (n.hasPoints)
-                        TextButton(
-                          style: TextButton.styleFrom(
-                            minimumSize: const Size(0, 40),
-                            padding: const EdgeInsets.symmetric(horizontal: 10),
-                          ),
-                          onPressed: _clearPointsOnSelected,
-                          child: const Text('Rect', style: TextStyle(fontSize: 13)),
-                        ),
-                    ],
-                    IconButton(
-                      tooltip: 'Delete',
-                      icon: Icon(Icons.delete_outline, size: 22, color: scheme.error),
-                      constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                      onPressed: _removeSelectedNode,
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 4),
-                SizedBox(
-                  height: 44,
-                  child: Row(
-                    children: [
-                      for (final t in SceneNodeTypes.all)
-                        Padding(
-                          padding: const EdgeInsets.only(right: 6),
-                          child: ChoiceChip(
-                            label: Text(t, style: const TextStyle(fontSize: 12)),
-                            selected: n.type == t,
-                            onSelected: (_) => _setNodeType(t),
-                          ),
-                        ),
-                      const SizedBox(width: 4),
-                      Expanded(
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: ScenePalette.colors.length,
-                          separatorBuilder: (_, __) => const SizedBox(width: 8),
-                          itemBuilder: (context, i) {
-                            final c = ScenePalette.colors[i];
-                            final sel = n.color == c;
-                            return GestureDetector(
-                              behavior: HitTestBehavior.opaque,
-                              onTap: () => _setNodeColor(c),
-                              child: SizedBox(
-                                width: 36,
-                                height: 36,
-                                child: Center(
-                                  child: Container(
-                                    width: 26,
-                                    height: 26,
-                                    decoration: BoxDecoration(
-                                      color: Color(c),
-                                      shape: BoxShape.circle,
-                                      border: Border.all(
-                                        color: sel
-                                            ? scheme.onSurface
-                                            : scheme.outlineVariant,
-                                        width: sel ? 2.4 : 1,
-                                      ),
-                                    ),
-                                  ),
-                                ),
-                              ),
-                            );
-                          },
-                        ),
-                      ),
-                      IconButton(
-                        tooltip: 'Smaller',
-                        icon: const Icon(Icons.remove, size: 22),
-                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                        onPressed: () => _nudgeSelected(dw: -8, dh: -8),
-                      ),
-                      IconButton(
-                        tooltip: 'Larger',
-                        icon: const Icon(Icons.add, size: 22),
-                        constraints: const BoxConstraints(minWidth: 44, minHeight: 44),
-                        onPressed: () => _nudgeSelected(dw: 8, dh: 8),
-                      ),
-                    ],
-                  ),
-                ),
-                SizedBox(
-                  height: 40,
-                  child: ListView(
-                    scrollDirection: Axis.horizontal,
-                    children: [
-                      _rotStep(
-                        scheme,
-                        'RX',
-                        n.rx,
-                        (d) => _updateSelectedNode((node) => node.copyWith(rx: node.rx + d)),
-                      ),
-                      _rotStep(
-                        scheme,
-                        'RY',
-                        n.ry,
-                        (d) => _updateSelectedNode((node) => node.copyWith(ry: node.ry + d)),
-                      ),
-                      _rotStep(
-                        scheme,
-                        'RZ',
-                        n.rz,
-                        (d) => _updateSelectedNode((node) => node.copyWith(rz: node.rz + d)),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// ±15° step for one rotation axis. Phone dock scrolls these horizontally.
-  Widget _rotStep(
-    ColorScheme scheme,
-    String label,
-    double degrees,
-    void Function(double delta) apply,
-  ) {
-    return Padding(
-      padding: const EdgeInsets.only(right: 4),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Text(label, style: TextStyle(fontSize: 12, color: scheme.outline)),
-          IconButton(
-            tooltip: '$label −15°',
-            icon: const Icon(Icons.remove, size: 18),
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            padding: EdgeInsets.zero,
-            onPressed: () => apply(-15),
-          ),
-          SizedBox(
-            width: 40,
-            child: Text(
-              '${degrees.round()}°',
-              textAlign: TextAlign.center,
-              style: const TextStyle(fontSize: 12),
-            ),
-          ),
-          IconButton(
-            tooltip: '$label +15°',
-            icon: const Icon(Icons.add, size: 18),
-            constraints: const BoxConstraints(minWidth: 36, minHeight: 36),
-            padding: EdgeInsets.zero,
-            onPressed: () => apply(15),
-          ),
-        ],
-      ),
+    return ScenePhoneInspector(
+      scheme: scheme,
+      node: node,
+      onBeginPointsEdit: () => setState(() => _editPointIndex = 0),
+      onEnablePoints: _enablePointsOnSelected,
+      onClearPoints: _clearPointsOnSelected,
+      onDelete: _removeSelectedNode,
+      onSetType: _setNodeType,
+      onSetColor: _setNodeColor,
+      onNudgeSize: ({required double dw, required double dh}) =>
+          _nudgeSelected(dw: dw, dh: dh),
+      onRotateDelta: (axis, d) {
+        _updateSelectedNode((n) {
+          return switch (axis) {
+            'rx' => n.copyWith(rx: n.rx + d),
+            'ry' => n.copyWith(ry: n.ry + d),
+            'rz' => n.copyWith(rz: n.rz + d),
+            _ => n,
+          };
+        });
+      },
     );
   }
 
@@ -1345,215 +1160,19 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     final node = _pointsEditNode;
     final idx = _editPointIndex;
     if (node == null || idx == null) return const SizedBox.shrink();
-    final pts = node.points!;
-    if (idx < 0 || idx >= pts.length) return const SizedBox.shrink();
-    final p = pts[idx];
-    final screenH = MediaQuery.sizeOf(context).height;
-    final padH = screenH < 420
-        ? 180.0
-        : (screenH < 560 ? 240.0 : 320.0);
-    return Material(
-      color: scheme.surfaceContainerHighest.withValues(alpha: 0.98),
-      elevation: 8,
-      child: SafeArea(
-        top: false,
-        child: SizedBox(
-          // Full-bleed swipe zone under the title (fills dock, not a small inset card).
-          height: padH,
-          child: Column(
-            children: [
-              // Title bar
-              SizedBox(
-                height: 44,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 10),
-                  child: Row(
-                    children: [
-                      Icon(Icons.control_camera,
-                          size: 20, color: scheme.primary),
-                      const SizedBox(width: 8),
-                      Text(
-                        'Edit Points  ·  P${idx + 1}/${pts.length}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.w600,
-                        ),
-                      ),
-                      const SizedBox(width: 10),
-                      Text(
-                        '${p.x.round()}, ${p.y.round()}',
-                        style: TextStyle(fontSize: 13, color: scheme.outline),
-                      ),
-                      const Spacer(),
-                      TextButton(
-                        style: TextButton.styleFrom(
-                          minimumSize: const Size(0, 40),
-                          padding: const EdgeInsets.symmetric(horizontal: 14),
-                        ),
-                        onPressed: () {
-                          FocusScope.of(context).unfocus();
-                          setState(() => _editPointIndex = null);
-                        },
-                        child: const Text(
-                          'Done',
-                          style: TextStyle(fontSize: 14),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              const Divider(height: 1),
-              // Rail + swipe pad
-              Expanded(
-                child: Row(
-                  children: [
-                    // Left tool rail
-                    SizedBox(
-                      width: 56,
-                      child: Column(
-                        children: [
-                          const SizedBox(height: 6),
-                          IconButton(
-                            tooltip: 'Add vertex on edge',
-                            icon: const Icon(Icons.add_circle_outline, size: 24),
-                            constraints:
-                                const BoxConstraints(minWidth: 48, minHeight: 44),
-                            onPressed: _addPointOnSelected,
-                          ),
-                          IconButton(
-                            tooltip: 'Remove vertex',
-                            icon: const Icon(Icons.remove_circle_outline, size: 24),
-                            constraints:
-                                const BoxConstraints(minWidth: 48, minHeight: 44),
-                            onPressed:
-                                pts.length > 3 ? _removePointOnSelected : null,
-                          ),
-                          const Divider(height: 12),
-                          Expanded(
-                            child: ListView.builder(
-                              padding: const EdgeInsets.symmetric(horizontal: 6),
-                              itemCount: pts.length,
-                              itemBuilder: (context, i) {
-                                final sel = i == idx;
-                                return Padding(
-                                  padding: const EdgeInsets.only(bottom: 6),
-                                  child: Material(
-                                    color: sel
-                                        ? scheme.primaryContainer
-                                        : scheme.surfaceContainerHigh,
-                                    borderRadius: BorderRadius.circular(10),
-                                    child: InkWell(
-                                      borderRadius: BorderRadius.circular(10),
-                                      onTap: () =>
-                                          setState(() => _editPointIndex = i),
-                                      child: SizedBox(
-                                        height: 36,
-                                        child: Center(
-                                          child: Text(
-                                            'P${i + 1}',
-                                            style: TextStyle(
-                                              fontSize: 12,
-                                              fontWeight: sel
-                                                  ? FontWeight.w700
-                                                  : FontWeight.w500,
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const VerticalDivider(width: 1),
-                    // Full-bleed swipe surface (uses all remaining dock space).
-                    Expanded(
-                      child: ColoredBox(
-                        color: scheme.surface.withValues(alpha: 0.92),
-                        child: Stack(
-                          fit: StackFit.expand,
-                          alignment: Alignment.center,
-                          children: [
-                            Positioned(
-                              left: 12,
-                              top: 10,
-                              child: Icon(
-                                Icons.crop_free,
-                                size: 18,
-                                color: scheme.outline.withValues(alpha: 0.35),
-                              ),
-                            ),
-                            Positioned(
-                              right: 12,
-                              bottom: 10,
-                              child: Icon(
-                                Icons.crop_free,
-                                size: 18,
-                                color: scheme.outline.withValues(alpha: 0.35),
-                              ),
-                            ),
-                            IgnorePointer(
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    Icons.open_with,
-                                    size: 40,
-                                    color: scheme.primary.withValues(alpha: 0.45),
-                                  ),
-                                  const SizedBox(height: 12),
-                                  Text(
-                                    'Swipe here to move the point',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w500,
-                                      color: scheme.onSurface
-                                          .withValues(alpha: 0.75),
-                                    ),
-                                  ),
-                                  const SizedBox(height: 6),
-                                  Text(
-                                    'Or drag handles on the stage',
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 13,
-                                      color: scheme.outline,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                            Positioned.fill(
-                              child: Listener(
-                                behavior: HitTestBehavior.opaque,
-                                onPointerMove: (e) {
-                                  const sens = 1.6;
-                                  _nudgeSelectedPoint(
-                                    dx: e.delta.dx * sens,
-                                    dy: e.delta.dy * sens,
-                                  );
-                                },
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
+    return ScenePointsPad(
+      scheme: scheme,
+      node: node,
+      editIndex: idx,
+      onDone: () => setState(() => _editPointIndex = null),
+      onAddPoint: _addPointOnSelected,
+      onRemovePoint: _removePointOnSelected,
+      onSelectIndex: (i) => setState(() => _editPointIndex = i),
+      onNudge: ({required double dx, required double dy}) =>
+          _nudgeSelectedPoint(dx: dx, dy: dy),
     );
   }
+
 
   Widget _nodeSidebar(ColorScheme scheme) {
     return Material(
