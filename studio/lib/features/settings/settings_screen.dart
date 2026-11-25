@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/embedded_runtime.dart';
+import '../../services/nxc_bridge.dart';
 import '../projects/application/projects_providers.dart';
 
 class SettingsScreen extends ConsumerStatefulWidget {
@@ -18,6 +19,13 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
   bool _loadingProbe = true;
   bool _installingCpp = false;
   String? _statusNote;
+
+  // NXC read-only status (no send/mine — avoids accidental fund movement)
+  bool _nxcLoading = false;
+  bool? _nxcAvailable;
+  String? _nxcAddress;
+  String? _nxcBalance;
+  String? _nxcError;
 
   @override
   void initState() {
@@ -58,6 +66,39 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
           : (result.error.isNotEmpty ? result.error : result.output);
     });
     await _refreshProbe();
+  }
+
+  Future<void> _refreshNxc() async {
+    if (_nxcLoading) return;
+    setState(() {
+      _nxcLoading = true;
+      _nxcError = null;
+    });
+    final available = await NxcBridge.isAvailable();
+    if (!mounted) return;
+    if (!available) {
+      setState(() {
+        _nxcAvailable = false;
+        _nxcAddress = null;
+        _nxcBalance = null;
+        _nxcError = 'nexus-coin not installed in runtime';
+        _nxcLoading = false;
+      });
+      return;
+    }
+    final addr = await NxcBridge.address();
+    if (!mounted) return;
+    final bal = await NxcBridge.balance();
+    if (!mounted) return;
+    setState(() {
+      _nxcAvailable = true;
+      _nxcAddress = addr.ok ? addr.value : null;
+      _nxcBalance = bal.ok ? bal.value : null;
+      if (!addr.ok || !bal.ok) {
+        _nxcError = [addr.error, bal.error].whereType<String>().join('; ');
+      }
+      _nxcLoading = false;
+    });
   }
 
   @override
@@ -138,6 +179,52 @@ class _SettingsScreenState extends ConsumerState<SettingsScreen> {
                 style: TextStyle(
                   fontSize: 12,
                   color: Theme.of(context).colorScheme.outline,
+                ),
+              ),
+            ),
+          const Divider(),
+          ListTile(
+            leading: const Icon(Icons.currency_bitcoin),
+            title: const Text('Nexus Coin (NXC)'),
+            subtitle: Text(
+              _nxcLoading
+                  ? 'Checking…'
+                  : (_nxcAvailable == true
+                      ? 'Read-only · no send/mine from Settings'
+                      : (_nxcError ?? 'Not installed — optional runtime binary')),
+            ),
+            trailing: IconButton(
+              tooltip: 'Refresh NXC',
+              onPressed: _nxcLoading ? null : _refreshNxc,
+              icon: const Icon(Icons.refresh),
+            ),
+          ),
+          if (_nxcAvailable == true) ...[
+            ListTile(
+              dense: true,
+              title: const Text('Address'),
+              subtitle: Text(
+                _nxcAddress ?? '—',
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+            ListTile(
+              dense: true,
+              title: const Text('Balance'),
+              subtitle: Text(
+                _nxcBalance != null ? '$_nxcBalance NXC' : '—',
+              ),
+            ),
+          ],
+          if (_nxcError != null && _nxcAvailable != false)
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+              child: Text(
+                _nxcError!,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Theme.of(context).colorScheme.error,
                 ),
               ),
             ),
