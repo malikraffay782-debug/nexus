@@ -130,7 +130,7 @@ nexus/
 | **ScenePlayState** real dt + steer (no sin/cos roam) | Yes | Yes (`scene_play_state_test`) |
 | Stick release does **not** snap Player back | Yes | Yes |
 | Camera follows Player **runtime** center in play | Yes | Code path; on-device visual TBD |
-| Mesh ids + studio wireframe silhouette | Yes | Model normalize tested; paint not |
+| Mesh ids + studio wireframe (`SceneMeshWire` edges) | Yes | Yes (`scene_mesh_wire_test`) |
 | `scene_draw.py` asset + preferred camera | Yes | Python golden on CI |
 | Full Unity camera / GPU mesh / animation | **No** | — |
 | Auto ground / default level | **No** (by design) | — |
