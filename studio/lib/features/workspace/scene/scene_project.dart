@@ -109,6 +109,21 @@ class SceneCamFrame {
         rz: rz,
       );
 
+  /// Follow Player in XY and Z (preserves orientation / lens).
+  SceneCamFrame withEyeXyz(double x, double y, double z) => SceneCamFrame(
+        cx: x,
+        cy: y,
+        cz: z,
+        near: near,
+        far: far,
+        fovDeg: fovDeg,
+        stageW: stageW,
+        stageH: stageH,
+        rx: rx,
+        ry: ry,
+        rz: rz,
+      );
+
   double get aspect => stageH > 0 ? stageW / stageH : 1.0;
 
   /// Soft-path FOV weight (scene_draw.py compatible).

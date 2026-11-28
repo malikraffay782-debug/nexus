@@ -97,9 +97,11 @@ class SceneStagePainter extends CustomPainter {
       );
       if (cam != null) {
         final center = playState?.playerCenter(doc);
-        if (center != null) {
-          // Follow Player runtime center; lens/z stay on camera node.
-          cam = cam.withEyeXy(center.dx, center.dy);
+        final ps = playState;
+        if (center != null && ps != null) {
+          // Follow Player XY + Z; keep authored cam↔player depth gap.
+          final eyeZ = ps.playerZ + (cam.cz - ps.playerAuthoredZ);
+          cam = cam.withEyeXyz(center.dx, center.dy, eyeZ);
         }
       }
     }
