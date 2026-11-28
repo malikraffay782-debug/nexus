@@ -3,6 +3,7 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 
 import '../files/workspace_paths.dart';
+import '../files/workspace_file_service.dart';
 import '../scene/scene_model.dart';
 import '../scene/scene_play_controller.dart';
 import '../scene/scene_project.dart';
@@ -45,6 +46,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   /// Play preview (ticker / steer / Soft↔NDC) — see [ScenePlayController].
   late final ScenePlayController _play;
   late SceneSpriteCache _sprites;
+  List<String> _assetImages = const [];
 
   /// True while a corner or the rotate handle owns the pointer.
   /// Stops the body-drag recognizer from also translating the node.
@@ -94,6 +96,18 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     if (doc == null) return;
     for (final n in doc.nodes) {
       if (n.sprite.isNotEmpty) _sprites.prefer(n.sprite);
+    }
+  }
+
+  Future<void> _refreshAssetImages() async {
+    try {
+      final files = WorkspaceFileService(widget.projectPath);
+      final list = await files.listAssetImages();
+      if (!mounted) return;
+      setState(() => _assetImages = list);
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _assetImages = const []);
     }
   }
 
@@ -158,6 +172,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         _loading = false;
       });
       _preferSprites(doc);
+      _refreshAssetImages();
       _play.playTime.value = 0;
     } catch (e) {
       if (!mounted) return;
@@ -1615,6 +1630,48 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 },
               ),
             ),
+            if (_assetImages.isNotEmpty) ...[
+              const SizedBox(height: 2),
+              SizedBox(
+                height: 28,
+                child: ListView(
+                  scrollDirection: Axis.horizontal,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.only(right: 4),
+                      child: ChoiceChip(
+                        label: const Text('None', style: TextStyle(fontSize: 10)),
+                        selected: node.sprite.isEmpty,
+                        visualDensity: VisualDensity.compact,
+                        materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                        onSelected: (_) => _updateSelectedNode(
+                          (n) => n.copyWith(sprite: ''),
+                        ),
+                      ),
+                    ),
+                    for (final path in _assetImages)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 4),
+                        child: ChoiceChip(
+                          label: Text(
+                            path.startsWith('assets/')
+                                ? path.substring(7)
+                                : path,
+                            style: const TextStyle(fontSize: 10),
+                          ),
+                          selected: node.sprite == path,
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                          onSelected: (_) {
+                            _updateSelectedNode((n) => n.copyWith(sprite: path));
+                            _sprites.prefer(path);
+                          },
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ],
           ],
         ],
       ),

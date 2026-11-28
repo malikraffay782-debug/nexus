@@ -125,6 +125,47 @@ class WorkspaceFileService {
     }
   }
 
+  /// Image files under assets/ for scene sprite chips (capped, shallow).
+  Future<List<String>> listAssetImages({int max = 32}) async {
+    final out = <String>[];
+    final rootAbs = '${paths.root}/assets';
+    if (WorkspacePaths.typeOf(rootAbs) != FileSystemEntityType.directory) {
+      return out;
+    }
+    Future<void> walk(String absDir, String relDir, int depth) async {
+      if (out.length >= max || depth > 3) return;
+      try {
+        await for (final e in Directory(absDir).list(followLinks: false)) {
+          if (out.length >= max) return;
+          if (e is Link) continue;
+          final name = e.path.substring(e.path.lastIndexOf('/') + 1);
+          if (!WorkspacePaths.isValidSegment(name)) continue;
+          final rel =
+              relDir.isEmpty ? 'assets/$name' : '$relDir/$name';
+          if (e is Directory) {
+            await walk(e.path, rel, depth + 1);
+          } else if (e is File) {
+            final lower = name.toLowerCase();
+            if (lower.endsWith('.png') ||
+                lower.endsWith('.jpg') ||
+                lower.endsWith('.jpeg') ||
+                lower.endsWith('.webp')) {
+              if (!rel.contains('..') && rel.startsWith('assets/')) {
+                out.add(rel);
+              }
+            }
+          }
+        }
+      } on FileSystemException {
+        return;
+      }
+    }
+
+    await walk(rootAbs, 'assets', 1);
+    out.sort();
+    return out;
+  }
+
   Future<String> readText(String rel) async {
     final abs = paths.resolve(rel);
     if (WorkspacePaths.typeOf(abs) != FileSystemEntityType.file) {
