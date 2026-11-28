@@ -100,6 +100,26 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     }
   }
 
+  Widget _triggerChip(String label, Color color) {
+    return DecoratedBox(
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.85),
+        borderRadius: BorderRadius.circular(8),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+        child: Text(
+          label,
+          style: const TextStyle(
+            color: Colors.white,
+            fontSize: 12,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _refreshAssetImages() async {
     try {
       final files = WorkspaceFileService(widget.projectPath);
@@ -1889,46 +1909,58 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                           ],
                         ),
                       ),
-                    // Last trigger enter/exit (Unity-style feedback, low-end).
+                    // Trigger feedback: edge event + Stay-style Inside (low-end).
                     if (_playing)
                       Positioned(
                         right: 10,
                         top: 10,
                         child: ListenableBuilder(
-                          listenable: _play,
+                          listenable:
+                              Listenable.merge([_play, _play.playTime]),
                           builder: (context, _) {
+                            final ps = _play.playState;
+                            final inside = ps?.insideTriggers ?? const {};
                             final events = _play.lastTriggerEvents;
-                            if (events.isEmpty) {
+                            final doc = _doc;
+                            String nameOf(String id) {
+                              if (doc == null) return id;
+                              for (final n in doc.nodes) {
+                                if (n.id == id) return n.name;
+                              }
+                              return id;
+                            }
+
+                            final chips = <Widget>[];
+                            if (inside.isNotEmpty) {
+                              final names = inside.map(nameOf).join(', ');
+                              chips.add(_triggerChip(
+                                'Inside $names',
+                                Colors.amber.shade800,
+                              ));
+                            }
+                            if (events.isNotEmpty) {
+                              final e = events.last;
+                              final enter =
+                                  e.kind == SceneTriggerKind.enter;
+                              chips.add(_triggerChip(
+                                enter
+                                    ? 'Enter ${e.name}'
+                                    : 'Exit ${e.name}',
+                                enter ? Colors.teal : Colors.blueGrey,
+                              ));
+                            }
+                            if (chips.isEmpty) {
                               return const SizedBox.shrink();
                             }
-                            final e = events.last;
-                            final enter =
-                                e.kind == SceneTriggerKind.enter;
-                            final label = enter
-                                ? 'Enter ${e.name}'
-                                : 'Exit ${e.name}';
-                            return DecoratedBox(
-                              decoration: BoxDecoration(
-                                color: (enter
-                                        ? Colors.teal
-                                        : Colors.blueGrey)
-                                    .withValues(alpha: 0.85),
-                                borderRadius: BorderRadius.circular(8),
-                              ),
-                              child: Padding(
-                                padding: const EdgeInsets.symmetric(
-                                  horizontal: 10,
-                                  vertical: 6,
-                                ),
-                                child: Text(
-                                  label,
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 12,
-                                    fontWeight: FontWeight.w600,
-                                  ),
-                                ),
-                              ),
+                            return Column(
+                              crossAxisAlignment: CrossAxisAlignment.end,
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                for (var i = 0; i < chips.length; i++) ...[
+                                  if (i > 0) const SizedBox(height: 4),
+                                  chips[i],
+                                ],
+                              ],
                             );
                           },
                         ),
