@@ -1931,6 +1931,9 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                             }
 
                             final chips = <Widget>[];
+                            if (_play.playWon) {
+                              chips.add(_triggerChip('WIN', Colors.green.shade700));
+                            }
                             if (inside.isNotEmpty) {
                               final names = inside.map(nameOf).join(', ');
                               chips.add(_triggerChip(

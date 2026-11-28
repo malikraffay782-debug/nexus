@@ -45,6 +45,10 @@ class ScenePlayController extends ChangeNotifier {
 
   static const int maxTriggerEvents = 32;
 
+  /// Set when Player enters a TriggerWin* volume; cleared on stop.
+  bool _playWon = false;
+  bool get playWon => _playWon;
+
   final Set<LogicalKeyboardKey> _keys = {};
   Ticker? _ticker;
   Duration _lastElapsed = Duration.zero;
@@ -141,6 +145,7 @@ class ScenePlayController extends ChangeNotifier {
     _playState = null;
     _playDoc = null;
     _triggerEvents.clear();
+    _playWon = false;
     _lastElapsed = Duration.zero;
     if (playTime.value != 0) {
       playTime.value = 0;
@@ -202,12 +207,17 @@ class ScenePlayController extends ChangeNotifier {
     }
 
     for (final id in ps.enteredTriggers) {
+      final n = nameOf(id);
       _triggerEvents.add(SceneTriggerEvent(
         kind: SceneTriggerKind.enter,
         nodeId: id,
-        name: nameOf(id),
+        name: n,
         time: t,
       ));
+      // Built-in action: TriggerWin* → play clear flag (Unity-style response).
+      if (n.trim().toLowerCase().startsWith('triggerwin')) {
+        _playWon = true;
+      }
     }
     for (final id in ps.exitedTriggers) {
       _triggerEvents.add(SceneTriggerEvent(
