@@ -1934,6 +1934,11 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                             if (_play.playWon) {
                               chips.add(_triggerChip('WIN', Colors.green.shade700));
                             }
+                            if (_play.hasCheckpoint) {
+                              chips.add(
+                                _triggerChip('CKPT', Colors.indigo.shade600),
+                              );
+                            }
                             if (inside.isNotEmpty) {
                               final names = inside.map(nameOf).join(', ');
                               chips.add(_triggerChip(

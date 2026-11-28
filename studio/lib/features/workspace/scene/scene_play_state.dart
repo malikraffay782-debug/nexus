@@ -121,6 +121,27 @@ class ScenePlayState {
   /// Runtime world Z for the Player (others use authored node.z).
   double get playerZ => _playerZ;
 
+  Offset? _checkpointPos;
+  double? _checkpointZ;
+  bool get hasCheckpoint => _checkpointPos != null;
+
+  void saveCheckpoint() {
+    final id = playerId;
+    if (id == null) return;
+    _checkpointPos = _positions[id];
+    _checkpointZ = _playerZ;
+  }
+
+  void restoreCheckpoint() {
+    final id = playerId;
+    final cp = _checkpointPos;
+    if (id == null || cp == null) return;
+    _positions[id] = cp;
+    _playerZ = _checkpointZ ?? _playerZ;
+    _velocities[id] = Offset.zero;
+    _playerZVel = 0;
+  }
+
   /// Trigger ids overlapping the player this frame.
   Set<String> get insideTriggers => Set.unmodifiable(_insideTriggers);
 

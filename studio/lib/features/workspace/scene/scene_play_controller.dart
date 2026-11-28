@@ -49,6 +49,8 @@ class ScenePlayController extends ChangeNotifier {
   bool _playWon = false;
   bool get playWon => _playWon;
 
+  bool get hasCheckpoint => _playState?.hasCheckpoint ?? false;
+
   final Set<LogicalKeyboardKey> _keys = {};
   Ticker? _ticker;
   Duration _lastElapsed = Duration.zero;
@@ -214,9 +216,14 @@ class ScenePlayController extends ChangeNotifier {
         name: n,
         time: t,
       ));
-      // Built-in action: TriggerWin* → play clear flag (Unity-style response).
-      if (n.trim().toLowerCase().startsWith('triggerwin')) {
+      // Built-in trigger actions (name prefix, Unity-style).
+      final lower = n.trim().toLowerCase();
+      if (lower.startsWith('triggerwin')) {
         _playWon = true;
+      } else if (lower.startsWith('triggercheckpoint')) {
+        ps.saveCheckpoint();
+      } else if (lower.startsWith('triggerrespawn')) {
+        ps.restoreCheckpoint();
       }
     }
     for (final id in ps.exitedTriggers) {
