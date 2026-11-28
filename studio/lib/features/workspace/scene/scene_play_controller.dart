@@ -47,6 +47,14 @@ class ScenePlayController extends ChangeNotifier {
     notifyListeners();
   }
 
+  /// Depth steer (−1…1). Touch Z pad or Q/E via [_syncSteerFromKeys].
+  void setSteerZ(double z) {
+    final v = z.clamp(-1.0, 1.0);
+    if (_steerZ == v) return;
+    _steerZ = v;
+    notifyListeners();
+  }
+
   void _syncSteerFromKeys() {
     var x = 0.0;
     var y = 0.0;

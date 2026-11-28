@@ -9,6 +9,7 @@ import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
 import 'play_touch_stick.dart';
+import 'play_touch_z_pad.dart';
 import 'scene_phone_inspector.dart';
 import 'scene_points_pad.dart';
 import 'scene_node_list.dart';
@@ -1764,12 +1765,26 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                       Positioned(
                         left: 10,
                         bottom: 10,
-                        child: PlayTouchStick(
-                          scheme: scheme,
-                          onSteer: (o) {
-                            if (!mounted || !_playing) return;
-                            _play.setSteer(o);
-                          },
+                        child: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            PlayTouchStick(
+                              scheme: scheme,
+                              onSteer: (o) {
+                                if (!mounted || !_playing) return;
+                                _play.setSteer(o);
+                              },
+                            ),
+                            const SizedBox(width: 10),
+                            PlayTouchZPad(
+                              scheme: scheme,
+                              onSteerZ: (z) {
+                                if (!mounted || !_playing) return;
+                                _play.setSteerZ(z);
+                              },
+                            ),
+                          ],
                         ),
                       ),
                   ],
