@@ -188,6 +188,16 @@ class SceneNode {
 
   bool get isCamera => type == SceneNodeTypes.camera;
 
+  /// Play collision body. Cameras never solid. Names starting with
+  /// `Trigger` or `_` are walk-through (markers / future trigger volumes).
+  bool get isSolid {
+    if (isCamera) return false;
+    final n = name.trim().toLowerCase();
+    if (n.startsWith('trigger')) return false;
+    if (n.startsWith('_')) return false;
+    return true;
+  }
+
   /// Four corners of the current rect (scene space), TL→TR→BR→BL.
   List<ScenePoint> rectAsPoints() {
     return [

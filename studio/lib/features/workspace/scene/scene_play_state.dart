@@ -245,7 +245,7 @@ class ScenePlayState {
     final pZ0 = pz - playerHalfZ;
     final pZ1 = pz + playerHalfZ;
     for (final o in doc.nodes) {
-      if (o.isCamera || o.id == playerId) continue;
+      if (!o.isSolid || o.id == playerId) continue;
       if (px + pw <= o.x || o.x + o.w <= px) continue;
       if (py + ph <= o.y || o.y + o.h <= py) continue;
       final half = (o.zDepth.isFinite && o.zDepth > 1e-3)

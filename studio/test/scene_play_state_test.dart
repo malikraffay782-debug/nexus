@@ -176,4 +176,37 @@ void main() {
     // Must not fully occupy the wall cell.
     expect(p.dx + 64, lessThanOrEqualTo(160 + 1));
   });
+
+  test('walks through Trigger-named nodes', () {
+    final doc = SceneDoc(
+      name: 'trig',
+      width: 720,
+      height: 1280,
+      nodes: const [
+        SceneNode(
+          id: 'p1',
+          type: SceneNodeTypes.sprite,
+          name: 'Player',
+          x: 100,
+          y: 200,
+          w: 64,
+          h: 64,
+        ),
+        SceneNode(
+          id: 't1',
+          type: SceneNodeTypes.sprite,
+          name: 'TriggerZone',
+          x: 160,
+          y: 200,
+          w: 64,
+          h: 64,
+        ),
+      ],
+    );
+    final state = ScenePlayState.fromDoc(doc);
+    for (var i = 0; i < 20; i++) {
+      state.update(0.05, const Offset(1, 0), 0, doc);
+    }
+    expect(state.positionOf('p1').dx, greaterThan(150));
+  });
 }
