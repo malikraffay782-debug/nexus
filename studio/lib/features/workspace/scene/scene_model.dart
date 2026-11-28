@@ -198,6 +198,12 @@ class SceneNode {
     return true;
   }
 
+  /// Volume that reports enter/exit in play (name starts with Trigger).
+  bool get isTrigger {
+    if (isCamera) return false;
+    return name.trim().toLowerCase().startsWith('trigger');
+  }
+
   /// Four corners of the current rect (scene space), TL→TR→BR→BL.
   List<ScenePoint> rectAsPoints() {
     return [

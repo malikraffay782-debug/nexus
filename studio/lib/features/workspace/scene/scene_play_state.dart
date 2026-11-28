@@ -75,6 +75,11 @@ class ScenePlayState {
   double _playerZ;
   double _playerZVel;
 
+  /// Trigger node ids the player footprint overlaps this frame.
+  final Set<String> _insideTriggers = {};
+  final Set<String> _enteredTriggers = {};
+  final Set<String> _exitedTriggers = {};
+
   /// Max simulation step (avoids huge jumps after a hitch). ~1/20 s.
   static const double maxDt = 1.0 / 20.0;
 
@@ -94,6 +99,15 @@ class ScenePlayState {
 
   /// Runtime world Z for the Player (others use authored node.z).
   double get playerZ => _playerZ;
+
+  /// Trigger ids overlapping the player this frame.
+  Set<String> get insideTriggers => Set.unmodifiable(_insideTriggers);
+
+  /// Entered this frame (cleared next update start).
+  Set<String> get enteredTriggers => Set.unmodifiable(_enteredTriggers);
+
+  /// Left this frame (cleared next update start).
+  Set<String> get exitedTriggers => Set.unmodifiable(_exitedTriggers);
 
   /// Authoring pose + runtime offset for drawing (Player moves; others stay).
   Offset runtimeOffset(SceneNode n) {
@@ -228,6 +242,62 @@ class ScenePlayState {
 
     _positions[id] = pos;
     _velocities[id] = vel;
+
+    if (doc != null) {
+      _scanTriggers(doc, id, pos.dx, pos.dy, playerW, playerH, _playerZ);
+    } else {
+      _enteredTriggers.clear();
+      _exitedTriggers.clear();
+    }
+  }
+
+  void _scanTriggers(
+    SceneDoc doc,
+    String playerId,
+    double px,
+    double py,
+    double pw,
+    double ph,
+    double pz,
+  ) {
+    _enteredTriggers.clear();
+    _exitedTriggers.clear();
+    final now = <String>{};
+    for (final o in doc.nodes) {
+      if (!o.isTrigger || o.id == playerId) continue;
+      if (!_aabbOverlap(px, py, pw, ph, pz, o)) continue;
+      now.add(o.id);
+    }
+    for (final id in now) {
+      if (!_insideTriggers.contains(id)) _enteredTriggers.add(id);
+    }
+    for (final id in _insideTriggers) {
+      if (!now.contains(id)) _exitedTriggers.add(id);
+    }
+    _insideTriggers
+      ..clear()
+      ..addAll(now);
+  }
+
+  /// Shared XY + Z slab test (solids and triggers).
+  bool _aabbOverlap(
+    double px,
+    double py,
+    double pw,
+    double ph,
+    double pz,
+    SceneNode o,
+  ) {
+    if (px + pw <= o.x || o.x + o.w <= px) return false;
+    if (py + ph <= o.y || o.y + o.h <= py) return false;
+    const playerHalfZ = 12.0;
+    final pZ0 = pz - playerHalfZ;
+    final pZ1 = pz + playerHalfZ;
+    final half = (o.zDepth.isFinite && o.zDepth > 1e-3) ? o.zDepth * 0.5 : 16.0;
+    final oZ0 = o.z - half;
+    final oZ1 = o.z + half;
+    if (pZ1 <= oZ0 || oZ1 <= pZ0) return false;
+    return true;
   }
 
   /// Player footprint vs another node's XY rect and Z thickness.
@@ -240,21 +310,9 @@ class ScenePlayState {
     double ph,
     double pz,
   ) {
-    // Thin player slab on Z so walking past stacks needs depth match.
-    const playerHalfZ = 12.0;
-    final pZ0 = pz - playerHalfZ;
-    final pZ1 = pz + playerHalfZ;
     for (final o in doc.nodes) {
       if (!o.isSolid || o.id == playerId) continue;
-      if (px + pw <= o.x || o.x + o.w <= px) continue;
-      if (py + ph <= o.y || o.y + o.h <= py) continue;
-      final half = (o.zDepth.isFinite && o.zDepth > 1e-3)
-          ? o.zDepth * 0.5
-          : 16.0;
-      final oZ0 = o.z - half;
-      final oZ1 = o.z + half;
-      if (pZ1 <= oZ0 || oZ1 <= pZ0) continue;
-      return true;
+      if (_aabbOverlap(px, py, pw, ph, pz, o)) return true;
     }
     return false;
   }

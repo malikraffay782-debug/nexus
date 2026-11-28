@@ -209,4 +209,49 @@ void main() {
     }
     expect(state.positionOf('p1').dx, greaterThan(150));
   });
+
+  test('trigger enter and exit', () {
+    final doc = SceneDoc(
+      name: 'trig2',
+      width: 720,
+      height: 1280,
+      nodes: const [
+        SceneNode(
+          id: 'p1',
+          type: SceneNodeTypes.sprite,
+          name: 'Player',
+          x: 100,
+          y: 200,
+          w: 64,
+          h: 64,
+        ),
+        SceneNode(
+          id: 't1',
+          type: SceneNodeTypes.sprite,
+          name: 'TriggerZone',
+          x: 160,
+          y: 200,
+          w: 64,
+          h: 64,
+        ),
+      ],
+    );
+    final state = ScenePlayState.fromDoc(doc);
+    // Step into zone
+    for (var i = 0; i < 20; i++) {
+      state.update(0.05, const Offset(1, 0), 0, doc);
+    }
+    expect(state.insideTriggers.contains('t1'), isTrue);
+    expect(state.enteredTriggers.contains('t1'), isTrue);
+    // Hold still one frame — still inside, not re-entered
+    state.update(0.05, Offset.zero, 0, doc);
+    expect(state.insideTriggers.contains('t1'), isTrue);
+    expect(state.enteredTriggers.contains('t1'), isFalse);
+    // Walk left out
+    for (var i = 0; i < 40; i++) {
+      state.update(0.05, const Offset(-1, 0), 0, doc);
+    }
+    expect(state.insideTriggers.contains('t1'), isFalse);
+    expect(state.exitedTriggers.contains('t1'), isTrue);
+  });
 }
