@@ -236,26 +236,40 @@ class SceneStagePainter extends CustomPainter {
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.85);
     final stroke = selected ? Colors.white : fill;
 
-    // Play/NDC: box meshes use true projected 8-corner wire (stage space).
-    final meshForBox = SceneMeshes.normalize(n.mesh);
-    if (!isCamera &&
-        cam != null &&
-        !n.hasPoints &&
-        SceneMeshWire.isBoxMesh(meshForBox)) {
-      _paintProjectedBox(
-        canvas,
-        midX: midX,
-        midY: midY,
-        z: n.z,
-        w: boundW,
-        h: boundH,
-        zDepth: n.zDepth,
-        scaleX: scaleX,
-        scaleY: scaleY,
-        fill: fill,
-        selected: selected,
-        brace: meshForBox == SceneMeshes.metalcase,
-      );
+    // Play/NDC: project mesh wires in stage space (box = 8-corner volume;
+    // sword/chest = planar unit edges on node Z).
+    final meshIdCam = SceneMeshes.normalize(n.mesh);
+    if (!isCamera && cam != null && !n.hasPoints && meshIdCam.isNotEmpty) {
+      if (SceneMeshWire.isBoxMesh(meshIdCam)) {
+        _paintProjectedBox(
+          canvas,
+          midX: midX,
+          midY: midY,
+          z: n.z,
+          w: boundW,
+          h: boundH,
+          zDepth: n.zDepth,
+          scaleX: scaleX,
+          scaleY: scaleY,
+          fill: fill,
+          selected: selected,
+          brace: meshIdCam == SceneMeshes.metalcase,
+        );
+      } else {
+        _paintProjectedPlanarMesh(
+          canvas,
+          meshId: meshIdCam,
+          midX: midX,
+          midY: midY,
+          z: n.z,
+          w: boundW,
+          h: boundH,
+          scaleX: scaleX,
+          scaleY: scaleY,
+          fill: fill,
+          selected: selected,
+        );
+      }
       return;
     }
 
@@ -353,6 +367,89 @@ class SceneStagePainter extends CustomPainter {
       _paintLocalAxes(canvas, axis);
     }
     canvas.restore();
+  }
+
+  /// Planar mesh wire (sword/chest): unit edges on the node Z plane,
+  /// each endpoint through [SceneProject.projectForWire].
+  void _paintProjectedPlanarMesh(
+    Canvas canvas, {
+    required String meshId,
+    required double midX,
+    required double midY,
+    required double z,
+    required double w,
+    required double h,
+    required double scaleX,
+    required double scaleY,
+    required Color fill,
+    required bool selected,
+  }) {
+    final hw = w * 0.5;
+    final hh = h * 0.5;
+    if (hw < 1e-3 || hh < 1e-3) return;
+
+    final cam = _cam;
+    if (cam == null) return;
+
+    Offset? projectUnit(Offset u) {
+      final pr = SceneProject.projectForWire(
+        cam,
+        midX + u.dx * hw,
+        midY + u.dy * hh,
+        z,
+        mode: projectMode,
+        viewProjection: _viewProjection,
+      );
+      if (!pr.visible) return null;
+      return Offset(pr.x * scaleX, pr.y * scaleY);
+    }
+
+    final wire = Paint()
+      ..color = Colors.white.withValues(alpha: selected ? 0.95 : 0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = selected ? 1.8 : 1.3
+      ..strokeJoin = StrokeJoin.round;
+
+    // Soft fill from projected unit fill path samples (polyline).
+    final fillSrc = SceneMeshWire.fillPath(meshId);
+    if (fillSrc != null) {
+      final metrics = fillSrc.computeMetrics();
+      final pts = <Offset>[];
+      for (final m in metrics) {
+        // Few samples — low-end safe, no dense tessellation.
+        const steps = 8;
+        for (var i = 0; i <= steps; i++) {
+          final t = m.length * (i / steps);
+          final tan = m.getTangentForOffset(t);
+          if (tan == null) continue;
+          final p = projectUnit(tan.position);
+          if (p != null) pts.add(p);
+        }
+      }
+      if (pts.length >= 3) {
+        final path = Path()..moveTo(pts.first.dx, pts.first.dy);
+        for (var i = 1; i < pts.length; i++) {
+          path.lineTo(pts[i].dx, pts[i].dy);
+        }
+        path.close();
+        canvas.drawPath(
+          path,
+          Paint()..color = fill.withValues(alpha: selected ? 0.4 : 0.28),
+        );
+      }
+    }
+
+    void drawEdges(List<MeshEdge> edges) {
+      for (final e in edges) {
+        final a = projectUnit(e.a);
+        final b = projectUnit(e.b);
+        if (a == null || b == null) continue;
+        canvas.drawLine(a, b, wire);
+      }
+    }
+
+    drawEdges(SceneMeshWire.edges(meshId));
+    drawEdges(SceneMeshWire.extraEdges(meshId));
   }
 
   /// Projected AABB wire: 8 world corners → [SceneProject.projectForWire].

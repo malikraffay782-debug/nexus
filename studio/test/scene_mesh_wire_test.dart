@@ -44,4 +44,11 @@ void main() {
     expect(SceneMeshWire.isBoxMesh(SceneMeshes.sword), isFalse);
     expect(SceneMeshWire.boxEdgeIndices.length, 12);
   });
+
+  test('sword and chest have planar edges for projected path', () {
+    expect(SceneMeshWire.edges(SceneMeshes.sword), isNotEmpty);
+    expect(SceneMeshWire.edges(SceneMeshes.chest), isNotEmpty);
+    expect(SceneMeshWire.isBoxMesh(SceneMeshes.sword), isFalse);
+    expect(SceneMeshWire.isBoxMesh(SceneMeshes.chest), isFalse);
+  });
 }
