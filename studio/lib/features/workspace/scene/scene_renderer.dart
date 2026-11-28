@@ -263,6 +263,7 @@ class SceneStagePainter extends CustomPainter {
           w: boundW,
           h: boundH,
           zDepth: n.zDepth,
+          rz: n.rz,
           scaleX: scaleX,
           scaleY: scaleY,
           fill: fill,
@@ -278,6 +279,7 @@ class SceneStagePainter extends CustomPainter {
           z: wz,
           w: boundW,
           h: boundH,
+          rz: n.rz,
           scaleX: scaleX,
           scaleY: scaleY,
           fill: fill,
@@ -426,6 +428,7 @@ class SceneStagePainter extends CustomPainter {
     required double z,
     required double w,
     required double h,
+    double rz = 0,
     required double scaleX,
     required double scaleY,
     required Color fill,
@@ -438,11 +441,19 @@ class SceneStagePainter extends CustomPainter {
     final cam = _cam;
     if (cam == null) return;
 
+    final rad = rz * math.pi / 180.0;
+    final cosR = math.cos(rad);
+    final sinR = math.sin(rad);
+
     Offset? projectUnit(Offset u) {
+      final lx = u.dx * hw;
+      final ly = u.dy * hh;
+      final rx = lx * cosR - ly * sinR;
+      final ry = lx * sinR + ly * cosR;
       final pr = SceneProject.projectForWire(
         cam,
-        midX + u.dx * hw,
-        midY + u.dy * hh,
+        midX + rx,
+        midY + ry,
         z,
         mode: projectMode,
         viewProjection: _viewProjection,
@@ -509,6 +520,7 @@ class SceneStagePainter extends CustomPainter {
     required double w,
     required double h,
     required double zDepth,
+    double rz = 0,
     required double scaleX,
     required double scaleY,
     required Color fill,
@@ -522,11 +534,17 @@ class SceneStagePainter extends CustomPainter {
         : math.min(w, h).clamp(8.0, 200.0) * 0.5;
     final hd = depth * 0.5;
 
+    final rad = rz * math.pi / 180.0;
+    final cosR = math.cos(rad);
+    final sinR = math.sin(rad);
+
     final pts = List<Offset?>.filled(8, null);
     var any = false;
     for (var i = 0; i < 8; i++) {
-      final px = midX + ((i & 1) == 0 ? -hw : hw);
-      final py = midY + ((i & 2) == 0 ? -hh : hh);
+      final lx = (i & 1) == 0 ? -hw : hw;
+      final ly = (i & 2) == 0 ? -hh : hh;
+      final px = midX + lx * cosR - ly * sinR;
+      final py = midY + lx * sinR + ly * cosR;
       final pz = z + ((i & 4) == 0 ? -hd : hd);
       final pr = SceneProject.projectForWire(
         _cam!,
