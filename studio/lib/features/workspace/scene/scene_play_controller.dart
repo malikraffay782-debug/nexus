@@ -35,6 +35,9 @@ class ScenePlayController extends ChangeNotifier {
   ScenePlayState? _playState;
   ScenePlayState? get playState => _playState;
 
+  /// Snapshot doc for solid collision while playing.
+  SceneDoc? _playDoc;
+
   final Set<LogicalKeyboardKey> _keys = {};
   Ticker? _ticker;
   Duration _lastElapsed = Duration.zero;
@@ -129,6 +132,7 @@ class ScenePlayController extends ChangeNotifier {
     _steerZ = 0;
     _keys.clear();
     _playState = null;
+    _playDoc = null;
     _lastElapsed = Duration.zero;
     if (playTime.value != 0) {
       playTime.value = 0;
@@ -151,6 +155,7 @@ class ScenePlayController extends ChangeNotifier {
     _steerZ = 0;
     _keys.clear();
     _lastElapsed = Duration.zero;
+    _playDoc = doc;
     _playState = ScenePlayState.fromDoc(doc);
     _ticker = _vsync.createTicker((elapsed) {
       if (_disposed || !_playing) return;
@@ -158,7 +163,7 @@ class ScenePlayController extends ChangeNotifier {
           (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
       _lastElapsed = elapsed;
       final dt = rawDt.clamp(0.0, ScenePlayState.maxDt);
-      _playState?.update(dt, _steer, _steerZ);
+      _playState?.update(dt, _steer, _steerZ, _playDoc);
       final t = elapsed.inMilliseconds / 1000.0;
       // ~30 fps paint throttle for low-end; state still stepped every tick.
       if ((t - playTime.value).abs() < 1 / 30) return;

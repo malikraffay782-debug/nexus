@@ -138,4 +138,42 @@ void main() {
     expect(state.worldZ(player), state.playerZ);
     expect(state.worldZ(player), isNot(equals(player.z)));
   });
+
+  test('blocks player into solid sprite', () {
+    final doc = SceneDoc(
+      name: 'col',
+      width: 720,
+      height: 1280,
+      nodes: const [
+        SceneNode(
+          id: 'p1',
+          type: SceneNodeTypes.sprite,
+          name: 'Player',
+          x: 100,
+          y: 200,
+          w: 64,
+          h: 64,
+          z: 0,
+        ),
+        SceneNode(
+          id: 'wall',
+          type: SceneNodeTypes.sprite,
+          name: 'Wall',
+          x: 160,
+          y: 200,
+          w: 64,
+          h: 64,
+          z: 0,
+        ),
+      ],
+    );
+    final state = ScenePlayState.fromDoc(doc);
+    // Push right into the wall for several frames.
+    for (var i = 0; i < 20; i++) {
+      state.update(0.05, const Offset(1, 0), 0, doc);
+    }
+    final p = state.positionOf('p1');
+    // Must not fully occupy the wall cell.
+    expect(p.dx + 64, lessThanOrEqualTo(160 + 1));
+  });
 }

@@ -134,7 +134,7 @@ class ScenePlayState {
   /// Integrate one frame.
   /// [steer] XY unit-ish (−1…1), stage axes (y down).
   /// [steerZ] −1…1 (Q/E or future pad); 0 = no depth input.
-  void update(double dt, Offset steer, [double steerZ = 0]) {
+  void update(double dt, Offset steer, [double steerZ = 0, SceneDoc? doc]) {
     var step = dt;
     if (!step.isFinite || step <= 0) return;
     if (step > maxDt) step = maxDt;
@@ -167,6 +167,8 @@ class ScenePlayState {
       }
     }
 
+    final prev = pos;
+    final prevZ = _playerZ;
     pos = Offset(pos.dx + vel.dx * step, pos.dy + vel.dy * step);
 
     // Clamp top-left using the player's real footprint.
@@ -195,7 +197,65 @@ class ScenePlayState {
     }
     _playerZ = (_playerZ + _playerZVel * step).clamp(zMin, zMax);
 
+    // Solid AABB vs other sprites (XY + Z slab). Cameras ignored.
+    if (doc != null &&
+        _hitsSolid(doc, id, pos.dx, pos.dy, playerW, playerH, _playerZ)) {
+      // Try axis-separated slides; else full reject.
+      final tryX = Offset(pos.dx, prev.dy);
+      final tryY = Offset(prev.dx, pos.dy);
+      if (!_hitsSolid(doc, id, tryX.dx, tryX.dy, playerW, playerH, prevZ)) {
+        pos = tryX;
+        _playerZ = prevZ;
+        vel = Offset(vel.dx, 0);
+        _playerZVel = 0;
+      } else if (!_hitsSolid(
+          doc, id, tryY.dx, tryY.dy, playerW, playerH, prevZ)) {
+        pos = tryY;
+        _playerZ = prevZ;
+        vel = Offset(0, vel.dy);
+        _playerZVel = 0;
+      } else if (!_hitsSolid(
+          doc, id, prev.dx, prev.dy, playerW, playerH, _playerZ)) {
+        pos = prev;
+        vel = Offset.zero;
+      } else {
+        pos = prev;
+        _playerZ = prevZ;
+        vel = Offset.zero;
+        _playerZVel = 0;
+      }
+    }
+
     _positions[id] = pos;
     _velocities[id] = vel;
+  }
+
+  /// Player footprint vs another node's XY rect and Z thickness.
+  bool _hitsSolid(
+    SceneDoc doc,
+    String playerId,
+    double px,
+    double py,
+    double pw,
+    double ph,
+    double pz,
+  ) {
+    // Thin player slab on Z so walking past stacks needs depth match.
+    const playerHalfZ = 12.0;
+    final pZ0 = pz - playerHalfZ;
+    final pZ1 = pz + playerHalfZ;
+    for (final o in doc.nodes) {
+      if (o.isCamera || o.id == playerId) continue;
+      if (px + pw <= o.x || o.x + o.w <= px) continue;
+      if (py + ph <= o.y || o.y + o.h <= py) continue;
+      final half = (o.zDepth.isFinite && o.zDepth > 1e-3)
+          ? o.zDepth * 0.5
+          : 16.0;
+      final oZ0 = o.z - half;
+      final oZ1 = o.z + half;
+      if (pZ1 <= oZ0 || oZ1 <= pZ0) continue;
+      return true;
+    }
+    return false;
   }
 }
