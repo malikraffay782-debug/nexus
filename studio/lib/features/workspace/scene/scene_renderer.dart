@@ -6,6 +6,7 @@ import 'scene_mesh_wire.dart';
 import 'scene_model.dart';
 import 'scene_play_state.dart';
 import 'scene_project.dart';
+import 'scene_sprite_cache.dart';
 
 /// Graphical 2D stage painter — sprites / cameras / polys.
 ///
@@ -29,6 +30,7 @@ class SceneStagePainter extends CustomPainter {
     this.playTime = 0.0,
     this.projectMode = SceneProjectMode.soft,
     this.playState,
+    this.spriteCache,
   });
 
   final SceneDoc doc;
@@ -40,6 +42,8 @@ class SceneStagePainter extends CustomPainter {
   final SceneProjectMode projectMode;
   /// Runtime poses from [ScenePlayController] (null in edit mode).
   final ScenePlayState? playState;
+  /// Optional project sprite decode cache (2 GB capped).
+  final SceneSpriteCache? spriteCache;
 
   // Reused paints — avoid per-frame Paint() on low-end (B11).
   static final Paint _bgPaint = Paint()..color = const Color(0xFF1A1A22);
@@ -322,12 +326,29 @@ class SceneStagePainter extends CustomPainter {
     final hasMesh = meshId.isNotEmpty;
 
     if (isCamera || !hasMesh) {
-      // Solid body for cameras and plain sprites (no mesh id).
       final rrect = RRect.fromRectAndRadius(
         rect,
         Radius.circular(isCamera ? 20 : 6),
       );
-      canvas.drawRRect(rrect, Paint()..color = fill);
+      // Prefer size-capped sprite under assets/; else solid color.
+      final spr = isCamera ? null : spriteCache?.get(n.sprite);
+      if (spr != null) {
+        canvas.save();
+        canvas.clipRRect(rrect);
+        paintImage(
+          canvas: canvas,
+          rect: rect,
+          image: spr,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
+        );
+        canvas.restore();
+      } else {
+        if (!isCamera && n.sprite.isNotEmpty) {
+          spriteCache?.prefer(n.sprite);
+        }
+        canvas.drawRRect(rrect, Paint()..color = fill);
+      }
       canvas.drawRRect(
         rrect,
         Paint()
@@ -722,7 +743,8 @@ class SceneStagePainter extends CustomPainter {
         old.editPointIndex != editPointIndex ||
         old.showGrid != showGrid ||
         old.projectMode != projectMode ||
-        old.playState != playState) {
+        old.playState != playState ||
+        old.spriteCache?.epoch != spriteCache?.epoch) {
       return true;
     }
     // ~120 Hz threshold: skip repaint if time delta is tiny (duplicate ticks).

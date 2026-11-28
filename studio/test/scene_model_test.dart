@@ -130,4 +130,14 @@ void main() {
       expect(SceneMeshes.normalize('nope'), SceneMeshes.none);
     });
   });
+
+  group('SceneSprites', () {
+    test('normalize accepts assets png only', () {
+      expect(SceneSprites.normalize('assets/hero.png'), 'assets/hero.png');
+      expect(SceneSprites.normalize('assets/../x.png'), SceneSprites.none);
+      expect(SceneSprites.normalize('/abs.png'), SceneSprites.none);
+      expect(SceneSprites.normalize('src/x.png'), SceneSprites.none);
+      expect(SceneSprites.normalize('assets/x.gif'), SceneSprites.none);
+    });
+  });
 }

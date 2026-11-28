@@ -8,6 +8,7 @@ import '../scene/scene_play_controller.dart';
 import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
+import '../scene/scene_sprite_cache.dart';
 import 'play_touch_stick.dart';
 import 'play_touch_z_pad.dart';
 import 'scene_phone_inspector.dart';
@@ -43,6 +44,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
 
   /// Play preview (ticker / steer / Soft↔NDC) — see [ScenePlayController].
   late final ScenePlayController _play;
+  late SceneSpriteCache _sprites;
 
   /// True while a corner or the rotate handle owns the pointer.
   /// Stops the body-drag recognizer from also translating the node.
@@ -57,6 +59,8 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   void initState() {
     super.initState();
     _play = ScenePlayController(this);
+    _sprites = SceneSpriteCache(widget.projectPath);
+    _sprites.addListener(_onSprites);
     _service = SceneService(widget.projectPath);
     _reload();
   }
@@ -65,6 +69,10 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
   void didUpdateWidget(covariant WorkspaceSceneTab oldWidget) {
     super.didUpdateWidget(oldWidget);
     if (oldWidget.projectPath != widget.projectPath) {
+      _sprites.removeListener(_onSprites);
+      _sprites.dispose();
+      _sprites = SceneSpriteCache(widget.projectPath);
+      _sprites.addListener(_onSprites);
       // Project switched without disposing this State — rebind service + reload.
       _play.stop();
       _service = SceneService(widget.projectPath);
@@ -77,8 +85,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     }
   }
 
+  void _onSprites() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void dispose() {
+    _sprites.removeListener(_onSprites);
+    _sprites.dispose();
     _nudgeFrameScheduled = false;
     _pendingNudgeDx = 0;
     _pendingNudgeDy = 0;
@@ -1572,6 +1586,26 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                 ],
               ),
             ),
+            const SizedBox(height: 2),
+            SizedBox(
+              height: 32,
+              child: TextFormField(
+                key: ValueKey('sprite-${node.id}-${node.sprite}'),
+                initialValue: node.sprite,
+                style: const TextStyle(fontSize: 11),
+                decoration: const InputDecoration(
+                  isDense: true,
+                  labelText: 'Sprite (assets/…png)',
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(horizontal: 8, vertical: 6),
+                ),
+                onFieldSubmitted: (v) {
+                  final s = SceneSprites.normalize(v);
+                  _updateSelectedNode((n) => n.copyWith(sprite: s));
+                  if (s.isNotEmpty) _sprites.prefer(s);
+                },
+              ),
+            ),
           ],
         ],
       ),
@@ -1712,6 +1746,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               playTime: _playing ? _play.playTime.value : 0.0,
                               projectMode: _play.projectMode,
                               playState: _playing ? _play.playState : null,
+                              spriteCache: _sprites,
                             ),
                           );
                         },

@@ -248,7 +248,7 @@ Bootstrap asset must exist for runtime Initialize (CI downloads it for workflow 
 1. **Finish scene-tab split** — canvas + gesture handles still in `workspace_scene_tab.dart` (~1.8k lines)  
 2. **Deeper Dart↔Python golden** — full soft/NDC numeric vectors, not only visibility  
 3. **Stick dead-zone + feel polish** on low-end (dt path already real)  
-4. **Assets** pipeline (image import + size limit)  
+4. ~~**Assets** pipeline~~ **DONE** (sprite path + 256KB/512px cache)
 5. Optional languages on demand / real mesh loader later  
 
 ---

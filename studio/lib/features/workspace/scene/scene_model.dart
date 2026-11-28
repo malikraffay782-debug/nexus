@@ -62,6 +62,32 @@ class SceneMeshes {
   }
 }
 
+/// Sprite path helper — only sandbox-safe assets/ relative paths.
+class SceneSprites {
+  SceneSprites._();
+
+  static const none = '';
+
+  /// Allow only `assets/...` with simple segments (no `..`, no absolute).
+  static String normalize(String? raw) {
+    final t = (raw ?? '').trim().replaceAll('\', '/');
+    if (t.isEmpty) return none;
+    if (t.startsWith('/') || t.contains('..')) return none;
+    if (!t.startsWith('assets/')) return none;
+    final parts = t.split('/');
+    if (parts.any((p) => p.isEmpty || p == '.' || p == '..')) return none;
+    if (t.length > 180) return none;
+    final lower = t.toLowerCase();
+    if (!(lower.endsWith('.png') ||
+        lower.endsWith('.jpg') ||
+        lower.endsWith('.jpeg') ||
+        lower.endsWith('.webp'))) {
+      return none;
+    }
+    return t;
+  }
+}
+
 /// One vertex in scene space (used when a node is in points/edit mode).
 class ScenePoint {
   const ScenePoint(this.x, this.y);
@@ -113,6 +139,7 @@ class SceneNode {
     this.color = 0xFF7C4DFF,
     this.points,
     this.mesh = '',
+    this.sprite = '',
     this.fov = defaultFov,
     this.near = defaultNear,
     this.far = defaultFar,
@@ -148,6 +175,8 @@ class SceneNode {
   final List<ScenePoint>? points;
   /// Optional GameAssets mesh id (sword/crate/chest/metalcase). Empty = none.
   final String mesh;
+  /// Optional sprite under assets/ (e.g. assets/hero.png). Empty = solid color.
+  final String sprite;
   /// Vertical field of view in degrees (camera nodes).
   final double fov;
   /// Near clip plane (camera nodes).
@@ -233,6 +262,8 @@ class SceneNode {
     }
     final meshId = SceneMeshes.normalize(mesh);
     if (meshId.isNotEmpty) map['mesh'] = meshId;
+    final spr = SceneSprites.normalize(sprite);
+    if (spr.isNotEmpty) map['sprite'] = spr;
     return map;
   }
 
@@ -275,6 +306,7 @@ class SceneNode {
     if (!(near > 0)) near = defaultNear;
     if (!(far > near)) far = near < defaultFar ? defaultFar : near + 1.0;
     final mesh = SceneMeshes.normalize(json['mesh'] as String?);
+    final sprite = SceneSprites.normalize(json['sprite'] as String?);
     // Empty id → unique per decode (position alone collides for stacked nodes).
     final id = rawId.isEmpty
         ? 'n_${DateTime.now().microsecondsSinceEpoch}_${_nextFallbackId()}'
@@ -295,6 +327,7 @@ class SceneNode {
       color: color,
       points: points,
       mesh: mesh,
+      sprite: sprite,
       fov: fov.clamp(1.0, 179.0),
       near: near,
       far: far,
@@ -325,6 +358,7 @@ class SceneNode {
     List<ScenePoint>? points,
     bool clearPoints = false,
     String? mesh,
+    String? sprite,
     double? fov,
     double? near,
     double? far,
@@ -345,6 +379,7 @@ class SceneNode {
       color: color ?? this.color,
       points: clearPoints ? null : (points ?? this.points),
       mesh: mesh ?? this.mesh,
+      sprite: sprite ?? this.sprite,
       fov: fov ?? this.fov,
       near: near ?? this.near,
       far: far ?? this.far,
