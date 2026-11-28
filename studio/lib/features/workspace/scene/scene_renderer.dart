@@ -377,7 +377,23 @@ class SceneStagePainter extends CustomPainter {
     }
 
     if (hasMesh) {
-      // Mesh is the primary body (wire + soft fill) — no double solid rect.
+      // Optional sprite under the wire (texture + silhouette).
+      final spr = spriteCache?.get(n.sprite);
+      if (spr != null) {
+        final rrect = RRect.fromRectAndRadius(rect, const Radius.circular(6));
+        canvas.save();
+        canvas.clipRRect(rrect);
+        paintImage(
+          canvas: canvas,
+          rect: rect,
+          image: spr,
+          fit: BoxFit.cover,
+          filterQuality: FilterQuality.low,
+        );
+        canvas.restore();
+      } else if (n.sprite.isNotEmpty) {
+        spriteCache?.prefer(n.sprite);
+      }
       _paintMeshSilhouette(
         canvas,
         meshId,

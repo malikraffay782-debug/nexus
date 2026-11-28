@@ -89,6 +89,14 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
     if (mounted) setState(() {});
   }
 
+  /// Kick off size-capped decodes for every sprite path in [doc].
+  void _preferSprites(SceneDoc? doc) {
+    if (doc == null) return;
+    for (final n in doc.nodes) {
+      if (n.sprite.isNotEmpty) _sprites.prefer(n.sprite);
+    }
+  }
+
   @override
   void dispose() {
     _sprites.removeListener(_onSprites);
@@ -149,6 +157,7 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
         _editPointIndex = null;
         _loading = false;
       });
+      _preferSprites(doc);
       _play.playTime.value = 0;
     } catch (e) {
       if (!mounted) return;
