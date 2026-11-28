@@ -118,19 +118,27 @@ class SceneStagePainter extends CustomPainter {
     final count = nodes.length;
     if (count == 0) return;
 
-    // Depth order: non-cameras far→near by z; cameras last. Stable on ties.
-    // List.of avoids the (index,node) record list; fine for typical scene sizes.
+    // Depth order: non-cameras far→near; cameras last. Stable on ties.
+    // Play uses worldZ (Player Z) + camera depthOf when a cam is active so
+    // Q/E depth moves reorder draw (painter's algorithm, low-end safe).
     final ordered = List<SceneNode>.of(nodes);
     if (count > 1) {
       ordered.sort((a, b) {
         final ac = a.isCamera ? 1 : 0;
         final bc = b.isCamera ? 1 : 0;
         if (ac != bc) return ac - bc;
-        final cz = a.z.compareTo(b.z);
-        if (cz != 0) return cz;
-        // Stable-ish: fall back to identity hash only when z+type match;
-        // original index order is not preserved after List.of, but equal-z
-        // flicker is rare and cheaper than allocating index pairs every frame.
+        final za = playState?.worldZ(a) ?? a.z;
+        final zb = playState?.worldZ(b) ?? b.z;
+        if (cam != null) {
+          // Larger depth = farther; draw far first so near paints on top.
+          final da = cam.depthOf(za);
+          final db = cam.depthOf(zb);
+          final cd = db.compareTo(da);
+          if (cd != 0) return cd;
+        } else {
+          final cz = za.compareTo(zb);
+          if (cz != 0) return cz;
+        }
         return a.id.compareTo(b.id);
       });
     }

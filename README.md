@@ -127,7 +127,7 @@ nexus/
 | Camera rx/ry/rz orient NDC view matrix | Yes | Partial (rotated frustum test) |
 | Node rotation rx/ry/rz on stage + handles | Yes | UI only (no widget test) |
 | AABB frustum (flat + zDepth) | Yes | Yes |
-| **ScenePlayState** real dt + steer XY+Z (Q/E) | Yes | Yes (`scene_play_state_test`) |
+| **ScenePlayState** real dt + steer XY+Z; draw sort by depth | Yes | Yes (`scene_play_state_test`) |
 | Stick release does **not** snap Player back | Yes | Yes |
 | Camera follows Player **runtime** center in play | Yes | Code path; on-device visual TBD |
 | Mesh ids + wireframe + projected box/planar (crate/sword/chest) | Yes | Yes (`scene_mesh_wire_test`, `projectForWire`) |
