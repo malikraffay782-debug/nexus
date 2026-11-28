@@ -191,6 +191,8 @@ class SceneStagePainter extends CustomPainter {
     }
     final midX = boundX + boundW * 0.5;
     final midY = boundY + boundH * 0.5;
+    // Player can move in Z during play; others keep authored z.
+    final wz = playState?.worldZ(n) ?? n.z;
     var pScale = 1.0;
     var outX = midX;
     var outY = midY;
@@ -215,13 +217,13 @@ class SceneStagePainter extends CustomPainter {
         cullY,
         cullW,
         cullH,
-        n.z,
+        wz,
         zDepth: n.zDepth,
         mode: projectMode,
         viewProjection: _viewProjection,
       );
       if (!visible) return;
-      final pr = _project(midX, midY, n.z);
+      final pr = _project(midX, midY, wz);
       // Center may be outside while a corner is inside — still draw at
       // projected center if possible; else keep stage center.
       if (pr.visible) {
@@ -229,7 +231,7 @@ class SceneStagePainter extends CustomPainter {
         outX = pr.x;
         outY = pr.y;
       } else {
-        pScale = SceneProject.depthScale(cam, cam.depthOf(n.z));
+        pScale = SceneProject.depthScale(cam, cam.depthOf(wz));
       }
     }
 
@@ -245,7 +247,7 @@ class SceneStagePainter extends CustomPainter {
           canvas,
           midX: midX,
           midY: midY,
-          z: n.z,
+          z: wz,
           w: boundW,
           h: boundH,
           zDepth: n.zDepth,
@@ -261,7 +263,7 @@ class SceneStagePainter extends CustomPainter {
           meshId: meshIdCam,
           midX: midX,
           midY: midY,
-          z: n.z,
+          z: wz,
           w: boundW,
           h: boundH,
           scaleX: scaleX,

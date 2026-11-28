@@ -6,7 +6,7 @@ import 'scene_model.dart';
 
 /// Runtime play pose — never writes scene JSON / [SceneDoc].
 ///
-/// Holds a copy of node XY (+ velocity for the Player). [update] integrates
+/// Holds a copy of node XY + player Z (+ velocities). [update] integrates
 /// steer with real [dt] (clamped). Releasing the stick leaves the Player
 /// where it stopped (no snap-back to the authored pose).
 class ScenePlayState {
@@ -18,8 +18,13 @@ class ScenePlayState {
     required this.playerId,
     required this.playerW,
     required this.playerH,
+    required double playerZ,
+    required double playerZVel,
+    required this.playerAuthoredZ,
   })  : _positions = positions,
-        _velocities = velocities;
+        _velocities = velocities,
+        _playerZ = playerZ,
+        _playerZVel = playerZVel;
 
   /// Snapshot from [doc] at play start.
   factory ScenePlayState.fromDoc(SceneDoc doc) {
@@ -28,6 +33,7 @@ class ScenePlayState {
     String? playerId;
     var playerW = 64.0;
     var playerH = 64.0;
+    var playerZ = 0.0;
     for (final n in doc.nodes) {
       if (n.isCamera) continue;
       positions[n.id] = Offset(n.x, n.y);
@@ -36,6 +42,7 @@ class ScenePlayState {
         playerId = n.id;
         playerW = n.w > 0 ? n.w : 64.0;
         playerH = n.h > 0 ? n.h : 64.0;
+        playerZ = n.z;
       }
     }
     return ScenePlayState._(
@@ -46,6 +53,9 @@ class ScenePlayState {
       playerId: playerId,
       playerW: playerW,
       playerH: playerH,
+      playerZ: playerZ,
+      playerZVel: 0,
+      playerAuthoredZ: playerZ,
     );
   }
 
@@ -57,21 +67,33 @@ class ScenePlayState {
   final double playerW;
   final double playerH;
 
+  /// Authored Z at play start (runtime offset = currentZ - this).
+  final double playerAuthoredZ;
+
   final Map<String, Offset> _positions;
   final Map<String, Offset> _velocities;
+  double _playerZ;
+  double _playerZVel;
 
   /// Max simulation step (avoids huge jumps after a hitch). ~1/20 s.
   static const double maxDt = 1.0 / 20.0;
 
-  /// Stage units per second at full stick.
+  /// Stage units per second at full stick (XY and Z).
   static const double moveSpeed = 220.0;
 
   /// Velocity decay when stick released (units/s² toward zero).
   static const double damping = 900.0;
 
+  /// Soft Z range so player stays in a usable depth band (low-end safe).
+  static const double zMin = -800.0;
+  static const double zMax = 800.0;
+
   Offset positionOf(String id) => _positions[id] ?? Offset.zero;
 
   Offset velocityOf(String id) => _velocities[id] ?? Offset.zero;
+
+  /// Runtime world Z for the Player (others use authored node.z).
+  double get playerZ => _playerZ;
 
   /// Authoring pose + runtime offset for drawing (Player moves; others stay).
   Offset runtimeOffset(SceneNode n) {
@@ -79,6 +101,18 @@ class ScenePlayState {
     final p = _positions[n.id];
     if (p == null) return Offset.zero;
     return Offset(p.dx - n.x, p.dy - n.y);
+  }
+
+  /// Runtime Z offset for drawing/projection (Player only).
+  double runtimeZOffset(SceneNode n) {
+    if (playerId == null || n.id != playerId) return 0;
+    return _playerZ - playerAuthoredZ;
+  }
+
+  /// World Z for a node during play (Player uses runtime Z).
+  double worldZ(SceneNode n) {
+    if (playerId != null && n.id == playerId) return _playerZ;
+    return n.z;
   }
 
   /// Center of the Player sprite in stage space, or null.
@@ -97,8 +131,10 @@ class ScenePlayState {
     return Offset(p.dx + node.w * 0.5, p.dy + node.h * 0.5);
   }
 
-  /// Integrate one frame. [steer] is unit-ish (−1…1) in stage axes (y down).
-  void update(double dt, Offset steer) {
+  /// Integrate one frame.
+  /// [steer] XY unit-ish (−1…1), stage axes (y down).
+  /// [steerZ] −1…1 (Q/E or future pad); 0 = no depth input.
+  void update(double dt, Offset steer, [double steerZ = 0]) {
     var step = dt;
     if (!step.isFinite || step <= 0) return;
     if (step > maxDt) step = maxDt;
@@ -141,6 +177,23 @@ class ScenePlayState {
       pos.dx.clamp(margin, maxX),
       pos.dy.clamp(margin, maxY),
     );
+
+    // Z axis — same dead-zone / damping feel as XY.
+    final sz = steerZ.clamp(-1.0, 1.0);
+    if (sz.abs() > dead) {
+      final shapedZ = ((sz.abs() - dead) / (1.0 - dead)).clamp(0.0, 1.0);
+      _playerZVel = sz.sign * shapedZ * moveSpeed;
+    } else {
+      final vZ = _playerZVel.abs();
+      if (vZ < 1.0) {
+        _playerZVel = 0;
+      } else {
+        final decel = damping * step;
+        final scale = math.max(0.0, (vZ - decel) / vZ);
+        _playerZVel *= scale;
+      }
+    }
+    _playerZ = (_playerZ + _playerZVel * step).clamp(zMin, zMax);
 
     _positions[id] = pos;
     _velocities[id] = vel;

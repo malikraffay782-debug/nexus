@@ -127,7 +127,7 @@ nexus/
 | Camera rx/ry/rz orient NDC view matrix | Yes | Partial (rotated frustum test) |
 | Node rotation rx/ry/rz on stage + handles | Yes | UI only (no widget test) |
 | AABB frustum (flat + zDepth) | Yes | Yes |
-| **ScenePlayState** real dt + steer (no sin/cos roam) | Yes | Yes (`scene_play_state_test`) |
+| **ScenePlayState** real dt + steer XY+Z (Q/E) | Yes | Yes (`scene_play_state_test`) |
 | Stick release does **not** snap Player back | Yes | Yes |
 | Camera follows Player **runtime** center in play | Yes | Code path; on-device visual TBD |
 | Mesh ids + wireframe + projected box/planar (crate/sword/chest) | Yes | Yes (`scene_mesh_wire_test`, `projectForWire`) |
@@ -297,7 +297,7 @@ Severity: **H** = blocks stability / 3D / 2 GB phones, **M** = real bug or clear
 | B8 | M | `scene_play_state.dart` `update()` | FIXED — clamp uses real player `w/h` from node, not hard-coded 64×64. | — |
 | B9 | M | `scene_play_state.dart` `update()` | FIXED — dead-zone reshape; partial stick = slower speed. | — |
 | B10 | M | `scene_play_controller.dart` | FIXED — clear keys on focus loss so steer does not stick. | — |
-| B25 | gap | `ScenePlayState` | Play state is **XY-only**; the Player cannot move in Z and there is no mesh pipeline. Not a bug — keeps README §4 honest ("foundation"). | Next 3D steps. |
+| B25 | gap | `ScenePlayState` | **Partial** — Player Z via Q/E + worldZ in play paint/projected mesh. Mesh GPU still later. | — |
 | B26 | L | cull box / rotation | FIXED — rotated nodes use diagonal-inflated AABB for cull. | — |
 
 ### 11.3 Data safety & files (priority B)

@@ -109,4 +109,33 @@ void main() {
     expect(p.dy + 200, lessThanOrEqualTo(1280 - 8 + 0.5));
   });
 
+
+  test('player Z moves with steerZ and does not snap back', () {
+    final state = ScenePlayState.fromDoc(docWithPlayer());
+    final z0 = state.playerZ;
+    state.update(0.1, Offset.zero, 1.0);
+    expect(state.playerZ, greaterThan(z0));
+    final z1 = state.playerZ;
+    state.update(0.05, Offset.zero, 0);
+    expect(state.playerZ, greaterThanOrEqualTo(z0));
+    expect((state.playerZ - z1).abs(), lessThan(50));
+  });
+
+  test('player Z stays within soft band', () {
+    final state = ScenePlayState.fromDoc(docWithPlayer());
+    for (var i = 0; i < 100; i++) {
+      state.update(0.1, Offset.zero, 1.0);
+    }
+    expect(state.playerZ, lessThanOrEqualTo(ScenePlayState.zMax));
+    expect(state.playerZ, greaterThanOrEqualTo(ScenePlayState.zMin));
+  });
+
+  test('worldZ follows player runtime Z', () {
+    final doc = docWithPlayer();
+    final state = ScenePlayState.fromDoc(doc);
+    final player = doc.nodes.firstWhere((n) => n.name.toLowerCase() == 'player');
+    state.update(0.2, Offset.zero, 1.0);
+    expect(state.worldZ(player), state.playerZ);
+    expect(state.worldZ(player), isNot(equals(player.z)));
+  });
 }

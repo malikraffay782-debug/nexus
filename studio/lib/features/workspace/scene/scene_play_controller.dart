@@ -29,6 +29,9 @@ class ScenePlayController extends ChangeNotifier {
   Offset _steer = Offset.zero;
   Offset get steer => _steer;
 
+  double _steerZ = 0;
+  double get steerZ => _steerZ;
+
   ScenePlayState? _playState;
   ScenePlayState? get playState => _playState;
 
@@ -47,6 +50,7 @@ class ScenePlayController extends ChangeNotifier {
   void _syncSteerFromKeys() {
     var x = 0.0;
     var y = 0.0;
+    var z = 0.0;
     if (_keys.contains(LogicalKeyboardKey.arrowLeft) ||
         _keys.contains(LogicalKeyboardKey.keyA)) {
       x -= 1;
@@ -63,7 +67,14 @@ class ScenePlayController extends ChangeNotifier {
         _keys.contains(LogicalKeyboardKey.keyS)) {
       y += 1;
     }
+    // Q = toward camera (−Z in look +Z), E = away (+Z).
+    if (_keys.contains(LogicalKeyboardKey.keyQ)) z -= 1;
+    if (_keys.contains(LogicalKeyboardKey.keyE)) z += 1;
     setSteer(Offset(x, y));
+    if (_steerZ != z) {
+      _steerZ = z;
+      notifyListeners();
+    }
   }
 
   KeyEventResult onKey(FocusNode node, KeyEvent event) {
@@ -76,7 +87,9 @@ class ScenePlayController extends ChangeNotifier {
         key == LogicalKeyboardKey.keyA ||
         key == LogicalKeyboardKey.keyD ||
         key == LogicalKeyboardKey.keyW ||
-        key == LogicalKeyboardKey.keyS;
+        key == LogicalKeyboardKey.keyS ||
+        key == LogicalKeyboardKey.keyQ ||
+        key == LogicalKeyboardKey.keyE;
     if (!interesting) return KeyEventResult.ignored;
     if (event is KeyDownEvent || event is KeyRepeatEvent) {
       _keys.add(key);
@@ -105,6 +118,7 @@ class ScenePlayController extends ChangeNotifier {
     final was = _playing;
     _playing = false;
     _steer = Offset.zero;
+    _steerZ = 0;
     _keys.clear();
     _playState = null;
     _lastElapsed = Duration.zero;
@@ -126,6 +140,7 @@ class ScenePlayController extends ChangeNotifier {
     _ticker = null;
     playTime.value = 0;
     _steer = Offset.zero;
+    _steerZ = 0;
     _keys.clear();
     _lastElapsed = Duration.zero;
     _playState = ScenePlayState.fromDoc(doc);
@@ -135,7 +150,7 @@ class ScenePlayController extends ChangeNotifier {
           (elapsed - _lastElapsed).inMicroseconds / 1000000.0;
       _lastElapsed = elapsed;
       final dt = rawDt.clamp(0.0, ScenePlayState.maxDt);
-      _playState?.update(dt, _steer);
+      _playState?.update(dt, _steer, _steerZ);
       final t = elapsed.inMilliseconds / 1000.0;
       // ~30 fps paint throttle for low-end; state still stepped every tick.
       if ((t - playTime.value).abs() < 1 / 30) return;
