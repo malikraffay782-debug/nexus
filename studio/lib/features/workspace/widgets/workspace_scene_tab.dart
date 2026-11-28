@@ -6,6 +6,7 @@ import '../files/workspace_paths.dart';
 import '../files/workspace_file_service.dart';
 import '../scene/scene_model.dart';
 import '../scene/scene_play_controller.dart';
+import '../scene/scene_play_state.dart';
 import '../scene/scene_project.dart';
 import '../scene/scene_renderer.dart';
 import '../scene/scene_service.dart';
@@ -1886,6 +1887,50 @@ class _WorkspaceSceneTabState extends State<WorkspaceSceneTab>
                               },
                             ),
                           ],
+                        ),
+                      ),
+                    // Last trigger enter/exit (Unity-style feedback, low-end).
+                    if (_playing)
+                      Positioned(
+                        right: 10,
+                        top: 10,
+                        child: ListenableBuilder(
+                          listenable: _play,
+                          builder: (context, _) {
+                            final events = _play.lastTriggerEvents;
+                            if (events.isEmpty) {
+                              return const SizedBox.shrink();
+                            }
+                            final e = events.last;
+                            final enter =
+                                e.kind == SceneTriggerKind.enter;
+                            final label = enter
+                                ? 'Enter ${e.name}'
+                                : 'Exit ${e.name}';
+                            return DecoratedBox(
+                              decoration: BoxDecoration(
+                                color: (enter
+                                        ? Colors.teal
+                                        : Colors.blueGrey)
+                                    .withValues(alpha: 0.85),
+                                borderRadius: BorderRadius.circular(8),
+                              ),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(
+                                    color: Colors.white,
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            );
+                          },
                         ),
                       ),
                   ],
