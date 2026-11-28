@@ -274,6 +274,30 @@ void main() {
     });
   });
 
+
+  group('SceneProject.projectForWire', () {
+    test('NDC keeps off-lateral points that pass depth', () {
+      final c = cam(cz: 0, near: 1, far: 500);
+      // Far to the side — lateral cull would reject normal project.
+      final wire = SceneProject.projectForWire(
+        c,
+        c.cx + 5000,
+        c.cy,
+        50,
+        mode: SceneProjectMode.ndc,
+      );
+      final strict = SceneProject.project(
+        c,
+        c.cx + 5000,
+        c.cy,
+        50,
+        mode: SceneProjectMode.ndc,
+      );
+      expect(wire.visible, isTrue);
+      expect(strict.visible, isFalse);
+    });
+  });
+
   group('SceneCamFrame.fromNodes', () {
     test('prefers preferredId camera when present', () {
       final nodes = [

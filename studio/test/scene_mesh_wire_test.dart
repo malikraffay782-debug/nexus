@@ -37,4 +37,11 @@ void main() {
       expect(p.dy, -20);
     });
   });
+
+  test('box meshes flagged for projected path', () {
+    expect(SceneMeshWire.isBoxMesh(SceneMeshes.crate), isTrue);
+    expect(SceneMeshWire.isBoxMesh(SceneMeshes.metalcase), isTrue);
+    expect(SceneMeshWire.isBoxMesh(SceneMeshes.sword), isFalse);
+    expect(SceneMeshWire.boxEdgeIndices.length, 12);
+  });
 }

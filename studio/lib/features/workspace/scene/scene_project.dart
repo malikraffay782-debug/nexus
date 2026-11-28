@@ -467,6 +467,32 @@ class SceneProject {
     return s.clamp(0.05, 8.0);
   }
 
+  /// Like [project] but keeps points that pass depth even if outside the
+  /// lateral NDC square — needed to draw projected wire edges that cross
+  /// the view (crate corners can be off-screen while the box is visible).
+  static SceneProjected projectForWire(
+    SceneCamFrame cam,
+    double x,
+    double y,
+    double z, {
+    SceneProjectMode mode = SceneProjectMode.soft,
+    SceneMat4? viewProjection,
+  }) {
+    if (mode == SceneProjectMode.soft) {
+      return projectSoft(cam, x, y, z);
+    }
+    final vp = viewProjection ?? cam.viewProjectionMatrix();
+    final ndc = toNdc(cam, x, y, z, viewProjection: vp);
+    if (ndc == null) {
+      return SceneProjected(x: x, y: y, scale: 1, visible: false);
+    }
+    final (nx, ny, _) = ndc;
+    final (sx, sy) = ndcToStage(cam, nx, ny);
+    final (_, _, _, cw) = vp.transformPoint(x, y, z);
+    final s = perspectiveScale(cam, cw);
+    return SceneProjected(x: sx, y: sy, scale: s, visible: true);
+  }
+
   /// Dispatch by [mode]. Default soft for low-end frames.
   ///
   /// - [SceneProjectMode.soft]: soft depth scale (no matrices).

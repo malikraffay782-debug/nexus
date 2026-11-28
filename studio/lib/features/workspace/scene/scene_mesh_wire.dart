@@ -19,6 +19,20 @@ class MeshEdge {
 class SceneMeshWire {
   SceneMeshWire._();
 
+  /// Crate / metalcase use a true projected AABB when a camera is active.
+  static bool isBoxMesh(String meshId) {
+    final id = SceneMeshes.normalize(meshId);
+    return id == SceneMeshes.crate || id == SceneMeshes.metalcase;
+  }
+
+  /// 12 edges of a unit box as pairs of corner indices (0..7).
+  /// Corner bits: 1=x+, 2=y+, 4=z+.
+  static const List<(int, int)> boxEdgeIndices = [
+    (0, 1), (1, 3), (3, 2), (2, 0), // front z-
+    (4, 5), (5, 7), (7, 6), (6, 4), // back z+
+    (0, 4), (1, 5), (2, 6), (3, 7), // sides
+  ];
+
   /// Edges in unit space for [meshId], or empty if none/unknown.
   static List<MeshEdge> edges(String meshId) {
     switch (SceneMeshes.normalize(meshId)) {

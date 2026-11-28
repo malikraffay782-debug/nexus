@@ -236,6 +236,29 @@ class SceneStagePainter extends CustomPainter {
     final fill = Color(n.color).withValues(alpha: selected ? 0.95 : 0.85);
     final stroke = selected ? Colors.white : fill;
 
+    // Play/NDC: box meshes use true projected 8-corner wire (stage space).
+    final meshForBox = SceneMeshes.normalize(n.mesh);
+    if (!isCamera &&
+        cam != null &&
+        !n.hasPoints &&
+        SceneMeshWire.isBoxMesh(meshForBox)) {
+      _paintProjectedBox(
+        canvas,
+        midX: midX,
+        midY: midY,
+        z: n.z,
+        w: boundW,
+        h: boundH,
+        zDepth: n.zDepth,
+        scaleX: scaleX,
+        scaleY: scaleY,
+        fill: fill,
+        selected: selected,
+        brace: meshForBox == SceneMeshes.metalcase,
+      );
+      return;
+    }
+
     if (n.hasPoints) {
       _paintPoly(
         canvas,
@@ -330,6 +353,89 @@ class SceneStagePainter extends CustomPainter {
       _paintLocalAxes(canvas, axis);
     }
     canvas.restore();
+  }
+
+  /// Projected AABB wire: 8 world corners → [SceneProject.projectForWire].
+  /// Used for crate/metalcase when a camera is active (play or NDC preview).
+  void _paintProjectedBox(
+    Canvas canvas, {
+    required double midX,
+    required double midY,
+    required double z,
+    required double w,
+    required double h,
+    required double zDepth,
+    required double scaleX,
+    required double scaleY,
+    required Color fill,
+    required bool selected,
+    bool brace = false,
+  }) {
+    final hw = w * 0.5;
+    final hh = h * 0.5;
+    final depth = (zDepth.isFinite && zDepth > 1e-3)
+        ? zDepth
+        : math.min(w, h).clamp(8.0, 200.0) * 0.5;
+    final hd = depth * 0.5;
+
+    final pts = List<Offset?>.filled(8, null);
+    var any = false;
+    for (var i = 0; i < 8; i++) {
+      final px = midX + ((i & 1) == 0 ? -hw : hw);
+      final py = midY + ((i & 2) == 0 ? -hh : hh);
+      final pz = z + ((i & 4) == 0 ? -hd : hd);
+      final pr = SceneProject.projectForWire(
+        _cam!,
+        px,
+        py,
+        pz,
+        mode: projectMode,
+        viewProjection: _viewProjection,
+      );
+      if (!pr.visible) continue;
+      pts[i] = Offset(pr.x * scaleX, pr.y * scaleY);
+      any = true;
+    }
+    if (!any) return;
+
+    final wire = Paint()
+      ..color = Colors.white.withValues(alpha: selected ? 0.95 : 0.8)
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = selected ? 1.8 : 1.3
+      ..strokeJoin = StrokeJoin.round;
+
+    for (final e in SceneMeshWire.boxEdgeIndices) {
+      final a = pts[e.$1];
+      final b = pts[e.$2];
+      if (a == null || b == null) continue;
+      canvas.drawLine(a, b, wire);
+    }
+
+    if (brace) {
+      final a = pts[0];
+      final b = pts[3];
+      final cpt = pts[1];
+      final d = pts[2];
+      if (a != null && b != null) canvas.drawLine(a, b, wire);
+      if (cpt != null && d != null) canvas.drawLine(cpt, d, wire);
+    }
+
+    final f0 = pts[0];
+    final f1 = pts[1];
+    final f2 = pts[3];
+    final f3 = pts[2];
+    if (f0 != null && f1 != null && f2 != null && f3 != null) {
+      final path = Path()
+        ..moveTo(f0.dx, f0.dy)
+        ..lineTo(f1.dx, f1.dy)
+        ..lineTo(f2.dx, f2.dy)
+        ..lineTo(f3.dx, f3.dy)
+        ..close();
+      canvas.drawPath(
+        path,
+        Paint()..color = fill.withValues(alpha: selected ? 0.4 : 0.28),
+      );
+    }
   }
 
   /// Studio-side mesh wire (not GPU meshes). Uses [SceneMeshWire] unit edges
