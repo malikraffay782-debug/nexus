@@ -4,6 +4,27 @@ import 'package:flutter/material.dart';
 
 import 'scene_model.dart';
 
+/// One enter/exit of a Trigger* volume during play.
+enum SceneTriggerKind { enter, exit }
+
+class SceneTriggerEvent {
+  const SceneTriggerEvent({
+    required this.kind,
+    required this.nodeId,
+    required this.name,
+    required this.time,
+  });
+
+  final SceneTriggerKind kind;
+  final String nodeId;
+  final String name;
+  final double time;
+
+  @override
+  String toString() =>
+      'SceneTriggerEvent(${kind.name} $name#$nodeId @${time.toStringAsFixed(2)})';
+}
+
 /// Runtime play pose — never writes scene JSON / [SceneDoc].
 ///
 /// Holds a copy of node XY + player Z (+ velocities). [update] integrates

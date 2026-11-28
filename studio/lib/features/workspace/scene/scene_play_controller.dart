@@ -38,6 +38,13 @@ class ScenePlayController extends ChangeNotifier {
   /// Snapshot doc for solid collision while playing.
   SceneDoc? _playDoc;
 
+  /// Ring of recent trigger enter/exit events (newest last). Cap 32.
+  final List<SceneTriggerEvent> _triggerEvents = [];
+  List<SceneTriggerEvent> get lastTriggerEvents =>
+      List.unmodifiable(_triggerEvents);
+
+  static const int maxTriggerEvents = 32;
+
   final Set<LogicalKeyboardKey> _keys = {};
   Ticker? _ticker;
   Duration _lastElapsed = Duration.zero;
@@ -133,6 +140,7 @@ class ScenePlayController extends ChangeNotifier {
     _keys.clear();
     _playState = null;
     _playDoc = null;
+    _triggerEvents.clear();
     _lastElapsed = Duration.zero;
     if (playTime.value != 0) {
       playTime.value = 0;
@@ -165,13 +173,53 @@ class ScenePlayController extends ChangeNotifier {
       final dt = rawDt.clamp(0.0, ScenePlayState.maxDt);
       _playState?.update(dt, _steer, _steerZ, _playDoc);
       final t = elapsed.inMilliseconds / 1000.0;
-      // ~30 fps paint throttle for low-end; state still stepped every tick.
-      if ((t - playTime.value).abs() < 1 / 30) return;
+      final ps = _playState;
+      final doc = _playDoc;
+      var hadTrigger = false;
+      if (ps != null && doc != null) {
+        hadTrigger = _collectTriggerEvents(ps, doc, t);
+      }
+      // ~30 fps paint throttle; trigger edges always notify.
+      if ((t - playTime.value).abs() < 1 / 30 && !hadTrigger) return;
       playTime.value = t;
+      if (hadTrigger) notifyListeners();
     })
       ..start();
     _playing = true;
     notifyListeners();
+    return true;
+  }
+
+  bool _collectTriggerEvents(ScenePlayState ps, SceneDoc doc, double t) {
+    if (ps.enteredTriggers.isEmpty && ps.exitedTriggers.isEmpty) {
+      return false;
+    }
+    String nameOf(String id) {
+      for (final n in doc.nodes) {
+        if (n.id == id) return n.name;
+      }
+      return id;
+    }
+
+    for (final id in ps.enteredTriggers) {
+      _triggerEvents.add(SceneTriggerEvent(
+        kind: SceneTriggerKind.enter,
+        nodeId: id,
+        name: nameOf(id),
+        time: t,
+      ));
+    }
+    for (final id in ps.exitedTriggers) {
+      _triggerEvents.add(SceneTriggerEvent(
+        kind: SceneTriggerKind.exit,
+        nodeId: id,
+        name: nameOf(id),
+        time: t,
+      ));
+    }
+    while (_triggerEvents.length > maxTriggerEvents) {
+      _triggerEvents.removeAt(0);
+    }
     return true;
   }
 
